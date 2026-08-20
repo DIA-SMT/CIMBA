@@ -2,11 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { leerSesion, puedeVerContacto } from "@/lib/auth";
 import { obtenerDemanda, sugerenciasParaDemanda } from "@/lib/consultas";
+import { analisisDemandaSchema, iaDisponible, type AnalisisDemanda } from "@/lib/ia";
 import { fechaCorta } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { AccionesDemanda } from "./acciones-demanda";
 
 export const dynamic = "force-dynamic";
+
+function analisisIaGuardado(metadata: Record<string, unknown>): AnalisisDemanda | null {
+  const parseado = analisisDemandaSchema.safeParse(metadata.ia);
+  return parseado.success ? parseado.data : null;
+}
 
 export default async function PaginaDemanda({ params }: { params: Promise<{ id: string }> }) {
   const sesion = (await leerSesion())!;
@@ -101,6 +107,8 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
         tieneUbicacion={demanda.lat != null}
         sugerencias={sugerencias}
         puedeGestionar={puedeGestionar}
+        iaHabilitada={iaDisponible()}
+        analisisPrevio={analisisIaGuardado(demanda.metadata)}
       />
     </div>
   );

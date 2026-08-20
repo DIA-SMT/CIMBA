@@ -2,7 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Crosshair, Layers, Search, X } from "lucide-react";
+import { Crosshair, Layers, Search, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -142,7 +142,7 @@ const capaCalor: LayerProps = {
 
 const clienteQuery = new QueryClient();
 
-export function MapaCimba(props: { kpisIniciales: Kpis; rol: RolUsuario }) {
+export function MapaCimba(props: { kpisIniciales: Kpis; rol: RolUsuario; iaHabilitada: boolean }) {
   return (
     <QueryClientProvider client={clienteQuery}>
       <MapaInterno {...props} />
@@ -150,15 +150,25 @@ export function MapaCimba(props: { kpisIniciales: Kpis; rol: RolUsuario }) {
   );
 }
 
+interface Informe {
+  titulo: string;
+  resumen: string;
+  focos: string[];
+  recomendaciones: string[];
+}
+
 type Seleccion =
   | { capa: "incidente"; props: Record<string, unknown>; lngLat: [number, number] }
   | { capa: "demanda"; props: Record<string, unknown>; lngLat: [number, number] };
 
-function MapaInterno({ kpisIniciales }: { kpisIniciales: Kpis; rol: RolUsuario }) {
+function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol: RolUsuario; iaHabilitada: boolean }) {
   const mapRef = useRef<MapRef>(null);
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
   const [panelCapas, setPanelCapas] = useState(true);
   const [marcador, setMarcador] = useState<[number, number] | null>(null);
+  const [informe, setInforme] = useState<Informe | null>(null);
+  const [generandoInforme, setGenerandoInforme] = useState(false);
+  const [errorInforme, setErrorInforme] = useState<string | null>(null);
 
   // Estado de capas y filtros
   const [verMacro, setVerMacro] = useState<Record<string, boolean>>({
@@ -244,6 +254,58 @@ function MapaInterno({ kpisIniciales }: { kpisIniciales: Kpis; rol: RolUsuario }
     };
   }, []);
 
+  const generarInforme = async () => {
+    setGenerandoInforme(true);
+    setErrorInforme(null);
+    try {
+      const cuenta = (features: FC["features"], clave: string) => {
+        const m: Record<string, number> = {};
+        for (const f of features) {
+          const v = String(f.properties[clave] ?? "sin_dato");
+          m[v] = (m[v] ?? 0) + 1;
+        }
+        return m;
+      };
+      const abiertos = incidentesFiltrados.features.filter((f) => f.properties.macro !== "resuelto");
+      const porDireccion: Record<string, number> = {};
+      for (const f of abiertos) {
+        const d = String(f.properties.direccion ?? "").trim();
+        if (d) porDireccion[d] = (porDireccion[d] ?? 0) + 1;
+      }
+      const zonas = Object.entries(porDireccion)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([direccion, cantidad]) => ({ direccion, cantidad }));
+
+      const res = await fetch("/api/ia/informe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          periodo: dias ? `últimos ${dias} días` : "histórico completo",
+          incidentes: {
+            total: incidentesFiltrados.features.length,
+            por_macro: cuenta(incidentesFiltrados.features, "macro"),
+            por_tipo: cuenta(incidentesFiltrados.features, "tipo"),
+          },
+          demandas: {
+            total: demandasFiltradas.features.length,
+            por_fuente: cuenta(demandasFiltradas.features, "fuente"),
+            sin_vincular: kpisIniciales.demandasSinVincular,
+          },
+          m2_intervenidos: kpisIniciales.m2Intervenidos,
+          zonas_calientes: zonas,
+        }),
+      });
+      const cuerpo = (await res.json()) as { informe?: Informe; error?: string };
+      if (!res.ok || !cuerpo.informe) throw new Error(cuerpo.error ?? "No se pudo generar el informe");
+      setInforme(cuerpo.informe);
+    } catch (e) {
+      setErrorInforme(e instanceof Error ? e.message : "Error de IA");
+    } finally {
+      setGenerandoInforme(false);
+    }
+  };
+
   const alClick = useCallback((e: MapLayerMouseEvent) => {
     const feature = e.features?.[0];
     if (!feature) {
@@ -327,7 +389,18 @@ function MapaInterno({ kpisIniciales }: { kpisIniciales: Kpis; rol: RolUsuario }
         <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso />
         <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} />
         <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" />
-        <div className="pointer-events-auto ml-auto">
+        <div className="pointer-events-auto ml-auto flex items-start gap-2">
+          {iaHabilitada && (
+            <button
+              onClick={() => void generarInforme()}
+              disabled={generandoInforme}
+              className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60"
+              title="Informe ejecutivo generado por IA sobre lo visible en el mapa"
+            >
+              <Sparkles size={14} className={generandoInforme ? "animate-pulse text-amarillo" : ""} />
+              {generandoInforme ? "Generando…" : "Informe IA"}
+            </button>
+          )}
           <Buscador
             alEncontrar={(lon, lat) => {
               setMarcador([lon, lat]);
@@ -336,6 +409,46 @@ function MapaInterno({ kpisIniciales }: { kpisIniciales: Kpis; rol: RolUsuario }
           />
         </div>
       </div>
+
+      {/* Informe IA */}
+      {(informe || errorInforme) && (
+        <div className="panel-vidrio absolute top-20 right-3 z-20 w-96 max-w-[calc(100vw-24px)] rounded-xl">
+          <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+            <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
+              <Sparkles size={14} className="text-celeste" /> Informe IA
+            </span>
+            <button onClick={() => { setInforme(null); setErrorInforme(null); }} className="text-texto-3 hover:text-texto">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto px-4 py-4 text-[13px]">
+            {errorInforme && <p className="text-peligro">{errorInforme}</p>}
+            {informe && (
+              <>
+                <p className="font-bold">{informe.titulo}</p>
+                <p className="text-texto-2">{informe.resumen}</p>
+                {informe.focos.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold tracking-wider text-amarillo uppercase">Focos críticos</p>
+                    <ul className="list-disc space-y-1 pl-4 text-texto-2">
+                      {informe.focos.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {informe.recomendaciones.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold tracking-wider text-celeste uppercase">Recomendaciones</p>
+                    <ul className="list-disc space-y-1 pl-4 text-texto-2">
+                      {informe.recomendaciones.map((r, i) => <li key={i}>{r}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <p className="text-[10px] text-texto-3">Generado por IA sobre agregados del mapa — sin datos personales.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Panel de capas */}
       <div className="absolute bottom-6 left-3 z-10">
