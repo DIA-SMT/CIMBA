@@ -52,7 +52,9 @@ export async function parsearAtencionAbiertos(rutaXlsx: string): Promise<Demanda
         direccionNormalizada: direccion ? normalizarDireccion(direccion) : null,
         punto,
         geocodConfianza: punto ? 0.5 : esCoordDefecto ? 0.05 : null,
-        distritoId: typeof f.DISTRITO === "number" ? f.DISTRITO : null,
+        // El id de distrito NO va a la FK hasta que la tabla distritos tenga
+        // los polígonos oficiales (distritosNuevo.json): queda en metadata.
+        distritoId: null,
         solicitante: null,
         prioridadInformada: null,
         menciones: null,
@@ -70,6 +72,7 @@ export async function parsearAtencionAbiertos(rutaXlsx: string): Promise<Demanda
           asunto: limpiarTexto(f.asunto),
           descripcion_lugar: limpiarTexto(f.descripcion_lugar),
           movimiento: f.detalle_movi ?? null,
+          distrito_ac: typeof f.DISTRITO === "number" ? f.DISTRITO : null,
           coordenada_defecto: esCoordDefecto,
           id_persona: null,
           archivo: "OBRAS VIALES - SAT (463 RECLAMOS ABIERTOS).xlsx",

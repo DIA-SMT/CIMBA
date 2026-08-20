@@ -33,5 +33,6 @@ export async function upsertPerfil(datos: {
   `)) as unknown as PerfilRow[];
   const perfil = filas[0];
   if (!perfil) throw new Error("No se pudo crear el perfil");
-  return perfil;
+  // postgres.js devuelve bigint como string
+  return { ...perfil, id_persona: Number(perfil.id_persona) };
 }

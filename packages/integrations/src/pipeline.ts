@@ -19,6 +19,24 @@ function geomSql(punto: { lat: number; lon: number } | null) {
     : sql`null`;
 }
 
+/**
+ * postgres.js por la vía `unsafe()` (que usa drizzle en db.execute) no
+ * serializa objetos Date: hay que pasar ISO strings (Postgres castea solo).
+ */
+function fechaParam(d: Date | null | undefined): string | null {
+  return d ? d.toISOString() : null;
+}
+
+function describirError(e: unknown): string {
+  const partes: string[] = [];
+  let actual: unknown = e;
+  while (actual instanceof Error) {
+    partes.push(actual.message.split("\n")[0] ?? actual.message);
+    actual = actual.cause;
+  }
+  return partes.length > 0 ? partes[partes.length - 1]! : String(e);
+}
+
 export async function ingestarDemandas(
   sistema: string,
   demandas: DemandaNormalizada[],
@@ -84,7 +102,7 @@ export async function ingestarDemandas(
             ${d.direccionNormalizada}, ${d.geocodConfianza}, ${geomSql(d.punto)},
             ${d.distritoId}, ${JSON.stringify(d.contacto)}::jsonb, ${d.solicitante},
             ${d.prioridadInformada}, ${d.menciones}, ${d.urlOrigen},
-            ${d.creadoEn ?? sql`now()`}, ${JSON.stringify(d.metadata)}::jsonb
+            coalesce(${fechaParam(d.creadoEn)}::timestamptz, now()), ${JSON.stringify(d.metadata)}::jsonb
           ) returning id
         `)) as unknown as Array<{ id: number }>;
         const nuevo = insertado[0];
@@ -96,7 +114,7 @@ export async function ingestarDemandas(
         r.insertados++;
       }
     } catch (e) {
-      r.errores.push({ idRemoto: d.idRemoto, error: e instanceof Error ? e.message : String(e) });
+      r.errores.push({ idRemoto: d.idRemoto, error: describirError(e) });
     }
   }
   return r;
@@ -147,8 +165,8 @@ export async function ingestarIntervenciones(
         await db.execute(sql`
           update intervenciones set
             estado = ${iv.estado},
-            iniciada_en = ${iv.iniciadaEn},
-            finalizada_en = ${iv.finalizadaEn},
+            iniciada_en = ${fechaParam(iv.iniciadaEn)}::timestamptz,
+            finalizada_en = ${fechaParam(iv.finalizadaEn)}::timestamptz,
             superficie_m2 = ${iv.superficieM2},
             materiales = ${JSON.stringify(iv.materiales)}::jsonb,
             observaciones = ${iv.observaciones},
@@ -169,8 +187,8 @@ export async function ingestarIntervenciones(
             ${iv.tipo}, ${estadoIncidente},
             st_setsrid(st_makepoint(${iv.punto.lon}, ${iv.punto.lat}), 4326),
             ${iv.direccionTexto}, ${iv.superficieM2},
-            ${iv.iniciadaEn ?? sql`now()`},
-            ${iv.estado === "finalizada" ? iv.finalizadaEn : null},
+            coalesce(${fechaParam(iv.iniciadaEn)}::timestamptz, now()),
+            ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz,
             ${JSON.stringify({ origen: sistema, geocod_confianza: iv.geocodConfianza })}::jsonb
           ) returning id
         `)) as unknown as Array<{ id: number }>;
@@ -184,7 +202,7 @@ export async function ingestarIntervenciones(
           ) values (
             ${inc.id}, ${iv.estado},
             st_setsrid(st_makepoint(${iv.punto.lon}, ${iv.punto.lat}), 4326),
-            ${iv.iniciadaEn}, ${iv.finalizadaEn}, ${iv.superficieM2},
+            ${fechaParam(iv.iniciadaEn)}::timestamptz, ${fechaParam(iv.finalizadaEn)}::timestamptz, ${iv.superficieM2},
             ${JSON.stringify(iv.materiales)}::jsonb, ${iv.observaciones},
             ${JSON.stringify(iv.metadata)}::jsonb
           ) returning id
@@ -211,7 +229,7 @@ export async function registrarSyncRun(r: ResultadoIngesta, desde: Date | null):
   await db.execute(sql`
     insert into sync_runs (sistema, desde, hasta, leidos, insertados, actualizados, errores, detalle, finalizado_en)
     values (
-      ${r.sistema}, ${desde}, now(), ${r.leidos}, ${r.insertados}, ${r.actualizados},
+      ${r.sistema}, ${fechaParam(desde)}::timestamptz, now(), ${r.leidos}, ${r.insertados}, ${r.actualizados},
       ${r.errores.length}, ${JSON.stringify({ sinCambios: r.sinCambios, errores: r.errores.slice(0, 50) })}::jsonb,
       now()
     )

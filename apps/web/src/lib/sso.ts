@@ -64,7 +64,6 @@ export function derivarRolInicial(usuario: UsuarioMunicipal): RolUsuario {
 export function nombreCompleto(u: UsuarioMunicipal): string {
   return (
     u.apellido_nombre ??
-    [u.apellido, u.nombre].filter(Boolean).join(", ") ??
-    `Persona ${u.id_persona}`
+    ([u.apellido, u.nombre].filter(Boolean).join(", ") || `Persona ${u.id_persona}`)
   );
 }

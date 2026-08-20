@@ -5,15 +5,24 @@ import { escribirCookieSesion, firmarSesion } from "@/lib/auth";
 import { upsertPerfil } from "@/lib/perfiles";
 
 /**
- * SOLO DESARROLLO (DEV_FAKE_SSO=1): impersona un rol sin backend municipal.
- * En producción este endpoint responde 404.
+ * Acceso beta (DEV_FAKE_SSO=1): selector de rol sin backend municipal, hasta
+ * que se conecte el SSO de Ciudad Digital. Decisión del producto (beta):
+ * acceso abierto a cualquiera con el link. Si se define DEV_SSO_CODIGO, el
+ * selector pasa a exigir ese código (llave para cerrar la beta sin redeploy
+ * de código: solo agregar la env y redeployar).
  */
 export async function POST(req: NextRequest) {
   if (process.env.DEV_FAKE_SSO !== "1") {
     return NextResponse.json({ error: "no disponible" }, { status: 404 });
   }
-  const cuerpo = z.object({ rol: rolUsuarioSchema }).safeParse(await req.json());
+  const codigoRequerido = process.env.DEV_SSO_CODIGO ?? "";
+  const cuerpo = z
+    .object({ rol: rolUsuarioSchema, codigo: z.string().optional() })
+    .safeParse(await req.json());
   if (!cuerpo.success) return NextResponse.json({ error: "rol inválido" }, { status: 400 });
+  if (codigoRequerido && cuerpo.data.codigo !== codigoRequerido) {
+    return NextResponse.json({ error: "código de acceso incorrecto" }, { status: 403 });
+  }
 
   const rol = cuerpo.data.rol;
   // id_persona ficticio estable por rol (90000 + índice)

@@ -51,7 +51,7 @@ export default async function Acceso({
           El acceso se gestiona desde el portal municipal. CIMBA no usa contraseñas propias.
         </p>
 
-        {devSso && <SelectorRolDev />}
+        {devSso && <SelectorRolDev requiereCodigo={Boolean(process.env.DEV_SSO_CODIGO)} />}
       </div>
     </main>
   );

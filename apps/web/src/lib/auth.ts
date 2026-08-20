@@ -10,7 +10,8 @@ const DURACION_HORAS = 12;
 const sesionSchema = z.object({
   sub: z.string().uuid(), // perfiles.id
   rol_cimba: rolUsuarioSchema,
-  id_persona: z.number(),
+  // postgres.js devuelve bigint como string: coercionar siempre
+  id_persona: z.coerce.number(),
   nombre: z.string(),
 });
 export type Sesion = z.infer<typeof sesionSchema>;

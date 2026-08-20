@@ -63,7 +63,8 @@ export function mapearReclamoAc(r: ReclamoAc): DemandaNormalizada {
     direccionNormalizada: direccion ? normalizarDireccion(direccion) : null,
     punto: puntoValido(r.coorde1, r.coorde2),
     geocodConfianza: puntoValido(r.coorde1, r.coorde2) ? 0.5 : null,
-    distritoId: r.id_distrito ?? null,
+    // FK a distritos deshabilitada hasta cargar distritosNuevo.json (ver metadata)
+    distritoId: null,
     solicitante: null,
     prioridadInformada: r.id_prioridad ?? null,
     menciones: null,
@@ -71,6 +72,7 @@ export function mapearReclamoAc(r: ReclamoAc): DemandaNormalizada {
     contacto,
     creadoEn: parsearFecha(r.fecha_hora_inicio, "dma"),
     metadata: {
+      distrito_ac: r.id_distrito ?? null,
       estado_ac: r.nombre_estado ?? null,
       categoria_ac: r.nombre_categoria ?? null,
       tipo_reclamo_ac: r.nombre_treclamo ?? null,

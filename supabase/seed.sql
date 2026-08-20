@@ -14,15 +14,17 @@ insert into perfiles (id_persona, id_tusuario, nombre, rol) values
   (90007, 99, 'Dev lectura',                  'lectura')
 on conflict (id_persona) do nothing;
 
-insert into cuadrillas (nombre, responsable) values
+-- Idempotente sin unique en nombre: insert condicional
+insert into cuadrillas (nombre, responsable)
+select v.nombre, v.responsable
+from (values
   ('Cuadrilla Norte',  (select id from perfiles where id_persona = 90006)),
   ('Cuadrilla Sur',    (select id from perfiles where id_persona = 90006)),
-  ('Cuadrilla Este',   null),
-  ('Cuadrilla Oeste',  null),
-  ('Bacheo nocturno',  null)
-on conflict do nothing;
+  ('Cuadrilla Este',   null::uuid),
+  ('Cuadrilla Oeste',  null::uuid),
+  ('Bacheo nocturno',  null::uuid)
+) as v(nombre, responsable)
+where not exists (select 1 from cuadrillas c where c.nombre = v.nombre);
 
--- Bucket de Storage para fotos antes/durante/después
-insert into storage.buckets (id, name, public)
-values ('fotografias', 'fotografias', true)
-on conflict (id) do nothing;
+-- El bucket de Storage "fotografias" se crea por Storage API en scripts/db.mjs
+-- (el rol postgres no puede insertar en storage.buckets en Supabase Cloud).

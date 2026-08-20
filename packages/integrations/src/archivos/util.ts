@@ -12,7 +12,7 @@ export function mapearTipo(texto: string | null | undefined): TipoProblema {
   if (t.includes("hundimiento")) return "hundimiento";
   if (t.includes("tapa")) return "tapa_registro";
   if (t.includes("perdida")) return "perdida_agua";
-  if (t.includes("sumidero")) return "sumidero";
+  if (t.includes("sumidero") || t.includes("imbornal")) return "sumidero";
   if (t.includes("fisura") || t.includes("grieta")) return "fisura";
   if (t.includes("pavimento") || t.includes("calzada") || t.includes("hormigon") || t.includes("asfalto"))
     return "pavimento_deteriorado";

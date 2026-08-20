@@ -70,6 +70,30 @@ macro-estados** validados computacionalmente sobre #0B0F16
 El sub-estado se lee por anillo/pulso/ícono y en el panel de detalle. El anillo
 amarillo `#F4DC00` marca obras SIGOV (contratadas).
 
+### D8 — RLS en beta: el control efectivo es de aplicación
+La app conecta a Supabase por el pooler como el rol `postgres`, dueño de las
+tablas — y el dueño **bypassea RLS** salvo `FORCE ROW LEVEL SECURITY`. En esta
+beta las políticas RLS quedan escritas y activas pero el enforcement real lo
+hace la capa de aplicación (`requerirRol`, `puedeVerContacto`, vistas). Antes
+de producción con SSO real: (1) rol de aplicación no-dueño + `FORCE ROW LEVEL
+SECURITY`, (2) política de INSERT en `auditoria` (los triggers la necesitan),
+(3) `WITH CHECK (creado_por = cimba_perfil())` para HCD, (4) rol de sistema
+para la ingesta. La beta además es de acceso abierto por decisión del producto
+(20-08-2026): cualquiera con el link elige rol; `DEV_SSO_CODIGO` queda como
+llave para cerrar el acceso sin tocar código.
+
+### D9 — Anomalías de datos fuente corregidas en ingesta
+- CSV junio-julio: mezcla D/M y M/D en la misma columna; se desambigua por
+  componente >12 y por la sección vigente ("jun-26"/"jul-26"); "12 y 13/6" →
+  primer día. La fecha cruda queda en `metadata.fecha_cruda`.
+- Obras SIGOV: CERTIFICADO/LIQUIDACION llegan como texto, no como fecha.
+- Planilla de mayo: el zip dice 2026, el contenido "Mayo 2025" → manda la
+  etiqueta del archivo (2026) y el original queda en `metadata.mes_original`
+  (pendiente 9: confirmar con la Dirección).
+- Reclamos AC: `DISTRITO` va a `metadata.distrito_ac` (la FK espera los
+  polígonos oficiales de distritosNuevo.json que aún no están cargados).
+- "Limpieza de imbornales" → tipo `sumidero`, no bache.
+
 ### D7 — packages/ui pospuesto
 Los componentes compartidos viven en `apps/web/src/components` hasta que exista
 una segunda app que los consuma. Crear el paquete hoy es indirección sin uso.

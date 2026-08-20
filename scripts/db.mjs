@@ -13,19 +13,19 @@ import path from "node:path";
 import process from "node:process";
 import postgres from "postgres";
 
+// carga .env simple si existe (sin dependencia extra) — ANTES de leer variables
+const envPath = path.join(import.meta.dirname, "..", ".env");
+if (fs.existsSync(envPath)) {
+  for (const linea of fs.readFileSync(envPath, "utf8").split("\n")) {
+    const m = /^([A-Z0-9_]+)=(.*)$/.exec(linea.trim());
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+}
+
 const url = process.env.DATABASE_URL;
 if (!url) {
   console.error("Falta DATABASE_URL (definila en .env de la raíz o en el entorno)");
   process.exit(1);
-}
-
-// carga .env simple si existe (sin dependencia extra)
-const envPath = path.join(import.meta.dirname, "..", ".env");
-if (fs.existsSync(envPath) && !process.env.__ENV_CARGADO) {
-  for (const linea of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(linea.trim());
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-  }
 }
 
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
@@ -55,6 +55,28 @@ try {
     const cuerpo = fs.readFileSync(path.join(import.meta.dirname, "..", "supabase", "seed.sql"), "utf8");
     await sql.unsafe(cuerpo);
     console.log("✔ seed aplicado");
+    // Bucket de fotos vía Storage API (insertar en storage.buckets por SQL no
+    // está permitido para el rol postgres en Supabase Cloud).
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (base && service) {
+      const res = await fetch(`${base}/storage/v1/bucket`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${service}`, "content-type": "application/json" },
+        body: JSON.stringify({ id: "fotografias", name: "fotografias", public: true }),
+      });
+      if (res.ok) console.log("✔ bucket fotografias creado");
+      else {
+        const detalle = await res.json().catch(() => ({}));
+        if (String(detalle.error ?? detalle.message ?? "").toLowerCase().includes("already")) {
+          console.log("↷ bucket fotografias ya existía");
+        } else {
+          console.warn("⚠ no se pudo crear el bucket fotografias:", res.status, JSON.stringify(detalle).slice(0, 200));
+        }
+      }
+    } else {
+      console.warn("⚠ sin NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY: bucket no creado");
+    }
   } else if (comando === "estado") {
     const filas = await sql`
       select 'demandas' t, count(*) n from demandas

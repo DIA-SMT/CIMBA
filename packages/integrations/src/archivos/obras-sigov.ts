@@ -8,6 +8,21 @@ import { limpiarTexto, mapearTipo, puntoValido } from "./util";
  * PRIORIDAD, TIPO, METROS, ITEM, DESCRIPCION, DOMICILIO, LATITUD, LONGITUD,
  * PRESUPUESTO, MONTO ESTIMADO, CERTIFICADO, LIQUIDACION.
  */
+/** CERTIFICADO/LIQUIDACION vienen como texto "2026-06-04 19:01:14.862" (no como celda fecha). */
+function fechaSigov(v: unknown): Date | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === "string") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(v.trim());
+    if (m) {
+      const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}-03:00`);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+    if (soloFecha) return new Date(`${v.trim()}T12:00:00-03:00`);
+  }
+  return null;
+}
+
 function mapearEstado(estado: string | null): EstadoIntervencion {
   const e = (estado ?? "").toUpperCase();
   if (e.includes("FINALIZADA") || e.includes("LIQUIDADA") || e.includes("CERTIFICADA")) return "finalizada";
@@ -28,8 +43,8 @@ export async function parsearObrasSigov(rutaXlsx: string): Promise<IntervencionN
   return filas
     .filter((f) => f["OBRA_ID"] != null)
     .map((f) => {
-      const certificado = f["CERTIFICADO"] instanceof Date ? (f["CERTIFICADO"] as Date) : null;
-      const liquidacion = f["LIQUIDACION"] instanceof Date ? (f["LIQUIDACION"] as Date) : null;
+      const certificado = fechaSigov(f["CERTIFICADO"]);
+      const liquidacion = fechaSigov(f["LIQUIDACION"]);
       const metros = typeof f["METROS"] === "number" ? f["METROS"] : null;
       const tipo = mapearTipo(String(f["TIPO"] ?? ""));
       return intervencionNormalizadaSchema.parse({
