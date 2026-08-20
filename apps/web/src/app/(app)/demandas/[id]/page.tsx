@@ -84,7 +84,7 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
               <p className="mb-2 text-[10px] font-bold tracking-wider text-texto-3 uppercase">Metadatos de origen</p>
               <dl className="space-y-1 text-xs">
                 {Object.entries(demanda.metadata)
-                  .filter(([, v]) => v != null && v !== "" && v !== false)
+                  .filter(([, v]) => v != null && v !== "" && v !== false && typeof v !== "object")
                   .slice(0, 10)
                   .map(([k, v]) => (
                     <div key={k} className="flex gap-2">
