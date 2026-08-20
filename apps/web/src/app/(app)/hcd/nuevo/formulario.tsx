@@ -14,6 +14,19 @@ export function FormularioHcd() {
   const [punto, setPunto] = useState<{ lat: number; lon: number } | null>(null);
   const [tipo, setTipo] = useState("bache");
   const [direccion, setDireccion] = useState("");
+  const [buscandoDireccion, setBuscandoDireccion] = useState(false);
+
+  const elegirPunto = async (lat: number, lon: number) => {
+    setPunto({ lat, lon });
+    setBuscandoDireccion(true);
+    try {
+      const res = await fetch(`/api/georreversa?lat=${lat}&lon=${lon}`);
+      const data = (await res.json()) as { direccion: string | null };
+      if (data.direccion) setDireccion(data.direccion);
+    } finally {
+      setBuscandoDireccion(false);
+    }
+  };
   const [descripcion, setDescripcion] = useState("");
   const [solicitante, setSolicitante] = useState("");
   const [prioridad, setPrioridad] = useState<string>("");
@@ -72,9 +85,9 @@ export function FormularioHcd() {
     <div className="space-y-4">
       <div>
         <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
-          Ubicación — clic en el mapa
+          Ubicación — clic en el mapa (la dirección se completa sola)
         </label>
-        <MapaSelector punto={punto} alElegir={(lat, lon) => setPunto({ lat, lon })} />
+        <MapaSelector punto={punto} alElegir={(lat, lon) => void elegirPunto(lat, lon)} />
         {punto && (
           <p className="num mt-1 text-[11px] text-texto-3">
             {punto.lat.toFixed(6)}, {punto.lon.toFixed(6)}
@@ -84,7 +97,9 @@ export function FormularioHcd() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Dirección</label>
+          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
+            Dirección {buscandoDireccion && <span className="text-celeste">· buscando…</span>}
+          </label>
           <input
             value={direccion}
             onChange={(e) => setDireccion(e.target.value)}

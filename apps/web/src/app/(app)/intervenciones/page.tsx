@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
-import { listarIntervenciones } from "@/lib/consultas";
+import { listarEjecutores, listarIntervenciones } from "@/lib/consultas";
 import { fechaCorta, numero } from "@/lib/formato";
 import { Chip, Panel, TituloPagina } from "@/components/ui";
 
@@ -16,12 +16,15 @@ const ETIQUETA: Record<string, string> = {
 export default async function PaginaIntervenciones({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string; pagina?: string }>;
+  searchParams: Promise<{ estado?: string; ejecutor?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
-  const { filas, total } = await listarIntervenciones(sesion, { estado: filtros.estado, pagina, limite: 50 });
+  const [{ filas, total }, ejecutores] = await Promise.all([
+    listarIntervenciones(sesion, { estado: filtros.estado, ejecutor: filtros.ejecutor, pagina, limite: 50 }),
+    listarEjecutores(sesion),
+  ]);
   const paginas = Math.max(1, Math.ceil(total / 50));
 
   return (
@@ -38,9 +41,18 @@ export default async function PaginaIntervenciones({
             <option key={v} value={v}>{e}</option>
           ))}
         </select>
+        <select name="ejecutor" defaultValue={filtros.ejecutor ?? ""} className="max-w-64 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
+          <option value="">Todos los ejecutores</option>
+          {ejecutores.map((e) => (
+            <option key={e.nombre} value={e.nombre}>{e.nombre} ({e.n})</option>
+          ))}
+        </select>
         <button className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">
           Filtrar
         </button>
+        {(filtros.estado || filtros.ejecutor) && (
+          <Link href="/intervenciones" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
+        )}
       </form>
 
       <Panel className="overflow-x-auto">

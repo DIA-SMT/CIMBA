@@ -12,7 +12,10 @@ import { limpiarTexto, mapearTipo, parsearFecha, puntoValido } from "./util";
  * name_geocoded, types, calidad, in_bbox
  */
 export function parsearSat(rutaCsv: string): DemandaNormalizada[] {
-  const contenido = fs.readFileSync(rutaCsv, "utf8");
+  return parsearSatTexto(fs.readFileSync(rutaCsv, "utf8"));
+}
+
+export function parsearSatTexto(contenido: string): DemandaNormalizada[] {
   const filas: Record<string, string>[] = parse(contenido, {
     columns: true,
     skip_empty_lines: true,

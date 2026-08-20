@@ -7,16 +7,21 @@ import {
   Landmark,
   LogOut,
   Map as MapIcon,
+  ShieldCheck,
   Smartphone,
+  Upload,
 } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
+import { MigueChat } from "@/components/migue-chat";
 
 const NAV = [
   { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
   { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
   { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
   { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
+  { href: "/calidad", etiqueta: "Calidad", icono: ShieldCheck },
+  { href: "/cargar", etiqueta: "Cargar", icono: Upload },
   { href: "/hcd/nuevo", etiqueta: "HCD", icono: Landmark },
   { href: "/campo", etiqueta: "Campo", icono: Smartphone },
 ];
@@ -73,6 +78,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
         <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+
+      <MigueChat />
     </div>
   );
 }

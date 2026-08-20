@@ -2,10 +2,11 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Crosshair, Layers, Search, Sparkles, X } from "lucide-react";
+import { Crosshair, Flame, Layers, Search, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  GeolocateControl,
   Layer,
   Map as MapaGL,
   Marker,
@@ -20,6 +21,55 @@ import type { FeatureCollection, Point } from "geojson";
 import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
+
+/**
+ * Vistas del mapa: la respuesta a "es muchísima información y no se entiende".
+ * Cada vista prende solo las capas que sirven para esa tarea.
+ */
+const VISTAS = {
+  operativo: {
+    etiqueta: "Operativo",
+    descripcion: "Lo que hay que resolver HOY: problemas abiertos/en curso y pedidos aún sin cotejar.",
+    macro: { abierto: true, en_curso: true, resuelto: false, inactivo: false },
+    demandasAbiertas: true,
+    verDemandas: true,
+    calor: false,
+  },
+  historico: {
+    etiqueta: "Histórico",
+    descripcion: "El trabajo hecho: reparaciones y obras finalizadas.",
+    macro: { abierto: false, en_curso: true, resuelto: true, inactivo: false },
+    demandasAbiertas: false,
+    verDemandas: false,
+    calor: false,
+  },
+  analisis: {
+    etiqueta: "Análisis",
+    descripcion: "Densidad de demanda (mapa de calor) sobre todo el historial.",
+    macro: { abierto: true, en_curso: true, resuelto: false, inactivo: false },
+    demandasAbiertas: false,
+    verDemandas: true,
+    calor: true,
+  },
+  completo: {
+    etiqueta: "Todo",
+    descripcion: "Todas las capas a la vez (puede ser mucho).",
+    macro: { abierto: true, en_curso: true, resuelto: true, inactivo: false },
+    demandasAbiertas: false,
+    verDemandas: true,
+    calor: false,
+  },
+} as const;
+type Vista = keyof typeof VISTAS;
+
+const AYUDA_KPI = {
+  demandas: "Pedidos visibles con la vista y filtros actuales: reclamos de vecinos (AC), pedidos del Concejo, intimaciones SAT, redes y secretarías.",
+  sinVincular: "Demandas que todavía nadie cotejó contra el territorio: no sabemos si son un problema nuevo, un duplicado o algo ya reparado. Es la cola de consolidación (pestaña Calidad).",
+  abiertos: "Incidentes (problemas físicos confirmados) detectados o priorizados, sin cuadrilla asignada aún.",
+  enCurso: "Incidentes con trabajo programado o en ejecución (cuadrilla u obra SIGOV).",
+  resueltos: "Incidentes reparados o verificados.",
+  m2: "Metros cuadrados de pavimento intervenidos según SIGOV y planillas (intervenciones finalizadas).",
+} as const;
 
 // ── Tipos del contrato /api/geodata ─────────────────────────────────────────
 
@@ -78,7 +128,7 @@ const capaIncidentes: LayerProps = {
       "resuelto", COLOR_MACRO.resuelto,
       COLOR_MACRO.inactivo,
     ],
-    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6, 17, 9],
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6, 17, 9, 19.5, 14],
     // Anillo amarillo = obra SIGOV (contratada); anillo claro = CIMBA/planillas
     "circle-stroke-width": ["case", ["==", ["get", "origen"], "sigov"], 2, 1],
     "circle-stroke-color": [
@@ -87,6 +137,20 @@ const capaIncidentes: LayerProps = {
       "#f4dc00",
       "rgba(237,242,250,0.4)",
     ],
+  },
+  layout: {},
+};
+
+/** Anillo de selección: marca exactamente el punto elegido. */
+const capaSeleccion: LayerProps = {
+  id: "seleccion-anillo",
+  type: "circle",
+  source: "seleccion",
+  paint: {
+    "circle-color": "rgba(0,0,0,0)",
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 9, 17, 16],
+    "circle-stroke-width": 2.5,
+    "circle-stroke-color": "#f4dc00",
   },
 };
 
@@ -110,8 +174,15 @@ const capaDemandas: LayerProps = {
   source: "demandas",
   paint: {
     "circle-color": "#8fa3bf",
-    "circle-opacity": 0.55,
-    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.6, 14, 3, 17, 5],
+    // Honestidad visual: la opacidad refleja la confianza de la geocodificación
+    // (un punto tenue puede no estar exactamente ahí).
+    "circle-opacity": [
+      "interpolate", ["linear"], ["coalesce", ["get", "confianza"], 0.55],
+      0.1, 0.25,
+      0.5, 0.45,
+      0.9, 0.8,
+    ],
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.6, 14, 3, 17, 5, 19.5, 8],
     "circle-stroke-width": ["case", ["<", ["coalesce", ["get", "confianza"], 1], 0.5], 1.2, 0],
     "circle-stroke-color": "#e66767",
   },
@@ -170,17 +241,24 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
   const [generandoInforme, setGenerandoInforme] = useState(false);
   const [errorInforme, setErrorInforme] = useState<string | null>(null);
 
-  // Estado de capas y filtros
-  const [verMacro, setVerMacro] = useState<Record<string, boolean>>({
-    abierto: true,
-    en_curso: true,
-    resuelto: true,
-    inactivo: false,
-  });
+  // Estado de capas y filtros — arranca en vista OPERATIVA (lo accionable)
+  const [vista, setVista] = useState<Vista>("operativo");
+  const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS.operativo.macro });
+  const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(true);
   const [verDemandas, setVerDemandas] = useState(true);
   const [verCalor, setVerCalor] = useState(false);
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
+  const [tipos, setTipos] = useState<Record<string, boolean>>({});
   const [dias, setDias] = useState<number | null>(null); // null = todo
+  const [verZonas, setVerZonas] = useState(false);
+
+  const aplicarVista = (v: Vista) => {
+    setVista(v);
+    setVerMacro({ ...VISTAS[v].macro });
+    setSoloDemandasAbiertas(VISTAS[v].demandasAbiertas);
+    setVerDemandas(VISTAS[v].verDemandas);
+    setVerCalor(VISTAS[v].calor);
+  };
 
   const { data } = useQuery<GeoDatos>({
     queryKey: ["geodata"],
@@ -204,25 +282,55 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
   const incidentesFiltrados = useMemo<FC>(() => {
     const features = (data?.incidentes.features ?? []).filter((f) => {
       if (!verMacro[String(f.properties.macro)]) return false;
+      if (tipos[String(f.properties.tipo)] === false) return false;
       if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, verMacro, corte]);
+  }, [data, verMacro, tipos, corte]);
 
   const demandasFiltradas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
       const fuente = String(f.properties.fuente);
       if (fuentes[fuente] === false) return false;
+      if (tipos[String(f.properties.tipo)] === false) return false;
+      if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
+        return false;
       if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, corte]);
+  }, [data, fuentes, tipos, soloDemandasAbiertas, corte]);
 
-  // KPIs vivos calculados sobre lo visible
+  // Zonas calientes: direcciones más repetidas entre las demandas visibles
+  const zonasCalientes = useMemo(() => {
+    const porDireccion = new Map<string, { n: number; lon: number; lat: number }>();
+    for (const f of demandasFiltradas.features) {
+      const dir = String(f.properties.direccion ?? "").trim();
+      if (!dir) continue;
+      const previo = porDireccion.get(dir);
+      if (previo) previo.n++;
+      else
+        porDireccion.set(dir, {
+          n: 1,
+          lon: f.geometry.coordinates[0] ?? 0,
+          lat: f.geometry.coordinates[1] ?? 0,
+        });
+    }
+    return [...porDireccion.entries()]
+      .filter(([, v]) => v.n >= 2)
+      .sort((a, b) => b[1].n - a[1].n)
+      .slice(0, 10);
+  }, [demandasFiltradas]);
+
+  // KPIs: estado del territorio bajo los filtros de tipo/período — NO dependen
+  // de qué capas estén visibles (apagar una capa no hace desaparecer el problema).
   const kpis = useMemo(() => {
-    const inc = incidentesFiltrados.features;
+    const inc = (data?.incidentes.features ?? []).filter((f) => {
+      if (tipos[String(f.properties.tipo)] === false) return false;
+      if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
+      return true;
+    });
     return {
       demandas: demandasFiltradas.features.length,
       abiertos: inc.filter((f) => f.properties.macro === "abierto").length,
@@ -231,7 +339,7 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
       m2: kpisIniciales.m2Intervenidos,
       sinVincular: kpisIniciales.demandasSinVincular,
     };
-  }, [incidentesFiltrados, demandasFiltradas, kpisIniciales]);
+  }, [data, tipos, corte, demandasFiltradas, kpisIniciales]);
 
   // Pulso animado de "en ejecución"
   useEffect(() => {
@@ -321,13 +429,16 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
       });
       return;
     }
-    const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+    // Precisión: usar las coordenadas EXACTAS del punto, no las del clic
+    const geom = feature.geometry as { type: string; coordinates?: [number, number] };
+    const lngLat: [number, number] =
+      geom.type === "Point" && geom.coordinates ? [geom.coordinates[0], geom.coordinates[1]] : [e.lngLat.lng, e.lngLat.lat];
     if (feature.layer.id === "incidentes-punto") {
       setSeleccion({ capa: "incidente", props: feature.properties ?? {}, lngLat });
     } else if (feature.layer.id === "demandas-punto") {
       setSeleccion({ capa: "demanda", props: feature.properties ?? {}, lngLat });
     }
-    mapRef.current?.easeTo({ center: e.lngLat, duration: 400, offset: [-140, 0] });
+    mapRef.current?.easeTo({ center: lngLat, duration: 400, offset: [-140, 0] });
   }, []);
 
   return (
@@ -336,6 +447,7 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
         ref={mapRef}
         initialViewState={{ longitude: CENTRO_SMT[0], latitude: CENTRO_SMT[1], zoom: 12.6 }}
         mapStyle={ESTILO_MAPA}
+        maxZoom={19.5}
         interactiveLayerIds={["clusters", "incidentes-punto", "demandas-punto"]}
         onClick={alClick}
         onMouseEnter={() => {
@@ -349,6 +461,12 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
         attributionControl={{ compact: true }}
       >
         <NavigationControl position="bottom-right" visualizePitch />
+        <GeolocateControl
+          position="bottom-right"
+          positionOptions={{ enableHighAccuracy: true }}
+          trackUserLocation
+          showAccuracyCircle
+        />
         <ScaleControl position="bottom-left" />
 
         {verDemandas && (
@@ -363,13 +481,26 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
           type="geojson"
           data={incidentesFiltrados}
           cluster
-          clusterMaxZoom={15}
-          clusterRadius={55}
+          clusterMaxZoom={14}
+          clusterRadius={45}
         >
           <Layer {...capaPulso} />
           <Layer {...capaIncidentes} />
           <Layer {...capaClusters} />
           <Layer {...capaClusterConteo} />
+        </Source>
+
+        <Source
+          id="seleccion"
+          type="geojson"
+          data={{
+            type: "FeatureCollection",
+            features: seleccion
+              ? [{ type: "Feature", geometry: { type: "Point", coordinates: seleccion.lngLat }, properties: {} }]
+              : [],
+          }}
+        >
+          <Layer {...capaSeleccion} />
         </Source>
 
         {marcador && (
@@ -381,14 +512,32 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
         )}
       </MapaGL>
 
+      {/* Selector de vista */}
+      <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+        <div className="panel-vidrio flex rounded-xl p-1">
+          {(Object.keys(VISTAS) as Vista[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => aplicarVista(v)}
+              title={VISTAS[v].descripcion}
+              className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+              }`}
+            >
+              {VISTAS[v].etiqueta}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* KPIs */}
-      <div className="pointer-events-none absolute top-3 left-3 right-3 z-10 flex flex-wrap gap-2">
-        <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" />
-        <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" />
-        <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} />
-        <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso />
-        <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} />
-        <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" />
+      <div className="pointer-events-none absolute top-16 left-3 right-3 z-10 flex flex-wrap gap-2">
+        <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
+        <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" ayuda={AYUDA_KPI.sinVincular} />
+        <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
+        <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
+        <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
+        <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" ayuda={AYUDA_KPI.m2} />
         <div className="pointer-events-auto ml-auto flex items-start gap-2">
           {iaHabilitada && (
             <button
@@ -410,9 +559,52 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
         </div>
       </div>
 
+      {/* Zonas calientes */}
+      <div className="absolute bottom-6 left-72 z-10 hidden md:block">
+        {verZonas ? (
+          <div className="panel-vidrio w-72 rounded-xl p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
+                <Flame size={14} className="text-encurso" /> Zonas calientes
+              </span>
+              <button onClick={() => setVerZonas(false)} className="text-texto-3 hover:text-texto">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="mb-2 text-[10px] text-texto-3">
+              Direcciones con más demandas pendientes (con la vista y filtros actuales). Clic para volar.
+            </p>
+            {zonasCalientes.length === 0 ? (
+              <p className="py-3 text-center text-xs text-texto-3">Sin repeticiones con estos filtros.</p>
+            ) : (
+              <div className="max-h-56 space-y-1 overflow-y-auto">
+                {zonasCalientes.map(([dir, z]) => (
+                  <button
+                    key={dir}
+                    onClick={() => mapRef.current?.flyTo({ center: [z.lon, z.lat], zoom: 16.5, duration: 900 })}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-borde bg-panel-2/60 px-2.5 py-1.5 text-left text-xs transition hover:border-encurso/50"
+                  >
+                    <span className="truncate">{dir}</span>
+                    <span className="num shrink-0 font-bold text-encurso">{z.n}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => setVerZonas(true)}
+            className="panel-vidrio rounded-xl p-3 text-encurso transition hover:text-texto"
+            title="Zonas calientes: direcciones con más demandas repetidas"
+          >
+            <Flame size={18} />
+          </button>
+        )}
+      </div>
+
       {/* Informe IA */}
       {(informe || errorInforme) && (
-        <div className="panel-vidrio absolute top-20 right-3 z-20 w-96 max-w-[calc(100vw-24px)] rounded-xl">
+        <div className="panel-vidrio absolute top-28 right-3 z-20 w-96 max-w-[calc(100vw-24px)] rounded-xl">
           <div className="flex items-center justify-between border-b border-borde px-4 py-3">
             <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
               <Sparkles size={14} className="text-celeste" /> Informe IA
@@ -492,6 +684,18 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
               <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
               Puntos de demanda
             </label>
+            <label
+              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Mostrar solo demandas aún sin cotejar (recibidas/en validación); apagalo para ver también las ya vinculadas o descartadas"
+            >
+              <input
+                type="checkbox"
+                checked={soloDemandasAbiertas}
+                onChange={(e) => setSoloDemandasAbiertas(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              Solo pendientes (sin vincular)
+            </label>
             <label className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]">
               <input type="checkbox" checked={verCalor} onChange={(e) => setVerCalor(e.target.checked)} className="accent-[#0066ff]" />
               Mapa de calor
@@ -514,6 +718,24 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
                 })}
               </div>
             )}
+
+            <p className="mt-3 mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Tipo de problema</p>
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(ETIQUETA_TIPO) as Array<keyof typeof ETIQUETA_TIPO>).map((t) => {
+                const activo = tipos[t] !== false;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setTipos((v) => ({ ...v, [t]: !activo }))}
+                    className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition ${
+                      activo ? "border-borde-2 bg-panel-2 text-texto-2" : "border-borde text-texto-3 line-through opacity-60"
+                    }`}
+                  >
+                    {ETIQUETA_TIPO[t]}
+                  </button>
+                );
+              })}
+            </div>
 
             <p className="mt-3 mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Período</p>
             <div className="flex gap-1">
@@ -550,9 +772,24 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
   );
 }
 
-function Kpi({ etiqueta, valor, color, pulso }: { etiqueta: string; valor: number; color: string; pulso?: boolean }) {
+function Kpi({
+  etiqueta,
+  valor,
+  color,
+  pulso,
+  ayuda,
+}: {
+  etiqueta: string;
+  valor: number;
+  color: string;
+  pulso?: boolean;
+  ayuda?: string;
+}) {
   return (
-    <div className="panel-vidrio pointer-events-auto flex items-center gap-2.5 rounded-xl px-3.5 py-2">
+    <div
+      className="panel-vidrio pointer-events-auto flex cursor-help items-center gap-2.5 rounded-xl px-3.5 py-2"
+      title={ayuda}
+    >
       <span className={`inline-block h-2.5 w-2.5 rounded-full ${pulso ? "pulso" : ""}`} style={{ background: color }} />
       <div className="leading-tight">
         <div className="num text-base font-bold">{numero(valor)}</div>
@@ -602,7 +839,7 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
   const macro = String(p.macro ?? "abierto") as keyof typeof COLOR_MACRO;
 
   return (
-    <aside className="panel-vidrio absolute top-16 right-3 bottom-6 z-10 flex w-80 flex-col rounded-xl">
+    <aside className="panel-vidrio absolute top-28 right-3 bottom-6 z-10 flex w-80 flex-col rounded-xl">
       <div className="flex items-center justify-between border-b border-borde px-4 py-3">
         <div className="flex items-center gap-2">
           {esIncidente ? (
@@ -653,6 +890,14 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
         <div className="num pt-1 text-[10px] text-texto-3">
           {seleccion.lngLat[1].toFixed(6)}, {seleccion.lngLat[0].toFixed(6)}
         </div>
+        <a
+          href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${seleccion.lngLat[1]},${seleccion.lngLat[0]}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block text-[12px] font-semibold text-celeste hover:underline"
+        >
+          Ver en Street View ↗
+        </a>
       </div>
 
       <div className="border-t border-borde p-3">

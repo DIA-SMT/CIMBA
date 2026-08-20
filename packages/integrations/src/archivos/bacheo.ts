@@ -13,7 +13,11 @@ import { fechaDesdeMes, limpiarTexto, mapearTipo, puntoValido } from "./util";
 
 /** Formato abril/mayo: id,mes_bacheo,direccion_original,direccion_limpia,lat,lon,name_geocoded,types,calidad_geo,in_bbox */
 export function parsearBacheoMensual(rutaCsv: string, etiqueta: string): IntervencionNormalizada[] {
-  const filas: Record<string, string>[] = parse(fs.readFileSync(rutaCsv, "utf8"), {
+  return parsearBacheoMensualTexto(fs.readFileSync(rutaCsv, "utf8"), etiqueta);
+}
+
+export function parsearBacheoMensualTexto(contenido: string, etiqueta: string): IntervencionNormalizada[] {
+  const filas: Record<string, string>[] = parse(contenido, {
     columns: true,
     skip_empty_lines: true,
     bom: true,
@@ -54,7 +58,11 @@ export function parsearBacheoMensual(rutaCsv: string, etiqueta: string): Interve
 
 /** Formato marzo: `Mes de marzo;LAT;LON;GEO_CONFIANZA;LOCALIDAD;PROVINCIA;PAIS;DIRECCION_GEO` */
 export function parsearBacheoMarzo(rutaCsv: string): IntervencionNormalizada[] {
-  const filas: string[][] = parse(fs.readFileSync(rutaCsv, "utf8"), {
+  return parsearBacheoMarzoTexto(fs.readFileSync(rutaCsv, "utf8"));
+}
+
+export function parsearBacheoMarzoTexto(contenido: string): IntervencionNormalizada[] {
+  const filas: string[][] = parse(contenido, {
     delimiter: ";",
     skip_empty_lines: true,
     bom: true,
@@ -124,7 +132,11 @@ function fechaJunJul(crudo: string | undefined, mesSeccion: number | null): Date
 
 /** Formato junio/julio: `Fecha;Dirección / Trabajo;Tipo de trabajo;Tipo de punto;Dirección para geolocalizar;Latitud;Longitud;GEO_CONFIANZA;...` */
 export function parsearBacheoJunioJulio(rutaCsv: string): IntervencionNormalizada[] {
-  const filas: string[][] = parse(fs.readFileSync(rutaCsv, "utf8"), {
+  return parsearBacheoJunioJulioTexto(fs.readFileSync(rutaCsv, "utf8"));
+}
+
+export function parsearBacheoJunioJulioTexto(contenido: string): IntervencionNormalizada[] {
+  const filas: string[][] = parse(contenido, {
     delimiter: ";",
     skip_empty_lines: true,
     bom: true,

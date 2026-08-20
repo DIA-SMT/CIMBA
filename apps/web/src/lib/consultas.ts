@@ -60,13 +60,22 @@ export interface DemandaResumen {
   contacto: Record<string, unknown> | null;
 }
 
+/** Filtros de calidad de datos para la bandeja (panel /calidad). */
+const FILTROS_CALIDAD: Record<string, ReturnType<typeof sql>> = {
+  geocod_baja: sql`and d.geom is not null and coalesce(d.geocod_confianza, 0) < 0.5 and d.estado in ('recibida','en_validacion')`,
+  sin_ubicacion: sql`and d.geom is null and d.estado in ('recibida','en_validacion')`,
+  sin_fecha: sql`and d.metadata->>'sin_fecha' = 'true' and d.estado in ('recibida','en_validacion')`,
+  antiguas: sql`and d.creado_en < now() - interval '365 days' and d.estado in ('recibida','en_validacion')`,
+};
+
 export async function listarDemandas(
   sesion: Sesion,
-  filtros: { fuente?: string; estado?: string; q?: string; limite?: number; pagina?: number },
+  filtros: { fuente?: string; estado?: string; q?: string; calidad?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: DemandaResumen[]; total: number }> {
   const verContacto = puedeVerContacto(sesion.rol_cimba);
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
+  const condCalidad = (filtros.calidad && FILTROS_CALIDAD[filtros.calidad]) || sql``;
 
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
@@ -75,6 +84,7 @@ export async function listarDemandas(
         and (${filtros.q ?? null}::text is null
              or d.direccion_normalizada ilike '%' || ${filtros.q ?? ""} || '%'
              or d.descripcion ilike '%' || ${filtros.q ?? ""} || '%')
+        ${condCalidad}
     `;
     const filas = (await tx.execute(sql`
       select d.id, d.fuente, d.estado, d.tipo, d.descripcion,
@@ -272,13 +282,17 @@ export interface IntervencionResumen {
 
 export async function listarIntervenciones(
   sesion: Sesion,
-  filtros: { estado?: string; limite?: number; pagina?: number },
+  filtros: { estado?: string; ejecutor?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${filtros.estado ?? null}::text is null or iv.estado = (${filtros.estado ?? null})::estado_intervencion)
+        and (${filtros.ejecutor ?? null}::text is null
+             or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
+                         iv.metadata->>'contratista',
+                         'Sin asignar') = ${filtros.ejecutor ?? null})
     `;
     const filas = (await tx.execute(sql`
       select iv.id, iv.incidente_id, iv.estado, c.nombre as cuadrilla,
@@ -312,12 +326,72 @@ export async function listarIntervenciones(
   });
 }
 
+/** Ejecutores (cuadrillas municipales + contratistas SIGOV) con conteo, para filtrar. */
+export async function listarEjecutores(sesion: Sesion): Promise<Array<{ nombre: string; n: number }>> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select coalesce(c.nombre, iv.metadata->>'contratista', 'Sin asignar') as nombre, count(*)::int as n
+      from intervenciones iv
+      left join cuadrillas c on c.id = iv.cuadrilla_id
+      group by 1 order by 2 desc
+    `)) as unknown as Array<{ nombre: string; n: number }>;
+    return filas.map((f) => ({ nombre: f.nombre, n: Number(f.n) }));
+  });
+}
+
 export async function listarCuadrillas(sesion: Sesion): Promise<Array<{ id: number; nombre: string }>> {
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(
       sql`select id, nombre from cuadrillas where activa order by nombre`,
     )) as unknown as Array<{ id: number; nombre: string }>;
     return filas.map((f) => ({ id: Number(f.id), nombre: f.nombre }));
+  });
+}
+
+// ── Calidad de datos ────────────────────────────────────────────────────────
+
+export interface EstadisticasCalidad {
+  sinVincular: number;
+  vinculables: number;
+  geocodBaja: number;
+  sinUbicacion: number;
+  sinFecha: number;
+  antiguas: number;
+  vinculadas: number;
+  autoVinculadas: number;
+}
+
+export async function estadisticasCalidad(sesion: Sesion): Promise<EstadisticasCalidad> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select
+        (select count(*) from demandas d where d.estado in ('recibida','en_validacion')
+           and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)) as sin_vincular,
+        (select count(*) from demandas d where d.estado = 'recibida' and d.geom is not null
+           and d.tipo is not null and coalesce(d.geocod_confianza,0) >= 0.75
+           and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)) as vinculables,
+        (select count(*) from demandas d where d.geom is not null
+           and coalesce(d.geocod_confianza,0) < 0.5 and d.estado in ('recibida','en_validacion')) as geocod_baja,
+        (select count(*) from demandas d where d.geom is null
+           and d.estado in ('recibida','en_validacion')) as sin_ubicacion,
+        (select count(*) from demandas d where d.metadata->>'sin_fecha' = 'true'
+           and d.estado in ('recibida','en_validacion')) as sin_fecha,
+        (select count(*) from demandas d where d.creado_en < now() - interval '365 days'
+           and d.estado in ('recibida','en_validacion')) as antiguas,
+        (select count(*) from demandas d where d.estado = 'vinculada') as vinculadas,
+        (select count(*) from demanda_incidente di where di.automatico) as auto_vinculadas
+    `)) as unknown as Array<Record<string, string | number>>;
+    const f = filas[0] ?? {};
+    return {
+      sinVincular: Number(f.sin_vincular ?? 0),
+      vinculables: Number(f.vinculables ?? 0),
+      geocodBaja: Number(f.geocod_baja ?? 0),
+      sinUbicacion: Number(f.sin_ubicacion ?? 0),
+      sinFecha: Number(f.sin_fecha ?? 0),
+      antiguas: Number(f.antiguas ?? 0),
+      vinculadas: Number(f.vinculadas ?? 0),
+      autoVinculadas: Number(f.auto_vinculadas ?? 0),
+    };
   });
 }
 

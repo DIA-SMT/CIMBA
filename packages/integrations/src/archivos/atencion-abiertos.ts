@@ -14,8 +14,13 @@ import { limpiarTexto, mapearTipo, parsearFecha, puntoValido } from "./util";
  * mínima para que entren a revisión manual y jamás auto-vinculen.
  */
 export async function parsearAtencionAbiertos(rutaXlsx: string): Promise<DemandaNormalizada[]> {
+  const { readFileSync } = await import("node:fs");
+  return parsearAtencionAbiertosBuffer(readFileSync(rutaXlsx));
+}
+
+export async function parsearAtencionAbiertosBuffer(contenido: Buffer | Uint8Array): Promise<DemandaNormalizada[]> {
   const { default: xlsx } = await import("xlsx");
-  const wb = xlsx.readFile(rutaXlsx);
+  const wb = xlsx.read(contenido, { type: "buffer" });
   const nombreHoja = wb.SheetNames[0];
   if (!nombreHoja) return [];
   const hoja = wb.Sheets[nombreHoja];

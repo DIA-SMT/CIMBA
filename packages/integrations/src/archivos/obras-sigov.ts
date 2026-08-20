@@ -32,8 +32,13 @@ function mapearEstado(estado: string | null): EstadoIntervencion {
 }
 
 export async function parsearObrasSigov(rutaXlsx: string): Promise<IntervencionNormalizada[]> {
+  const { readFileSync } = await import("node:fs");
+  return parsearObrasSigovBuffer(readFileSync(rutaXlsx));
+}
+
+export async function parsearObrasSigovBuffer(contenido: Buffer | Uint8Array): Promise<IntervencionNormalizada[]> {
   const { default: xlsx } = await import("xlsx");
-  const wb = xlsx.readFile(rutaXlsx, { cellDates: true });
+  const wb = xlsx.read(contenido, { type: "buffer", cellDates: true });
   const nombreHoja = wb.SheetNames[0];
   if (!nombreHoja) return [];
   const hoja = wb.Sheets[nombreHoja];

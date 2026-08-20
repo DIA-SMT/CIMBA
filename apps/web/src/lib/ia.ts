@@ -24,7 +24,11 @@ export function iaDisponible(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
 }
 
-async function completarJson<T>(sistema: string, usuario: string, schema: z.ZodType<T>): Promise<T> {
+async function completarJson<T>(
+  sistema: string,
+  usuario: string,
+  schema: { parse: (v: unknown) => T },
+): Promise<T> {
   const { apiKey, modelo } = configuracion();
   const res = await fetch(URL_OPENROUTER, {
     method: "POST",

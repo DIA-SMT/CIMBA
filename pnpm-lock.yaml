@@ -131,6 +131,9 @@ importers:
       csv-parse:
         specifier: ^5.6.0
         version: 5.6.0
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
       zod:
         specifier: ^3.25.0
         version: 3.25.76
@@ -153,9 +156,6 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
-      xlsx:
-        specifier: ^0.18.5
-        version: 0.18.5
 
 packages:
 

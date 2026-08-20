@@ -10,12 +10,18 @@ export const dynamic = "force-dynamic";
 export default async function PaginaDemandas({
   searchParams,
 }: {
-  searchParams: Promise<{ fuente?: string; estado?: string; q?: string; pagina?: string }>;
+  searchParams: Promise<{ fuente?: string; estado?: string; q?: string; calidad?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
   const { filas, total } = await listarDemandas(sesion, { ...filtros, pagina, limite: 50 });
+  const ETIQUETA_CALIDAD: Record<string, string> = {
+    geocod_baja: "geocodificación imprecisa",
+    sin_ubicacion: "sin ubicación",
+    sin_fecha: "sin fecha de origen",
+    antiguas: "antiguas (> 1 año)",
+  };
   const paginas = Math.max(1, Math.ceil(total / 50));
 
   const link = (cambios: Record<string, string | undefined>) => {
@@ -31,6 +37,16 @@ export default async function PaginaDemandas({
         titulo="Bandeja de demandas"
         sub={`${numero(total)} demandas · todas las fuentes en un solo lugar`}
       />
+
+      {filtros.calidad && ETIQUETA_CALIDAD[filtros.calidad] && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-amarillo/40 bg-amarillo/10 px-4 py-2.5 text-sm">
+          <span>
+            Filtro de calidad activo: <b>{ETIQUETA_CALIDAD[filtros.calidad]}</b>
+          </span>
+          <Link href="/demandas" className="text-celeste hover:underline">Quitar</Link>
+          <Link href="/calidad" className="ml-auto text-texto-3 hover:text-texto">← Volver a Calidad</Link>
+        </div>
+      )}
 
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/demandas" method="get">
         <select name="fuente" defaultValue={filtros.fuente ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
