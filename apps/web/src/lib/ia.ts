@@ -57,13 +57,17 @@ async function completarJson<T>(sistema: string, usuario: string, schema: z.ZodT
 // ── Análisis de demanda: clasificación + duplicado semántico ────────────────
 
 export const analisisDemandaSchema = z.object({
-  tipo_sugerido: z.enum([
-    "bache", "pavimento_deteriorado", "hundimiento", "fisura",
-    "sumidero", "tapa_registro", "perdida_agua", "otro",
-  ]),
-  confianza_tipo: z.number().min(0).max(1),
-  duplicado_de: z.number().int().nullable(),
-  confianza_duplicado: z.number().min(0).max(1),
+  // .catch("otro"): si el modelo inventa un tipo fuera del catálogo (p. ej.
+  // "señalización"), degrada a "otro" en vez de romper el análisis.
+  tipo_sugerido: z
+    .enum([
+      "bache", "pavimento_deteriorado", "hundimiento", "fisura",
+      "sumidero", "tapa_registro", "perdida_agua", "otro",
+    ])
+    .catch("otro"),
+  confianza_tipo: z.number().min(0).max(1).catch(0.3),
+  duplicado_de: z.number().int().nullable().catch(null),
+  confianza_duplicado: z.number().min(0).max(1).catch(0),
   razonamiento: z.string().transform((s) => (s.length > 600 ? `${s.slice(0, 599)}…` : s)),
 });
 export type AnalisisDemanda = z.infer<typeof analisisDemandaSchema>;
@@ -93,6 +97,7 @@ export async function analizarDemandaIA(
   const sistema = `Sos el asistente de deduplicación de CIMBA, el sistema de bacheo de San Miguel de Tucumán.
 Analizás una demanda ciudadana y decidís: (1) el tipo de problema vial, (2) si corresponde al MISMO problema físico que alguno de los incidentes cercanos listados (misma esquina escrita distinto, misma rotura descripta con otras palabras).
 Sé conservador: ante la duda, duplicado_de = null. Nunca inventes IDs: duplicado_de debe ser uno de los incidenteId listados o null.
+tipo_sugerido debe ser EXACTAMENTE uno de: bache, pavimento_deteriorado, hundimiento, fisura, sumidero, tapa_registro, perdida_agua, otro. Si el problema no encaja en el catálogo (señalización, alumbrado, arbolado…), usá "otro" y explicalo en el razonamiento.
 Respondé SOLO un objeto JSON con: tipo_sugerido, confianza_tipo (0-1), duplicado_de (número o null), confianza_duplicado (0-1), razonamiento (breve, en español).`;
 
   const usuario = JSON.stringify({

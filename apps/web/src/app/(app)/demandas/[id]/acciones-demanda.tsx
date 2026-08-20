@@ -38,10 +38,15 @@ export function AccionesDemanda({
     setAnalizando(true);
     setError(null);
     try {
-      setAnalisis(await analizarDemandaConIA({ demandaId }));
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "La IA no pudo analizar la demanda");
+      const r = await analizarDemandaConIA({ demandaId });
+      if (r.ok) {
+        setAnalisis(r.analisis);
+        router.refresh();
+      } else {
+        setError(r.error);
+      }
+    } catch {
+      setError("La IA no pudo analizar la demanda (reintentá en unos segundos)");
     } finally {
       setAnalizando(false);
     }

@@ -14,7 +14,21 @@ import { analizarDemandaIA, iaDisponible, type AnalisisDemanda } from "./ia";
  * confianza es alta, se completa el tipo. La vinculación SIEMPRE la decide
  * una persona: la IA solo sugiere.
  */
-export async function analizarDemandaConIA(entrada: { demandaId: number }): Promise<AnalisisDemanda> {
+export type RespuestaAnalisis = { ok: true; analisis: AnalisisDemanda } | { ok: false; error: string };
+
+/**
+ * Devuelve errores como valor (no throw): en producción Next enmascara las
+ * excepciones de server actions y el operador vería un mensaje inútil.
+ */
+export async function analizarDemandaConIA(entrada: { demandaId: number }): Promise<RespuestaAnalisis> {
+  try {
+    return { ok: true, analisis: await analizarDemandaConIAInterno(entrada) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Error inesperado analizando la demanda" };
+  }
+}
+
+async function analizarDemandaConIAInterno(entrada: { demandaId: number }): Promise<AnalisisDemanda> {
   const sesion = await requerirRol("atencion_ciudadana", "planificacion");
   const { demandaId } = z.object({ demandaId: z.number().int() }).parse(entrada);
   if (!iaDisponible()) throw new Error("La integración de IA no está configurada (OPENROUTER_API_KEY)");
