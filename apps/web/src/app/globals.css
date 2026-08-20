@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/*
+ * Sistema visual CIMBA — Centro de comando, modo oscuro.
+ * Identidad: paleta oficial SMT (el orden y los valores no se alteran):
+ *   #0066FF azul (innovación y confianza) · #2EB1FF celeste (bandera)
+ *   #F4DC00 amarillo (sol) · #333333 neutro.
+ * Datos en mapa: paleta funcional validada (daltonismo + contraste)
+ * sobre superficie #0B0F16 — ver docs/decisiones.md.
+ */
+@theme {
+  /* Marca SMT */
+  --color-azul: #0066ff;
+  --color-celeste: #2eb1ff;
+  --color-amarillo: #f4dc00;
+  --color-neutro: #333333;
+
+  /* Superficies */
+  --color-fondo: #070a10;
+  --color-panel: #0b0f16;
+  --color-panel-2: #101624;
+  --color-panel-3: #161d2e;
+  --color-borde: #1d2639;
+  --color-borde-2: #2b374f;
+
+  /* Texto */
+  --color-texto: #edf2fa;
+  --color-texto-2: #8fa3bf;
+  --color-texto-3: #5c6b84;
+
+  /* Estados de incidente (macro, validados sobre #0B0F16) */
+  --color-abierto: #3987e5;
+  --color-encurso: #d95926;
+  --color-resuelto: #199e70;
+  --color-inactivo: #6b7280;
+
+  /* Semánticos */
+  --color-peligro: #e66767;
+  --color-ok: #199e70;
+
+  --font-sans: var(--font-poppins), system-ui, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Textura sutil de grilla técnica sobre el fondo */
+.fondo-grilla {
+  background-image:
+    linear-gradient(rgba(46, 177, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 177, 255, 0.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+/* Panel de vidrio del centro de comando */
+.panel-vidrio {
+  background: color-mix(in srgb, var(--color-panel) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--color-borde);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* Números tabulares para KPIs y coordenadas */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Scrollbars finos */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-borde-2) transparent;
+}
+
+/* Pulso para incidentes en ejecución (leyenda / chips) */
+@keyframes pulso {
+  0% { box-shadow: 0 0 0 0 rgba(217, 89, 38, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(217, 89, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 89, 38, 0); }
+}
+.pulso { animation: pulso 1.8s ease-out infinite; }
+
+/* Barrido de radar del logo CIMBA */
+@keyframes barrido {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Popups de MapLibre en tema oscuro */
+.maplibregl-popup-content {
+  background: var(--color-panel-2) !important;
+  color: var(--color-texto) !important;
+  border: 1px solid var(--color-borde-2);
+  border-radius: 10px !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55) !important;
+  font-family: var(--font-sans);
+  padding: 0 !important;
+}
+.maplibregl-popup-tip {
+  border-top-color: var(--color-panel-2) !important;
+  border-bottom-color: var(--color-panel-2) !important;
+}
+.maplibregl-popup-close-button {
+  color: var(--color-texto-2) !important;
+  font-size: 18px;
+  padding: 4px 8px;
+}
+.maplibregl-ctrl-attrib {
+  background: rgba(7, 10, 16, 0.7) !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--color-texto-3) !important;
+}

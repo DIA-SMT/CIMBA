@@ -1,0 +1,31 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# next
+.next/
+out/
+next-env.d.ts
+
+# builds
+dist/
+.turbo/
+
+# env — nunca commitear credenciales
+.env
+.env.local
+.env*.local
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# datos normalizados desde archivos fuente (contienen datos personales)
+data/normalizado/
+
+# misc
+*.tsbuildinfo
+.DS_Store
+coverage/
+playwright-report/
+test-results/

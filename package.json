@@ -1,0 +1,26 @@
+{
+  "name": "cimba",
+  "private": true,
+  "version": "0.1.0",
+  "description": "CIMBA — Centro Inteligente de Monitoreo de Baches y Asfalto. Municipalidad de San Miguel de Tucumán.",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:migrar": "node scripts/db.mjs migrar",
+    "db:seed": "node scripts/db.mjs seed",
+    "db:estado": "node scripts/db.mjs estado",
+    "ingest:archivos": "pnpm --filter @cimba/integrations ingest:archivos",
+    "ingest:mock": "pnpm --filter @cimba/integrations ingest:mock"
+  },
+  "devDependencies": {
+    "postgres": "^3.4.5",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3"
+  }
+}

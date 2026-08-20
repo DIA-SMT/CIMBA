@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/sync/atencion-ciudadana",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}
