@@ -64,7 +64,7 @@ export const analisisDemandaSchema = z.object({
   confianza_tipo: z.number().min(0).max(1),
   duplicado_de: z.number().int().nullable(),
   confianza_duplicado: z.number().min(0).max(1),
-  razonamiento: z.string().max(600),
+  razonamiento: z.string().transform((s) => (s.length > 600 ? `${s.slice(0, 599)}…` : s)),
 });
 export type AnalisisDemanda = z.infer<typeof analisisDemandaSchema>;
 
@@ -123,16 +123,18 @@ Respondé SOLO un objeto JSON con: tipo_sugerido, confianza_tipo (0-1), duplicad
 
 // ── Informe ejecutivo del mapa ───────────────────────────────────────────────
 
+const recortar = (max: number) => z.string().transform((s) => (s.length > max ? `${s.slice(0, max - 1)}…` : s));
+
 export const informeSchema = z.object({
-  titulo: z.string().max(120),
-  resumen: z.string().max(1200),
-  focos: z.array(z.string().max(200)).max(5),
-  recomendaciones: z.array(z.string().max(200)).max(4),
+  titulo: recortar(120),
+  resumen: recortar(1200),
+  focos: z.array(recortar(300)).max(5),
+  recomendaciones: z.array(recortar(300)).max(4),
 });
 export type InformeIA = z.infer<typeof informeSchema>;
 
 export async function generarInformeIA(agregados: Record<string, unknown>): Promise<InformeIA> {
   const sistema = `Sos el analista territorial de CIMBA (bacheo, San Miguel de Tucumán). Recibís agregados del estado actual del territorio (conteos por estado, tipo, fuente, zonas calientes). Escribí un informe ejecutivo corto en español rioplatense, tono profesional municipal, sin inventar números que no estén en los datos.
-Respondé SOLO JSON: { "titulo", "resumen" (2-4 frases), "focos" (hasta 5 bullets con lo más crítico), "recomendaciones" (hasta 4 acciones concretas) }.`;
+Respondé SOLO JSON: { "titulo", "resumen" (2-4 frases), "focos" (hasta 5 bullets de UNA frase corta cada uno), "recomendaciones" (hasta 4 acciones concretas de una frase) }.`;
   return completarJson(sistema, JSON.stringify(agregados), informeSchema);
 }

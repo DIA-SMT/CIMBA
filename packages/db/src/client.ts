@@ -4,21 +4,29 @@ import postgres from "postgres";
 import type { RolUsuario } from "@cimba/domain";
 import * as schema from "./schema";
 
-let _client: ReturnType<typeof postgres> | null = null;
-let _db: ReturnType<typeof crearDb> | null = null;
-
 function crearDb(client: ReturnType<typeof postgres>) {
   return drizzle(client, { schema });
 }
 
+// Singleton en globalThis: en dev, el HMR de Next recarga este módulo y sin
+// esto cada recompilación abriría un pool nuevo hasta saturar el pooler.
+const globalDb = globalThis as unknown as {
+  __cimbaDb?: ReturnType<typeof crearDb>;
+};
+
 export function getDb() {
-  if (!_db) {
+  if (!globalDb.__cimbaDb) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL no configurada");
-    _client = postgres(url, { prepare: false, max: 10 });
-    _db = crearDb(_client);
+    const client = postgres(url, {
+      prepare: false, // requerido por el pooler de transacciones de Supabase
+      max: Number(process.env.CIMBA_DB_POOL ?? 5),
+      idle_timeout: 20,
+      max_lifetime: 60 * 15,
+    });
+    globalDb.__cimbaDb = crearDb(client);
   }
-  return _db;
+  return globalDb.__cimbaDb;
 }
 
 export type Db = ReturnType<typeof getDb>;
