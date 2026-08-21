@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function PaginaMapa({
   searchParams,
 }: {
-  searchParams: Promise<{ lat?: string; lon?: string; z?: string }>;
+  searchParams: Promise<{ lat?: string; lon?: string; z?: string; vista?: string; brecha?: string; fuente?: string; tipo?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const kpis = await obtenerKpis(sesion);
@@ -22,5 +22,22 @@ export default async function PaginaMapa({
       ? { lat, lon, zoom: Math.min(19, Math.max(11, Number(sp.z) || 16.5)) }
       : null;
 
-  return <MapaCimba kpisIniciales={kpis} rol={sesion.rol_cimba} iaHabilitada={iaDisponible()} foco={foco} />;
+  const inicial = {
+    vista: ["operativo", "historico", "analisis", "brecha", "completo"].includes(sp.vista ?? "")
+      ? (sp.vista as "operativo" | "historico" | "analisis" | "brecha" | "completo")
+      : undefined,
+    brecha: ["sin_atencion", "en_cola", "posible_resuelta"].includes(sp.brecha ?? "") ? sp.brecha : undefined,
+    fuente: sp.fuente,
+    tipo: sp.tipo,
+  };
+
+  return (
+    <MapaCimba
+      kpisIniciales={kpis}
+      rol={sesion.rol_cimba}
+      iaHabilitada={iaDisponible()}
+      foco={foco}
+      inicial={inicial}
+    />
+  );
 }

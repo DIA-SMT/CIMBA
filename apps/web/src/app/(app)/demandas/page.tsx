@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function PaginaDemandas({
   searchParams,
 }: {
-  searchParams: Promise<{ fuente?: string; estado?: string; q?: string; calidad?: string; pagina?: string }>;
+  searchParams: Promise<{ fuente?: string; estado?: string; q?: string; calidad?: string; mes?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -38,6 +38,14 @@ export default async function PaginaDemandas({
         titulo="Bandeja de demandas"
         sub={`${numero(total)} demandas · todas las fuentes en un solo lugar`}
       />
+
+      {filtros.mes && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-celeste/40 bg-celeste/10 px-4 py-2.5 text-sm">
+          <span>Mostrando pedidos ingresados en <b className="num">{filtros.mes}</b></span>
+          <Link href="/demandas" className="text-celeste hover:underline">Quitar</Link>
+          <Link href="/brecha" className="ml-auto text-texto-3 hover:text-texto">← Volver a Brecha</Link>
+        </div>
+      )}
 
       {filtros.calidad && ETIQUETA_CALIDAD[filtros.calidad] && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-amarillo/40 bg-amarillo/10 px-4 py-2.5 text-sm">

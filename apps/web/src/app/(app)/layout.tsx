@@ -15,6 +15,7 @@ import {
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
 import { MigueChat } from "@/components/migue-chat";
+import { BotonPush } from "@/components/boton-push";
 
 const NAV = [
   { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
@@ -39,6 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <LogoCimba />
         </Link>
         <div className="flex items-center gap-4">
+          <BotonPush />
           <div className="hidden text-right sm:block">
             <div className="text-xs font-semibold">{sesion.nombre}</div>
             <div className="text-[10px] font-medium tracking-wider text-celeste uppercase">

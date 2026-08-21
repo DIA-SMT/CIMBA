@@ -38,6 +38,9 @@ const VARIABLES = [
   "DEV_FAKE_SSO",
   "CIMBA_FUENTE_AC",
   "NEXT_PUBLIC_MAP_STYLE_DARK",
+  "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
+  "VAPID_PRIVATE_KEY",
+  "VAPID_SUBJECT",
 ];
 
 const cuerpo = VARIABLES.filter((k) => process.env[k]).map((key) => ({

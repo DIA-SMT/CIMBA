@@ -70,7 +70,7 @@ const FILTROS_CALIDAD: Record<string, ReturnType<typeof sql>> = {
 
 export async function listarDemandas(
   sesion: Sesion,
-  filtros: { fuente?: string; estado?: string; q?: string; calidad?: string; limite?: number; pagina?: number },
+  filtros: { fuente?: string; estado?: string; q?: string; calidad?: string; mes?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: DemandaResumen[]; total: number }> {
   const verContacto = puedeVerContacto(sesion.rol_cimba);
   const limite = Math.min(filtros.limite ?? 50, 200);
@@ -84,6 +84,7 @@ export async function listarDemandas(
         and (${filtros.q ?? null}::text is null
              or d.direccion_normalizada ilike '%' || ${filtros.q ?? ""} || '%'
              or d.descripcion ilike '%' || ${filtros.q ?? ""} || '%')
+        and (${filtros.mes ?? null}::text is null or to_char(d.creado_en, 'YYYY-MM') = ${filtros.mes ?? null})
         ${condCalidad}
     `;
     const filas = (await tx.execute(sql`

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { conRls, sql, type SQL } from "@cimba/db";
 import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
+import { notificarRoles } from "./push";
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
 
@@ -139,6 +140,13 @@ export async function programarIntervencion(entrada: { incidenteId: number; cuad
   revalidatePath("/incidentes");
   revalidatePath("/intervenciones");
   revalidatePath("/campo");
+  // Push a las cuadrillas suscriptas (best-effort: nunca bloquea la acción)
+  void notificarRoles(["cuadrilla"], {
+    titulo: "CIMBA · nueva intervención",
+    cuerpo: "Se programó un trabajo para tu cuadrilla. Abrí Campo para verlo.",
+    url: "/campo",
+    tag: "intervencion-programada",
+  }).catch(() => {});
   return { ok: true, intervencionId };
 }
 

@@ -321,11 +321,19 @@ export interface FocoMapa {
   zoom: number;
 }
 
+export interface InicialMapa {
+  vista?: Vista;
+  brecha?: string;
+  fuente?: string;
+  tipo?: string;
+}
+
 export function MapaCimba(props: {
   kpisIniciales: Kpis;
   rol: RolUsuario;
   iaHabilitada: boolean;
   foco?: FocoMapa | null;
+  inicial?: InicialMapa;
 }) {
   return (
     <QueryClientProvider client={clienteQuery}>
@@ -349,11 +357,13 @@ function MapaInterno({
   kpisIniciales,
   iaHabilitada,
   foco,
+  inicial,
 }: {
   kpisIniciales: Kpis;
   rol: RolUsuario;
   iaHabilitada: boolean;
   foco?: FocoMapa | null;
+  inicial?: InicialMapa;
 }) {
   const mapRef = useRef<MapRef>(null);
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
@@ -364,13 +374,21 @@ function MapaInterno({
   const [errorInforme, setErrorInforme] = useState<string | null>(null);
 
   // Estado de capas y filtros — arranca en vista OPERATIVA (lo accionable)
-  const [vista, setVista] = useState<Vista>("operativo");
-  const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS.operativo.macro });
-  const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(true);
-  const [verDemandas, setVerDemandas] = useState(true);
-  const [verCalor, setVerCalor] = useState(false);
+  const vistaInicial: Vista = inicial?.vista ?? "operativo";
+  const [vista, setVista] = useState<Vista>(vistaInicial);
+  const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS[vistaInicial].macro });
+  const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(VISTAS[vistaInicial].demandasAbiertas);
+  const [verDemandas, setVerDemandas] = useState(VISTAS[vistaInicial].verDemandas);
+  const [verCalor, setVerCalor] = useState(VISTAS[vistaInicial].calor);
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
-  const [tipos, setTipos] = useState<Record<string, boolean>>({});
+  const [tipos, setTipos] = useState<Record<string, boolean>>(() => {
+    // ?tipo=bache aísla ese tipo (los demás quedan apagados)
+    if (!inicial?.tipo || !(inicial.tipo in ETIQUETA_TIPO)) return {};
+    const apagados: Record<string, boolean> = {};
+    for (const t of Object.keys(ETIQUETA_TIPO)) apagados[t] = t === inicial.tipo;
+    return apagados;
+  });
+  const [filtroBrecha, setFiltroBrecha] = useState<string | null>(inicial?.brecha ?? null);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
@@ -401,6 +419,14 @@ function MapaInterno({
     return [...s].sort();
   }, [data]);
 
+  // ?fuente=hcd aísla esa fuente apenas conocemos el universo
+  useEffect(() => {
+    if (!inicial?.fuente || fuentesPresentes.length === 0) return;
+    if (!fuentesPresentes.includes(inicial.fuente)) return;
+    setFuentes(Object.fromEntries(fuentesPresentes.map((f) => [f, f === inicial.fuente])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fuentesPresentes.length]);
+
   const corte = dias ? Date.now() - dias * 86_400_000 : null;
 
   const incidentesFiltrados = useMemo<FC>(() => {
@@ -420,11 +446,12 @@ function MapaInterno({
       if (tipos[String(f.properties.tipo)] === false) return false;
       if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
         return false;
+      if (vista === "brecha" && filtroBrecha && String(f.properties.brecha) !== filtroBrecha) return false;
       if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, tipos, soloDemandasAbiertas, corte]);
+  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha]);
 
   // Zonas calientes: direcciones más repetidas entre las demandas visibles
   const zonasCalientes = useMemo(() => {
@@ -845,24 +872,42 @@ function MapaInterno({
 
       {/* Leyenda de la vista Brecha */}
       {vista === "brecha" && (
-        <div className="panel-vidrio pointer-events-none absolute top-28 left-1/2 z-10 -translate-x-1/2 rounded-xl px-4 py-2">
-          <div className="flex items-center gap-4 text-[11px] font-medium">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.en_curso }} />
-              Sin atención ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "sin_atencion").length)})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.abierto }} />
-              En cola ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "en_cola").length)})
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.resuelto }} />
-              Posible resuelta ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "posible_resuelta").length)})
-            </span>
-            <Link href="/brecha" className="pointer-events-auto font-semibold text-celeste hover:underline">
-              Ver informe →
+        <div className="panel-vidrio absolute top-28 left-1/2 z-10 -translate-x-1/2 rounded-xl px-4 py-2">
+          <div className="flex items-center gap-3 text-[11px] font-medium">
+            {(
+              [
+                ["sin_atencion", "Sin atención", COLOR_MACRO.en_curso],
+                ["en_cola", "En cola", COLOR_MACRO.abierto],
+                ["posible_resuelta", "Posible resuelta", COLOR_MACRO.resuelto],
+              ] as const
+            ).map(([clave, etiqueta, color]) => {
+              const n = (data?.demandas.features ?? []).filter(
+                (f) =>
+                  f.properties.brecha === clave &&
+                  ["recibida", "en_validacion"].includes(String(f.properties.estado)),
+              ).length;
+              const activo = filtroBrecha === clave;
+              return (
+                <button
+                  key={clave}
+                  onClick={() => setFiltroBrecha(activo ? null : clave)}
+                  title={activo ? "Quitar filtro" : "Mostrar solo esta categoría"}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition ${
+                    activo ? "border-celeste bg-celeste/15" : "border-transparent hover:border-borde-2"
+                  }`}
+                >
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
+                  {etiqueta} ({numero(n)})
+                </button>
+              );
+            })}
+            <Link href="/brecha" className="font-semibold text-celeste hover:underline">
+              Informe →
             </Link>
           </div>
+          <p className="mt-1 text-center text-[10px] text-texto-3">
+            Clic en una categoría para aislarla · clic en un punto para ver por qué y cotejarlo
+          </p>
         </div>
       )}
 
@@ -1137,6 +1182,35 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
               <Dato etiqueta="Confianza geocod." valor={`${Math.round(Number(p.confianza) * 100)}%`} />
             )}
             <Dato etiqueta="Ingresó" valor={fechaCorta(String(p.creado_en))} />
+            {p.brecha != null && p.brecha !== "atendida" && (
+              <div className="rounded-lg border border-borde bg-panel-2/60 p-2.5">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{
+                      background:
+                        p.brecha === "sin_atencion"
+                          ? COLOR_MACRO.en_curso
+                          : p.brecha === "en_cola"
+                            ? COLOR_MACRO.abierto
+                            : COLOR_MACRO.resuelto,
+                    }}
+                  />
+                  {p.brecha === "sin_atencion"
+                    ? "Sin atención"
+                    : p.brecha === "en_cola"
+                      ? "En cola"
+                      : "Posible resuelta"}
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-texto-2">
+                  {p.brecha === "sin_atencion"
+                    ? "No hay reparación ni trabajo en curso a menos de 40 m: este pedido está en la brecha real."
+                    : p.brecha === "en_cola"
+                      ? "Hay un incidente abierto a menos de 40 m: este pedido debería vincularse a ese trabajo."
+                      : "Hay una reparación posterior a menos de 40 m: cotejalo para cerrar el circuito y que cuente como atendido."}
+                </p>
+              </div>
+            )}
           </>
         )}
         <div className="num pt-1 text-[10px] text-texto-3">
@@ -1157,7 +1231,11 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
           href={esIncidente ? `/incidentes?foco=${String(p.id)}` : `/demandas/${String(p.id)}`}
           className="block rounded-lg bg-azul px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
         >
-          {esIncidente ? "Gestionar incidente" : "Abrir en bandeja"}
+          {esIncidente
+            ? "Gestionar incidente"
+            : p.brecha === "posible_resuelta"
+              ? "Revisar y cotejar →"
+              : "Abrir en bandeja"}
         </Link>
       </div>
     </aside>
