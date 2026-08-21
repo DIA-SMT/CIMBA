@@ -5,6 +5,7 @@ import { listarCuadrillas, listarIncidentes } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { BadgeEstadoIncidente, BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { AccionesIncidente } from "./acciones-incidente";
+import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,8 @@ export default async function PaginaIncidentes({
                 <td className="num px-4 py-2.5">{i.intervenciones}</td>
                 <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(i.detectadoEn)}</td>
                 <td className="px-4 py-2.5">
+                  <div className="flex items-center justify-end gap-2">
+                  <VerEnMapa lat={i.lat} lon={i.lon} etiqueta={i.direccion ?? `Incidente #${i.id}`} />
                   <AccionesIncidente
                     incidenteId={i.id}
                     estado={i.estado}
@@ -105,6 +108,7 @@ export default async function PaginaIncidentes({
                     puedePlanificar={puedePlanificar}
                     puedeVerificar={puedeVerificar}
                   />
+                  </div>
                 </td>
               </tr>
             ))}

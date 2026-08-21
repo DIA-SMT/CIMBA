@@ -3,6 +3,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarEjecutores, listarIntervenciones } from "@/lib/consultas";
 import { fechaCorta, numero } from "@/lib/formato";
 import { Chip, Panel, TituloPagina } from "@/components/ui";
+import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,7 @@ export default async function PaginaIntervenciones({
               <th className="px-4 py-3">m²</th>
               <th className="px-4 py-3">Fotos</th>
               <th className="px-4 py-3">Fin</th>
+              <th className="px-4 py-3">Mapa</th>
             </tr>
           </thead>
           <tbody>
@@ -92,12 +94,15 @@ export default async function PaginaIntervenciones({
                   <td className="num px-4 py-2.5">{iv.superficieM2 != null ? numero(Math.round(iv.superficieM2)) : "—"}</td>
                   <td className="num px-4 py-2.5">{iv.fotos > 0 ? `📷 ${iv.fotos}` : "—"}</td>
                   <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(iv.finalizadaEn)}</td>
+                  <td className="px-4 py-2.5">
+                    <VerEnMapa lat={iv.lat} lon={iv.lon} etiqueta={iv.direccion ?? `Intervención #${iv.id}`} color="#199e70" />
+                  </td>
                 </tr>
               );
             })}
             {filas.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-texto-3">Sin intervenciones.</td>
+                <td colSpan={9} className="px-4 py-10 text-center text-texto-3">Sin intervenciones.</td>
               </tr>
             )}
           </tbody>

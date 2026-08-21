@@ -4,6 +4,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarDemandas } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
+import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
 export const dynamic = "force-dynamic";
 
@@ -100,9 +101,12 @@ export default async function PaginaDemandas({
                 <td className="px-4 py-2.5"><BadgeEstadoDemanda estado={d.estado} /></td>
                 <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(d.creadoEn)}</td>
                 <td className="px-4 py-2.5 text-right">
-                  <Link href={`/demandas/${d.id}`} className="font-semibold text-celeste hover:underline">
-                    Revisar →
-                  </Link>
+                  <div className="flex items-center justify-end gap-2">
+                    <VerEnMapa lat={d.lat} lon={d.lon} etiqueta={d.direccion ?? `Demanda #${d.id}`} color="#8fa3bf" />
+                    <Link href={`/demandas/${d.id}`} className="font-semibold text-celeste hover:underline">
+                      Revisar →
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}

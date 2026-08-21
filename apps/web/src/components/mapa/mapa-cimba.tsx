@@ -285,7 +285,18 @@ const capaCalor: LayerProps = {
 
 const clienteQuery = new QueryClient();
 
-export function MapaCimba(props: { kpisIniciales: Kpis; rol: RolUsuario; iaHabilitada: boolean }) {
+export interface FocoMapa {
+  lat: number;
+  lon: number;
+  zoom: number;
+}
+
+export function MapaCimba(props: {
+  kpisIniciales: Kpis;
+  rol: RolUsuario;
+  iaHabilitada: boolean;
+  foco?: FocoMapa | null;
+}) {
   return (
     <QueryClientProvider client={clienteQuery}>
       <MapaInterno {...props} />
@@ -304,11 +315,20 @@ type Seleccion =
   | { capa: "incidente"; props: Record<string, unknown>; lngLat: [number, number] }
   | { capa: "demanda"; props: Record<string, unknown>; lngLat: [number, number] };
 
-function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol: RolUsuario; iaHabilitada: boolean }) {
+function MapaInterno({
+  kpisIniciales,
+  iaHabilitada,
+  foco,
+}: {
+  kpisIniciales: Kpis;
+  rol: RolUsuario;
+  iaHabilitada: boolean;
+  foco?: FocoMapa | null;
+}) {
   const mapRef = useRef<MapRef>(null);
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
   const [panelCapas, setPanelCapas] = useState(true);
-  const [marcador, setMarcador] = useState<[number, number] | null>(null);
+  const [marcador, setMarcador] = useState<[number, number] | null>(foco ? [foco.lon, foco.lat] : null);
   const [informe, setInforme] = useState<Informe | null>(null);
   const [generandoInforme, setGenerandoInforme] = useState(false);
   const [errorInforme, setErrorInforme] = useState<string | null>(null);
@@ -579,7 +599,11 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
     <div className="relative h-full w-full overflow-hidden">
       <MapaGL
         ref={mapRef}
-        initialViewState={{ longitude: CENTRO_SMT[0], latitude: CENTRO_SMT[1], zoom: 12.6 }}
+        initialViewState={{
+          longitude: foco?.lon ?? CENTRO_SMT[0],
+          latitude: foco?.lat ?? CENTRO_SMT[1],
+          zoom: foco?.zoom ?? 12.6,
+        }}
         mapStyle={ESTILO_MAPA}
         maxZoom={19.5}
         interactiveLayerIds={["clusters", "incidentes-punto", "demandas-punto"]}

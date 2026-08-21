@@ -273,6 +273,8 @@ export interface IntervencionResumen {
   estado: string;
   cuadrilla: string | null;
   direccion: string | null;
+  lat: number | null;
+  lon: number | null;
   iniciadaEn: string | null;
   finalizadaEn: string | null;
   superficieM2: number | null;
@@ -296,7 +298,10 @@ export async function listarIntervenciones(
     `;
     const filas = (await tx.execute(sql`
       select iv.id, iv.incidente_id, iv.estado, c.nombre as cuadrilla,
-             i.direccion, iv.iniciada_en, iv.finalizada_en, iv.superficie_m2, iv.metadata,
+             i.direccion,
+             st_y(coalesce(iv.geom_ejecucion, i.geom)) as lat,
+             st_x(coalesce(iv.geom_ejecucion, i.geom)) as lon,
+             iv.iniciada_en, iv.finalizada_en, iv.superficie_m2, iv.metadata,
              (select count(*) from fotografias fo where fo.intervencion_id = iv.id) as fotos
       from intervenciones iv
       join incidentes i on i.id = iv.incidente_id
@@ -315,6 +320,8 @@ export async function listarIntervenciones(
         estado: String(f.estado),
         cuadrilla: (f.cuadrilla as string) ?? null,
         direccion: (f.direccion as string) ?? null,
+        lat: f.lat != null ? Number(f.lat) : null,
+        lon: f.lon != null ? Number(f.lon) : null,
         iniciadaEn: f.iniciada_en != null ? String(f.iniciada_en) : null,
         finalizadaEn: f.finalizada_en != null ? String(f.finalizada_en) : null,
         superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,

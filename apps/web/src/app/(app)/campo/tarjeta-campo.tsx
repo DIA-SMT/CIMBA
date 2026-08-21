@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { finalizarIntervencion, iniciarIntervencion, subirFoto } from "@/lib/acciones";
 import { Panel } from "@/components/ui";
+import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
 interface Trabajo {
   id: number;
   incidenteId: number;
   estado: string;
   direccion: string | null;
+  lat: number | null;
+  lon: number | null;
   cuadrilla: string | null;
   fotos: number;
 }
@@ -95,7 +98,15 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
           <p className="mt-1 text-sm font-medium">{intervencion.direccion ?? "Sin dirección"}</p>
           {intervencion.cuadrilla && <p className="text-xs text-texto-3">{intervencion.cuadrilla}</p>}
         </div>
-        <span className="num text-xs text-texto-3">📷 {intervencion.fotos}</span>
+        <div className="flex items-center gap-2">
+          <VerEnMapa
+            lat={intervencion.lat}
+            lon={intervencion.lon}
+            etiqueta={intervencion.direccion ?? `Intervención #${intervencion.id}`}
+            color="#d95926"
+          />
+          <span className="num text-xs text-texto-3">📷 {intervencion.fotos}</span>
+        </div>
       </div>
 
       {error && <p className="mb-2 text-xs text-peligro">{error}</p>}

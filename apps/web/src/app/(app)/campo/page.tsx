@@ -35,6 +35,8 @@ export default async function PaginaCampo() {
                 incidenteId: iv.incidenteId,
                 estado: iv.estado,
                 direccion: iv.direccion,
+                lat: iv.lat,
+                lon: iv.lon,
                 cuadrilla: iv.cuadrilla,
                 fotos: iv.fotos,
               }}
