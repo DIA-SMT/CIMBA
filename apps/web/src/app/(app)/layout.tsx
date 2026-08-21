@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   ClipboardList,
+  GitCompareArrows,
   HardHat,
   Inbox,
   Landmark,
@@ -17,6 +18,7 @@ import { MigueChat } from "@/components/migue-chat";
 
 const NAV = [
   { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
+  { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
   { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
   { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
   { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },

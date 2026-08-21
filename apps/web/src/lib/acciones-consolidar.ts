@@ -186,6 +186,70 @@ export async function consolidarAutomaticamente(): Promise<ResultadoConsolidacio
   });
 }
 
+
+// ── Cotejo retroactivo: cerrar pedidos que ya fueron resueltos ───────────────
+
+export interface ResultadoCotejo {
+  cerradas: number;
+  candidatasRestantes: number;
+}
+
+/**
+ * El otro lado de la brecha: pedidos abiertos cuyo lugar YA fue reparado
+ * DESPUÉS del pedido (o el pedido no tiene fecha confiable). Los vincula al
+ * incidente reparado más cercano (≤ 25 m, tipo compatible, geocodificación
+ * ≥ 0.75) y los marca vinculados. No borra nada: queda auditoría, el vínculo
+ * lleva automatico=true y metadata.cotejo_retroactivo para poder revisarlo.
+ * Lo que no cumple los umbrales queda para revisión humana en la bandeja.
+ */
+export async function cotejarConReparados(opciones?: { ampliado?: boolean }): Promise<ResultadoCotejo> {
+  const sesion = await requerirRol("atencion_ciudadana", "planificacion", "supervision");
+  // Modo ampliado: incluye pedidos sin etiqueta de confianza de geocodificación
+  // (consolidado histórico de QGIS). Sigue exigiendo ≤ 25 m, tipo compatible y
+  // reparación posterior — la cercanía es en sí una señal fuerte. El vínculo
+  // queda con confianza menor (0.7) para poder distinguirlo después.
+  const ampliado = opciones?.ampliado === true;
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      with candidatas as (
+        select distinct on (d.id) d.id as demanda_id, i.id as incidente_id
+        from demandas d
+        join incidentes i
+          on i.estado in ('reparado','verificado')
+         and st_dwithin(i.geom::geography, d.geom::geography, 25)
+         and (d.tipo is null or i.tipo = d.tipo
+                        or (d.tipo in ('bache','pavimento_deteriorado','hundimiento','fisura')
+                            and i.tipo in ('bache','pavimento_deteriorado','hundimiento','fisura')))
+         and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)
+        where d.estado in ('recibida','en_validacion')
+          and d.geom is not null
+          and coalesce(d.geocod_confianza, ${ampliado ? 1 : 0}) >= 0.75
+          and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)
+        order by d.id, st_distance(i.geom::geography, d.geom::geography)
+      ),
+      insertadas as (
+        insert into demanda_incidente (demanda_id, incidente_id, vinculado_por, automatico, confianza)
+        select demanda_id, incidente_id, ${sesion.sub}, true, ${ampliado ? 0.7 : 0.85} from candidatas
+        on conflict do nothing
+        returning demanda_id
+      ),
+      marcadas as (
+        update demandas set estado = 'vinculada',
+          metadata = metadata || '{"cotejo_retroactivo": true}'::jsonb
+        where id in (select demanda_id from insertadas)
+        returning id
+      )
+      select (select count(*) from marcadas)::int as cerradas
+    `)) as unknown as Array<{ cerradas: number | string }>;
+
+    revalidatePath("/brecha");
+    revalidatePath("/demandas");
+    revalidatePath("/calidad");
+    revalidatePath("/mapa");
+    return { cerradas: Number(filas[0]?.cerradas ?? 0), candidatasRestantes: 0 };
+  });
+}
+
 // ── Importar archivo desde la app ────────────────────────────────────────────
 
 export async function importarArchivo(formData: FormData) {

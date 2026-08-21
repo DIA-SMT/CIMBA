@@ -104,6 +104,15 @@ export const HERRAMIENTAS_MIGUE = [
   {
     type: "function",
     function: {
+      name: "estado_brecha",
+      description:
+        "LA medición central: brecha entre lo pedido y lo hecho. Pedidos sin atención, en cola, probablemente ya resueltos, reincidencias, y cuánto del trabajo ejecutado no responde a ningún pedido.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "evolucion_mensual",
       description: "Serie mensual: demandas ingresadas e intervenciones finalizadas por mes (con m²).",
       parameters: { type: "object", properties: {} },
@@ -241,6 +250,37 @@ export async function ejecutarHerramientaMigue(
         from intervenciones iv
         group by 1 order by 3 desc
       `);
+
+    case "estado_brecha": {
+      const filas = await ejecutar(sesion, sql`
+        with d as (
+          select d.geom, d.creado_en, (d.metadata->>'sin_fecha' is null) as fecha_confiable
+          from demandas d
+          where d.estado in ('recibida','en_validacion') and d.geom is not null
+        ), cruce as (
+          select
+            exists (select 1 from incidentes i where i.estado in ('reparado','verificado')
+              and st_dwithin(i.geom::geography, d.geom::geography, 40)
+              and (not d.fecha_confiable or i.cerrado_en >= d.creado_en)) as ya_resuelta,
+            exists (select 1 from incidentes i where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+              and st_dwithin(i.geom::geography, d.geom::geography, 40)) as en_cola,
+            exists (select 1 from incidentes i where i.estado in ('reparado','verificado')
+              and st_dwithin(i.geom::geography, d.geom::geography, 40)) as hay_reparacion
+          from d
+        )
+        select count(*)::int as pedidos_abiertos,
+          count(*) filter (where ya_resuelta)::int as probablemente_ya_resueltos,
+          count(*) filter (where hay_reparacion and not ya_resuelta)::int as reincidencias,
+          count(*) filter (where not hay_reparacion and en_cola)::int as en_cola,
+          count(*) filter (where not hay_reparacion and not en_cola)::int as brecha_real_sin_tocar,
+          (select count(*)::int from incidentes i where i.estado in ('reparado','verificado')
+            and not exists (select 1 from demandas dd where dd.geom is not null
+              and st_dwithin(dd.geom::geography, i.geom::geography, 40))) as trabajos_sin_pedido_cerca,
+          (select count(*)::int from incidentes where estado in ('reparado','verificado')) as trabajos_totales
+        from cruce
+      `);
+      return { radio_analisis_m: 40, ...((filas[0] as object) ?? {}), detalle_completo_en: "/brecha" };
+    }
 
     case "evolucion_mensual":
       return ejecutar(sesion, sql`

@@ -402,6 +402,191 @@ export async function estadisticasCalidad(sesion: Sesion): Promise<EstadisticasC
   });
 }
 
+// ── Brecha: lo pedido vs. lo hecho ──────────────────────────────────────────
+
+export interface EstadisticasBrecha {
+  totalAbiertas: number;
+  yaResueltasProbable: number;
+  enCola: number;
+  brechaReal: number;
+  reincidencias: number;
+  sinUbicacion: number;
+  cotejablesAhora: number;
+  cotejablesAmpliado: number;
+  trabajoTotal: number;
+  trabajoSinPedido: number;
+  m2Total: number;
+  yaVinculadas: number;
+  porFuente: Array<{ fuente: string; abiertas: number; atendidas: number }>;
+  porTipo: Array<{ tipo: string; abiertas: number; sinNadaCerca: number }>;
+  mensual: Array<{ mes: string; pedidos: number; hechos: number }>;
+  topDeuda: Array<{
+    direccion: string;
+    pedidos: number;
+    fuentes: string[];
+    desde: string | null;
+    lat: number;
+    lon: number;
+  }>;
+}
+
+/**
+ * La medición central del sistema: qué parte de lo que se pide está atendida.
+ * Clasificación de cada demanda abierta con ubicación (radio 40 m):
+ *  - ya_resuelta_probable: hay reparación POSTERIOR al pedido (o el pedido no
+ *    tiene fecha confiable) → falta cerrar el circuito, no falta obra.
+ *  - en_cola: hay un incidente abierto cerca → está en proceso.
+ *  - brecha_real: no hay nada cerca → nadie la tocó.
+ *  - reincidencia: la reparación fue ANTERIOR al pedido → el problema volvió.
+ */
+export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBrecha> {
+  return conRls(claims(sesion), async (tx) => {
+    const cobertura = (await tx.execute(sql`
+      with d as (
+        select d.id, d.geom, d.creado_en, d.fuente, d.tipo, d.geocod_confianza,
+               (d.metadata->>'sin_fecha' is null) as fecha_confiable
+        from demandas d
+        where d.estado in ('recibida','en_validacion') and d.geom is not null
+      ), cruce as (
+        select d.*,
+          exists (select 1 from incidentes i
+                  where i.estado in ('reparado','verificado')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)) as hay_reparacion,
+          exists (select 1 from incidentes i
+                  where i.estado in ('reparado','verificado')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                    and (not d.fecha_confiable or i.cerrado_en >= d.creado_en)) as reparacion_posterior,
+          exists (select 1 from incidentes i
+                  where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)) as incidente_abierto,
+          exists (select 1 from incidentes i
+                  where i.estado in ('reparado','verificado')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 25)
+                    and (d.tipo is null or i.tipo = d.tipo
+                        or (d.tipo in ('bache','pavimento_deteriorado','hundimiento','fisura')
+                            and i.tipo in ('bache','pavimento_deteriorado','hundimiento','fisura')))
+                    and (not d.fecha_confiable or i.cerrado_en >= d.creado_en)) as cotejable
+        from d
+      )
+      select
+        count(*)::int as total,
+        count(*) filter (where reparacion_posterior)::int as ya_resueltas,
+        count(*) filter (where hay_reparacion and not reparacion_posterior)::int as reincidencias,
+        count(*) filter (where not hay_reparacion and incidente_abierto)::int as en_cola,
+        count(*) filter (where not hay_reparacion and not incidente_abierto)::int as brecha_real,
+        count(*) filter (where cotejable and coalesce(geocod_confianza, 0) >= 0.75)::int as cotejables,
+        count(*) filter (where cotejable)::int as cotejables_ampliado
+      from cruce
+    `)) as unknown as Array<Record<string, number | string>>;
+    const c = cobertura[0] ?? {};
+
+    const globales = (await tx.execute(sql`
+      select
+        (select count(*)::int from demandas
+          where estado in ('recibida','en_validacion') and geom is null) as sin_ubicacion,
+        (select count(*)::int from demandas where estado = 'vinculada') as vinculadas,
+        (select count(*)::int from incidentes where estado in ('reparado','verificado')) as trabajo_total,
+        (select count(*)::int from incidentes i where i.estado in ('reparado','verificado')
+          and not exists (select 1 from demandas d where d.geom is not null
+            and st_dwithin(d.geom::geography, i.geom::geography, 40))) as trabajo_sin_pedido,
+        (select round(coalesce(sum(superficie_m2), 0))::int from intervenciones
+          where estado = 'finalizada') as m2
+    `)) as unknown as Array<Record<string, number | string>>;
+    const g = globales[0] ?? {};
+
+    const porFuente = (await tx.execute(sql`
+      select d.fuente, count(*)::int as abiertas,
+        count(*) filter (where exists (select 1 from incidentes i
+          where i.estado in ('reparado','verificado')
+            and st_dwithin(i.geom::geography, d.geom::geography, 40)))::int as atendidas
+      from demandas d
+      where d.estado in ('recibida','en_validacion') and d.geom is not null
+      group by 1 order by 2 desc
+    `)) as unknown as Array<{ fuente: string; abiertas: number; atendidas: number }>;
+
+    const porTipo = (await tx.execute(sql`
+      select d.tipo, count(*)::int as abiertas,
+        count(*) filter (where not exists (select 1 from incidentes i
+          where st_dwithin(i.geom::geography, d.geom::geography, 40)))::int as sin_nada
+      from demandas d
+      where d.estado in ('recibida','en_validacion') and d.geom is not null and d.tipo is not null
+      group by 1 order by 3 desc
+    `)) as unknown as Array<{ tipo: string; abiertas: number; sin_nada: number }>;
+
+    const mensual = (await tx.execute(sql`
+      select to_char(mes, 'YYYY-MM') as mes, sum(pedidos)::int as pedidos, sum(hechos)::int as hechos
+      from (
+        select date_trunc('month', creado_en) as mes, count(*) as pedidos, 0 as hechos
+        from demandas where metadata->>'sin_fecha' is null group by 1
+        union all
+        select date_trunc('month', finalizada_en), 0, count(*)
+        from intervenciones where finalizada_en is not null group by 1
+      ) t
+      group by mes order by mes desc limit 18
+    `)) as unknown as Array<{ mes: string; pedidos: number; hechos: number }>;
+
+    const topDeuda = (await tx.execute(sql`
+      with sueltas as (
+        select coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
+               d.id, d.geom, d.creado_en, d.fuente,
+               (d.metadata->>'sin_fecha' is null) as fecha_confiable
+        from demandas d
+        where d.estado in ('recibida','en_validacion') and d.geom is not null
+          and not exists (select 1 from incidentes i
+            where st_dwithin(i.geom::geography, d.geom::geography, 40))
+      )
+      select direccion, count(*)::int as pedidos,
+             array_agg(distinct fuente) as fuentes,
+             (min(creado_en) filter (where fecha_confiable))::date as desde,
+             (array_agg(st_y(geom) order by creado_en))[1] as lat,
+             (array_agg(st_x(geom) order by creado_en))[1] as lon
+      from sueltas
+      where direccion is not null
+      group by 1
+      order by 2 desc, 4 asc nulls last
+      limit 12
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    return {
+      totalAbiertas: Number(c.total ?? 0),
+      yaResueltasProbable: Number(c.ya_resueltas ?? 0),
+      enCola: Number(c.en_cola ?? 0),
+      brechaReal: Number(c.brecha_real ?? 0),
+      reincidencias: Number(c.reincidencias ?? 0),
+      cotejablesAhora: Number(c.cotejables ?? 0),
+      cotejablesAmpliado: Number(c.cotejables_ampliado ?? 0),
+      sinUbicacion: Number(g.sin_ubicacion ?? 0),
+      yaVinculadas: Number(g.vinculadas ?? 0),
+      trabajoTotal: Number(g.trabajo_total ?? 0),
+      trabajoSinPedido: Number(g.trabajo_sin_pedido ?? 0),
+      m2Total: Number(g.m2 ?? 0),
+      porFuente: porFuente.map((f) => ({
+        fuente: f.fuente,
+        abiertas: Number(f.abiertas),
+        atendidas: Number(f.atendidas),
+      })),
+      porTipo: porTipo.map((f) => ({
+        tipo: f.tipo,
+        abiertas: Number(f.abiertas),
+        sinNadaCerca: Number(f.sin_nada),
+      })),
+      mensual: mensual.reverse().map((m) => ({
+        mes: m.mes,
+        pedidos: Number(m.pedidos),
+        hechos: Number(m.hechos),
+      })),
+      topDeuda: topDeuda.map((t) => ({
+        direccion: String(t.direccion),
+        pedidos: Number(t.pedidos),
+        fuentes: (t.fuentes as string[]) ?? [],
+        desde: t.desde != null ? String(t.desde) : null,
+        lat: Number(t.lat),
+        lon: Number(t.lon),
+      })),
+    };
+  });
+}
+
 // ── GeoJSON para el mapa único ──────────────────────────────────────────────
 
 type Feature = { type: "Feature"; geometry: { type: "Point"; coordinates: [number, number] }; properties: Record<string, unknown> };
@@ -420,7 +605,20 @@ export async function geodata(sesion: Sesion) {
     const demandas = (await tx.execute(sql`
       select d.id, d.fuente, d.tipo, d.estado, d.geocod_confianza,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
-             d.creado_en, st_x(d.geom) as lon, st_y(d.geom) as lat
+             d.creado_en, st_x(d.geom) as lon, st_y(d.geom) as lat,
+             case
+               when d.estado not in ('recibida','en_validacion') then 'atendida'
+               when exists (select 1 from incidentes i
+                 where i.estado in ('reparado','verificado')
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                   and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
+                 then 'posible_resuelta'
+               when exists (select 1 from incidentes i
+                 where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40))
+                 then 'en_cola'
+               else 'sin_atencion'
+             end as brecha
       from demandas d
       where d.geom is not null
     `)) as unknown as Array<Record<string, unknown>>;
@@ -464,6 +662,7 @@ export async function geodata(sesion: Sesion) {
             estado: String(f.estado),
             confianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,
             direccion: (f.direccion as string) ?? null,
+            brecha: String(f.brecha),
             creado_en: String(f.creado_en),
           },
         })),

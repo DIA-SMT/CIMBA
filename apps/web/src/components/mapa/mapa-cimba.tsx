@@ -52,6 +52,15 @@ const VISTAS = {
     verDemandas: true,
     calor: true,
   },
+  brecha: {
+    etiqueta: "Brecha",
+    descripcion:
+      "Lo pedido vs. lo hecho: cada pedido pendiente coloreado según si nadie lo tocó (naranja), está en cola (azul) o ya habría una reparación cerca (verde).",
+    macro: { abierto: false, en_curso: false, resuelto: false, inactivo: false },
+    demandasAbiertas: true,
+    verDemandas: true,
+    calor: false,
+  },
   completo: {
     etiqueta: "Todo",
     descripcion: "Todas las capas a la vez (puede ser mucho).",
@@ -257,6 +266,27 @@ const capaDemandas: LayerProps = {
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.6, 14, 3, 17, 5, 19.5, 8],
     "circle-stroke-width": ["case", ["<", ["coalesce", ["get", "confianza"], 1], 0.5], 1.2, 0],
     "circle-stroke-color": "#e66767",
+  },
+};
+
+/** Vista Brecha: el color de cada pedido dice si fue atendido o no. */
+const capaDemandasBrecha: LayerProps = {
+  id: "demandas-punto",
+  type: "circle",
+  source: "demandas",
+  paint: {
+    "circle-color": [
+      "match",
+      ["get", "brecha"],
+      "sin_atencion", COLOR_MACRO.en_curso,
+      "en_cola", COLOR_MACRO.abierto,
+      "posible_resuelta", COLOR_MACRO.resuelto,
+      "#6b7280",
+    ],
+    "circle-opacity": 0.85,
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.6, 14, 4.5, 17, 7, 19.5, 10],
+    "circle-stroke-width": 0.8,
+    "circle-stroke-color": "rgba(7,10,16,0.8)",
   },
 };
 
@@ -643,7 +673,7 @@ function MapaInterno({
         {verDemandas && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capaCalor} />}
-            <Layer {...capaDemandas} />
+            <Layer {...(vista === "brecha" ? capaDemandasBrecha : capaDemandas)} />
           </Source>
         )}
 
@@ -809,6 +839,29 @@ function MapaInterno({
                 <p className="text-[10px] text-texto-3">Generado por IA sobre agregados del mapa — sin datos personales.</p>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Leyenda de la vista Brecha */}
+      {vista === "brecha" && (
+        <div className="panel-vidrio pointer-events-none absolute top-28 left-1/2 z-10 -translate-x-1/2 rounded-xl px-4 py-2">
+          <div className="flex items-center gap-4 text-[11px] font-medium">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.en_curso }} />
+              Sin atención ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "sin_atencion").length)})
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.abierto }} />
+              En cola ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "en_cola").length)})
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO.resuelto }} />
+              Posible resuelta ({numero(demandasFiltradas.features.filter((f) => f.properties.brecha === "posible_resuelta").length)})
+            </span>
+            <Link href="/brecha" className="pointer-events-auto font-semibold text-celeste hover:underline">
+              Ver informe →
+            </Link>
           </div>
         </div>
       )}
