@@ -18,6 +18,7 @@ import {
   type MapRef,
 } from "react-map-gl/maplibre";
 import type { FeatureCollection, Point } from "geojson";
+import type { FilterSpecification } from "maplibre-gl";
 import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
@@ -85,6 +86,77 @@ const ESTILO_MAPA =
   "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
 // ── Capas MapLibre ──────────────────────────────────────────────────────────
+
+/**
+ * Avenidas y corredores principales, derivados de las teselas vectoriales que
+ * ya usa el mapa base (source "carto"). Sin lista hardcodeada ni costo extra.
+ *
+ * Criterio: el NOMBRE oficial de la vía dice "Avenida" (o "Av."), más las
+ * autopistas y troncales (Circunvalación y accesos). Se usa el source-layer
+ * `transportation_name` porque es el único que trae `name`; filtrar por
+ * `class` no sirve en SMT — OSM etiqueta casi todo el centro como "primary".
+ * Este criterio es el mismo que usa el bonus de corredor del score de
+ * prioridad (que mira "avenida" en la dirección), así que ambos coinciden.
+ */
+const FILTRO_AVENIDA: FilterSpecification = [
+  "any",
+  [">=", ["index-of", "venida", ["coalesce", ["get", "name"], ""]], 0],
+  [">=", ["index-of", "Av. ", ["coalesce", ["get", "name"], ""]], 0],
+  ["match", ["get", "class"], ["motorway", "trunk"], true, false],
+];
+
+const capaAvenidasBrillo: LayerProps = {
+  id: "avenidas-brillo",
+  type: "line",
+  source: "carto",
+  "source-layer": "transportation_name",
+  filter: FILTRO_AVENIDA,
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: {
+    // Realce sutil: los corredores orientan, los datos mandan.
+    "line-color": "#0066ff",
+    "line-opacity": 0.2,
+    "line-blur": 2.5,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4, 14, 8, 17, 14],
+  },
+};
+
+const capaAvenidas: LayerProps = {
+  id: "avenidas-linea",
+  type: "line",
+  source: "carto",
+  "source-layer": "transportation_name",
+  filter: FILTRO_AVENIDA,
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: {
+    "line-color": "#2eb1ff",
+    "line-opacity": 0.62,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.1, 14, 2.2, 17, 4],
+  },
+};
+
+const capaAvenidasNombre: LayerProps = {
+  id: "avenidas-nombre",
+  type: "symbol",
+  source: "carto",
+  "source-layer": "transportation_name",
+  filter: FILTRO_AVENIDA,
+  layout: {
+    "symbol-placement": "line",
+    "text-field": ["get", "name"],
+    "text-font": ["Open Sans Bold"],
+    "text-size": ["interpolate", ["linear"], ["zoom"], 12, 9.5, 16, 12.5],
+    "text-letter-spacing": 0.04,
+    "symbol-spacing": 320,
+    "text-max-angle": 35,
+  },
+  paint: {
+    "text-color": "#7cc4e8",
+    "text-opacity": 0.85,
+    "text-halo-color": "#070a10",
+    "text-halo-width": 1.8,
+  },
+};
 
 const capaClusters: LayerProps = {
   id: "clusters",
@@ -249,6 +321,7 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
   const [verCalor, setVerCalor] = useState(false);
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
   const [tipos, setTipos] = useState<Record<string, boolean>>({});
+  const [verAvenidas, setVerAvenidas] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
 
@@ -450,6 +523,10 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
         maxZoom={19.5}
         interactiveLayerIds={["clusters", "incidentes-punto", "demandas-punto"]}
         onClick={alClick}
+        onError={(e) => {
+          // Un estilo o capa inválidos dejarían el mapa en negro sin avisar.
+          console.error("[mapa] error de MapLibre:", e.error?.message ?? e);
+        }}
         onMouseEnter={() => {
           const c = mapRef.current?.getCanvas();
           if (c) c.style.cursor = "pointer";
@@ -468,6 +545,15 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
           showAccuracyCircle
         />
         <ScaleControl position="bottom-left" />
+
+        {/* Corredores principales: se montan primero para quedar DEBAJO de los datos */}
+        {verAvenidas && (
+          <>
+            <Layer {...capaAvenidasBrillo} />
+            <Layer {...capaAvenidas} />
+            <Layer {...capaAvenidasNombre} />
+          </>
+        )}
 
         {verDemandas && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
@@ -645,7 +731,7 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
       {/* Panel de capas */}
       <div className="absolute bottom-6 left-3 z-10">
         {panelCapas ? (
-          <div className="panel-vidrio w-64 rounded-xl p-4">
+          <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-64 overflow-y-auto rounded-xl p-4">
             <div className="mb-3 flex items-center justify-between">
               <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
                 <Layers size={14} className="text-celeste" /> Capas
@@ -654,6 +740,21 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
                 <X size={14} />
               </button>
             </div>
+
+            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Territorio</p>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Avenidas y corredores principales según la clasificación vial de OpenStreetMap (motorway/trunk/primary/secondary)"
+            >
+              <input
+                type="checkbox"
+                checked={verAvenidas}
+                onChange={(e) => setVerAvenidas(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="inline-block h-0.5 w-4 rounded bg-celeste" />
+              Avenidas principales
+            </label>
 
             <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Incidentes</p>
             {(
