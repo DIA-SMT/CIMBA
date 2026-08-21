@@ -597,7 +597,7 @@ export async function geodata(sesion: Sesion) {
   return conRls(claims(sesion), async (tx) => {
     const incidentes = (await tx.execute(sql`
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
-             i.detectado_en, st_x(i.geom) as lon, st_y(i.geom) as lat,
+             i.detectado_en, i.cerrado_en, st_x(i.geom) as lon, st_y(i.geom) as lat,
              i.metadata->>'origen' as origen,
              (select count(*) from demanda_incidente di where di.incidente_id = i.id) as demandas
       from incidentes i
@@ -606,7 +606,8 @@ export async function geodata(sesion: Sesion) {
     const demandas = (await tx.execute(sql`
       select d.id, d.fuente, d.tipo, d.estado, d.geocod_confianza,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
-             d.creado_en, st_x(d.geom) as lon, st_y(d.geom) as lat,
+             d.creado_en, (d.metadata->>'sin_fecha' = 'true') as sin_fecha,
+             st_x(d.geom) as lon, st_y(d.geom) as lat,
              case
                when d.estado not in ('recibida','en_validacion') then 'atendida'
                when exists (select 1 from incidentes i
@@ -649,6 +650,7 @@ export async function geodata(sesion: Sesion) {
             demandas: Number(f.demandas ?? 0),
             origen: (f.origen as string) ?? "cimba",
             detectado_en: String(f.detectado_en),
+            cerrado_en: f.cerrado_en != null ? String(f.cerrado_en) : null,
           },
         })),
       ),
@@ -664,6 +666,7 @@ export async function geodata(sesion: Sesion) {
             confianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,
             direccion: (f.direccion as string) ?? null,
             brecha: String(f.brecha),
+            sin_fecha: Boolean(f.sin_fecha),
             creado_en: String(f.creado_en),
           },
         })),

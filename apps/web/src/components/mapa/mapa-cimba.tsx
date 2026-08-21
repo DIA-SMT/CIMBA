@@ -2,7 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Crosshair, Flame, Layers, Search, Sparkles, X } from "lucide-react";
+import { Boxes, ChevronDown, Crosshair, Flame, History, Layers, Radar, Search, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -22,6 +22,9 @@ import type { FilterSpecification } from "maplibre-gl";
 import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
+import { AnalisisZona } from "./analisis-zona";
+import { crearCirculo, hexbins } from "./geo-cliente";
+import { LineaTiempo } from "./linea-tiempo";
 
 /**
  * Vistas del mapa: la respuesta a "es muchísima información y no se entiende".
@@ -290,6 +293,39 @@ const capaDemandasBrecha: LayerProps = {
   },
 };
 
+/** Círculo del analizador de zona. */
+const capaZonaRelleno: LayerProps = {
+  id: "zona-relleno",
+  type: "fill",
+  source: "zona",
+  paint: { "fill-color": "#f4dc00", "fill-opacity": 0.07 },
+};
+const capaZonaBorde: LayerProps = {
+  id: "zona-borde",
+  type: "line",
+  source: "zona",
+  paint: { "line-color": "#f4dc00", "line-width": 2, "line-dasharray": [2, 1.5] },
+};
+
+/** Densidad 3D: hexágonos extruidos por cantidad de pedidos (rampa azul secuencial). */
+const capaHexagonos: LayerProps = {
+  id: "hexagonos-3d",
+  type: "fill-extrusion",
+  source: "hexbins",
+  paint: {
+    "fill-extrusion-color": [
+      "interpolate", ["linear"], ["get", "n"],
+      1, "#104281",
+      4, "#1c5cab",
+      10, "#3987e5",
+      25, "#86b6ef",
+      60, "#cde2fb",
+    ],
+    "fill-extrusion-height": ["*", ["get", "n"], 45],
+    "fill-extrusion-opacity": 0.82,
+  },
+};
+
 const capaCalor: LayerProps = {
   id: "demandas-calor",
   type: "heatmap",
@@ -389,6 +425,28 @@ function MapaInterno({
     return apagados;
   });
   const [filtroBrecha, setFiltroBrecha] = useState<string | null>(inicial?.brecha ?? null);
+  // Analizador de zona (lupa territorial)
+  const [modoAnalisis, setModoAnalisis] = useState(false);
+  const [zona, setZona] = useState<{ lon: number; lat: number } | null>(null);
+  const [radioZona, setRadioZona] = useState(250);
+  // Densidad 3D en hexágonos
+  const [verHex, setVerHex] = useState(false);
+  // Línea de tiempo
+  const [tiempoActivo, setTiempoActivo] = useState(false);
+  const [tiempoIdx, setTiempoIdx] = useState(0);
+  const [reproduciendo, setReproduciendo] = useState(false);
+  // Tooltip al pasar el mouse + acordeón del panel
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[] } | null>(null);
+  const [secciones, setSecciones] = useState<Record<string, boolean>>({
+    territorio: false,
+    incidentes: true,
+    demandas: true,
+    tipos: false,
+    periodo: true,
+  });
+  const barraEstadoRef = useRef<HTMLDivElement>(null);
+  const modoAnalisisRef = useRef(false);
+  modoAnalisisRef.current = modoAnalisis;
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
@@ -429,15 +487,42 @@ function MapaInterno({
 
   const corte = dias ? Date.now() - dias * 86_400_000 : null;
 
+  // Meses disponibles para la línea de tiempo (solo fechas confiables)
+  const mesesTiempo = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of data?.demandas.features ?? []) {
+      if (f.properties.sin_fecha) continue;
+      const m = String(f.properties.creado_en).slice(0, 7);
+      if (m.length === 7) set.add(m);
+    }
+    for (const f of data?.incidentes.features ?? []) {
+      if (f.properties.cerrado_en) set.add(String(f.properties.cerrado_en).slice(0, 7));
+    }
+    return [...set].sort();
+  }, [data]);
+  const finMesCursor = useMemo(() => {
+    if (!tiempoActivo || mesesTiempo.length === 0) return null;
+    const mes = mesesTiempo[Math.min(tiempoIdx, mesesTiempo.length - 1)];
+    if (!mes) return null;
+    const [a, m] = mes.split("-").map(Number);
+    return Date.UTC(a ?? 2026, m ?? 1, 0, 23, 59, 59); // último día del mes
+  }, [tiempoActivo, tiempoIdx, mesesTiempo]);
+
   const incidentesFiltrados = useMemo<FC>(() => {
     const features = (data?.incidentes.features ?? []).filter((f) => {
+      if (finMesCursor !== null) {
+        // Modo película: solo reparaciones ya concretadas a esa fecha
+        if (f.properties.macro !== "resuelto") return false;
+        if (!f.properties.cerrado_en || Date.parse(String(f.properties.cerrado_en)) > finMesCursor) return false;
+        return tipos[String(f.properties.tipo)] !== false;
+      }
       if (!verMacro[String(f.properties.macro)]) return false;
       if (tipos[String(f.properties.tipo)] === false) return false;
       if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, verMacro, tipos, corte]);
+  }, [data, verMacro, tipos, corte, finMesCursor]);
 
   const demandasFiltradas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
@@ -447,11 +532,29 @@ function MapaInterno({
       if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
         return false;
       if (vista === "brecha" && filtroBrecha && String(f.properties.brecha) !== filtroBrecha) return false;
-      if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
+      if (finMesCursor !== null) {
+        if (f.properties.sin_fecha) return false;
+        if (Date.parse(String(f.properties.creado_en)) > finMesCursor) return false;
+      } else if (corte && Date.parse(String(f.properties.creado_en)) < corte) {
+        return false;
+      }
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha]);
+  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor]);
+
+  // Hexágonos 3D sobre las demandas visibles
+  const hexData = useMemo(
+    () => (verHex ? hexbins(demandasFiltradas.features, 140) : null),
+    [verHex, demandasFiltradas],
+  );
+
+  // Cámara inclinada cuando la densidad 3D está activa
+  useEffect(() => {
+    const mapa = mapRef.current;
+    if (!mapa) return;
+    mapa.easeTo({ pitch: verHex ? 55 : 0, duration: 700 });
+  }, [verHex]);
 
   // Zonas calientes: direcciones más repetidas entre las demandas visibles
   const zonasCalientes = useMemo(() => {
@@ -626,6 +729,10 @@ function MapaInterno({
   };
 
   const alClick = useCallback((e: MapLayerMouseEvent) => {
+    if (modoAnalisisRef.current) {
+      setZona({ lon: e.lngLat.lng, lat: e.lngLat.lat });
+      return;
+    }
     const feature = e.features?.[0];
     if (!feature) {
       setSeleccion(null);
@@ -671,11 +778,43 @@ function MapaInterno({
         }}
         onMouseEnter={() => {
           const c = mapRef.current?.getCanvas();
-          if (c) c.style.cursor = "pointer";
+          if (c) c.style.cursor = modoAnalisis ? "crosshair" : "pointer";
         }}
         onMouseLeave={() => {
           const c = mapRef.current?.getCanvas();
-          if (c) c.style.cursor = "";
+          if (c) c.style.cursor = modoAnalisis ? "crosshair" : "";
+          setTooltip(null);
+        }}
+        onMouseMove={(e) => {
+          if (barraEstadoRef.current) {
+            barraEstadoRef.current.textContent =
+              e.lngLat.lat.toFixed(5) + ", " + e.lngLat.lng.toFixed(5) + "  ·  z" +
+              (mapRef.current?.getZoom() ?? 0).toFixed(1);
+          }
+          const f = e.features?.[0];
+          if (!f) {
+            setTooltip((t) => (t ? null : t));
+            return;
+          }
+          const p = f.properties ?? {};
+          let lineas: string[];
+          if (f.layer.id === "clusters") {
+            lineas = [numero(Number(p.point_count)) + " incidentes", "clic para acercar"];
+          } else if (f.layer.id === "incidentes-punto") {
+            lineas = [
+              String(p.direccion ?? "Incidente #" + String(p.id)),
+              (ETIQUETA_TIPO[String(p.tipo) as keyof typeof ETIQUETA_TIPO] ?? String(p.tipo)) +
+                " · " + String(p.estado).replaceAll("_", " ") +
+                (p.score != null ? " · score " + Number(p.score).toFixed(0) : ""),
+            ];
+          } else {
+            lineas = [
+              String(p.direccion ?? "Pedido #" + String(p.id)),
+              (ETIQUETA_FUENTE[String(p.fuente) as keyof typeof ETIQUETA_FUENTE] ?? String(p.fuente)) +
+                " · " + fechaCorta(String(p.creado_en)),
+            ];
+          }
+          setTooltip({ x: e.point.x, y: e.point.y, lineas });
         }}
         attributionControl={{ compact: true }}
       >
@@ -701,6 +840,19 @@ function MapaInterno({
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capaCalor} />}
             <Layer {...(vista === "brecha" ? capaDemandasBrecha : capaDemandas)} />
+          </Source>
+        )}
+
+        {hexData && (
+          <Source id="hexbins" type="geojson" data={hexData}>
+            <Layer {...capaHexagonos} />
+          </Source>
+        )}
+
+        {zona && (
+          <Source id="zona" type="geojson" data={crearCirculo(zona.lon, zona.lat, radioZona)}>
+            <Layer {...capaZonaRelleno} />
+            <Layer {...capaZonaBorde} />
           </Source>
         )}
 
@@ -778,6 +930,35 @@ function MapaInterno({
               {generandoInforme ? "Generando…" : "Informe IA"}
             </button>
           )}
+          <button
+            onClick={() => {
+              const activo = !modoAnalisis;
+              setModoAnalisis(activo);
+              if (!activo) setZona(null);
+            }}
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+              modoAnalisis ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
+            }`}
+            title="Analizador de zona: clic en el mapa y obtené estadísticas instantáneas de ese radio"
+          >
+            <Radar size={14} className={modoAnalisis ? "animate-pulse" : ""} />
+            {modoAnalisis ? "Elegí un punto…" : "Analizar zona"}
+          </button>
+          <button
+            onClick={() => {
+              const activo = !tiempoActivo;
+              setTiempoActivo(activo);
+              setReproduciendo(false);
+              if (activo) setTiempoIdx(0);
+            }}
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+              tiempoActivo ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
+            }`}
+            title="Línea de tiempo: reproducí la historia del bacheo mes a mes"
+          >
+            <History size={14} />
+            Historia
+          </button>
           <Buscador
             alEncontrar={(lon, lat) => {
               setMarcador([lon, lat]);
@@ -786,6 +967,54 @@ function MapaInterno({
           />
         </div>
       </div>
+
+      {/* Tooltip instantáneo al pasar el mouse */}
+      {tooltip && !modoAnalisis && (
+        <div
+          className="pointer-events-none absolute z-30 max-w-64 rounded-lg border border-borde-2 bg-panel-2/95 px-2.5 py-1.5 shadow-xl"
+          style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}
+        >
+          <p className="truncate text-[12px] font-semibold">{tooltip.lineas[0]}</p>
+          {tooltip.lineas[1] && <p className="text-[10px] text-texto-2">{tooltip.lineas[1]}</p>}
+        </div>
+      )}
+
+      {/* Barra de estado: coordenadas y zoom en vivo */}
+      <div className="pointer-events-none absolute bottom-1 left-1/2 z-10 -translate-x-1/2">
+        <div ref={barraEstadoRef} className="num rounded-md bg-fondo/70 px-2 py-0.5 text-[10px] text-texto-3" />
+      </div>
+
+      {/* Analizador de zona */}
+      {zona && (
+        <AnalisisZona
+          centro={zona}
+          radio={radioZona}
+          setRadio={setRadioZona}
+          demandas={demandasFiltradas}
+          incidentes={incidentesFiltrados}
+          alCerrar={() => {
+            setZona(null);
+            setModoAnalisis(false);
+          }}
+        />
+      )}
+
+      {/* Línea de tiempo */}
+      {tiempoActivo && mesesTiempo.length > 0 && (
+        <LineaTiempo
+          meses={mesesTiempo}
+          idx={Math.min(tiempoIdx, mesesTiempo.length - 1)}
+          setIdx={setTiempoIdx}
+          reproduciendo={reproduciendo}
+          setReproduciendo={setReproduciendo}
+          alCerrar={() => {
+            setTiempoActivo(false);
+            setReproduciendo(false);
+          }}
+          pedidosVisibles={demandasFiltradas.features.length}
+          reparacionesVisibles={incidentesFiltrados.features.length}
+        />
+      )}
 
       {/* Zonas calientes */}
       <div className="absolute bottom-6 left-72 z-10 hidden md:block">
@@ -924,7 +1153,9 @@ function MapaInterno({
               </button>
             </div>
 
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Territorio</p>
+            <Seccion titulo="Territorio" abierta={secciones.territorio ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, territorio: !v.territorio }))} />
+            {secciones.territorio && (<>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Avenidas y corredores principales según la clasificación vial de OpenStreetMap (motorway/trunk/primary/secondary)"
@@ -951,8 +1182,12 @@ function MapaInterno({
               <span className="text-[10px] text-texto-3">Aa</span>
               Nombres de calles
             </label>
+            </>)}
 
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Incidentes</p>
+            <Seccion titulo="Incidentes" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
+              abierta={secciones.incidentes ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />
+            {secciones.incidentes && (<>
             {(
               [
                 ["abierto", "Abiertos"],
@@ -969,14 +1204,21 @@ function MapaInterno({
                   className="accent-[#0066ff]"
                 />
                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO[clave] }} />
-                {etiqueta}
+                <span className="flex-1">{etiqueta}</span>
+                <span className="num text-[10px] text-texto-3">
+                  {numero(clave === "abierto" ? kpis.abiertos : clave === "en_curso" ? kpis.enCurso : clave === "resuelto" ? kpis.resueltos : 0)}
+                </span>
               </label>
             ))}
             <p className="mt-1 mb-2 flex items-center gap-1.5 text-[10px] text-texto-3">
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amarillo" /> anillo amarillo = obra SIGOV
             </p>
+            </>)}
 
-            <p className="mt-3 mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Demandas</p>
+            <Seccion titulo="Demandas" resumen={numero(kpis.demandas)}
+              abierta={secciones.demandas ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />
+            {secciones.demandas && (<>
             <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
               <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
               Puntos de demanda
@@ -997,6 +1239,14 @@ function MapaInterno({
               <input type="checkbox" checked={verCalor} onChange={(e) => setVerCalor(e.target.checked)} className="accent-[#0066ff]" />
               Mapa de calor
             </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Hexágonos extruidos por cantidad de pedidos: inclina la cámara y muestra dónde se concentra la demanda en 3D"
+            >
+              <input type="checkbox" checked={verHex} onChange={(e) => setVerHex(e.target.checked)} className="accent-[#0066ff]" />
+              <Boxes size={13} className="text-celeste" />
+              Densidad 3D (hexágonos)
+            </label>
             {fuentesPresentes.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {fuentesPresentes.map((f) => {
@@ -1015,8 +1265,11 @@ function MapaInterno({
                 })}
               </div>
             )}
+            </>)}
 
-            <p className="mt-3 mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Tipo de problema</p>
+            <Seccion titulo="Tipo de problema" abierta={secciones.tipos ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, tipos: !v.tipos }))} />
+            {secciones.tipos && (
             <div className="flex flex-wrap gap-1">
               {(Object.keys(ETIQUETA_TIPO) as Array<keyof typeof ETIQUETA_TIPO>).map((t) => {
                 const activo = tipos[t] !== false;
@@ -1033,8 +1286,11 @@ function MapaInterno({
                 );
               })}
             </div>
+            )}
 
-            <p className="mt-3 mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Período</p>
+            <Seccion titulo="Período" resumen={dias ? dias + "d" : "Todo"} abierta={secciones.periodo ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, periodo: !v.periodo }))} />
+            {secciones.periodo && (
             <div className="flex gap-1">
               {(
                 [
@@ -1055,6 +1311,7 @@ function MapaInterno({
                 </button>
               ))}
             </div>
+            )}
           </div>
         ) : (
           <button onClick={() => setPanelCapas(true)} className="panel-vidrio rounded-xl p-3 text-celeste transition hover:text-texto" title="Capas">
@@ -1239,6 +1496,30 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
         </Link>
       </div>
     </aside>
+  );
+}
+
+/** Encabezado de sección del panel de capas (acordeón con resumen vivo). */
+function Seccion({
+  titulo,
+  resumen,
+  abierta,
+  alConmutar,
+}: {
+  titulo: string;
+  resumen?: string;
+  abierta: boolean;
+  alConmutar: () => void;
+}) {
+  return (
+    <button
+      onClick={alConmutar}
+      className="mt-2 mb-1.5 flex w-full items-center gap-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase transition first:mt-0 hover:text-texto"
+    >
+      <ChevronDown size={12} className={`transition-transform ${abierta ? "" : "-rotate-90"}`} />
+      <span className="flex-1 text-left">{titulo}</span>
+      {resumen && <span className="num normal-case">{resumen}</span>}
+    </button>
   );
 }
 
