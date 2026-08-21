@@ -85,15 +85,15 @@ export function AnalisisZona({
           </div>
           <input
             type="range"
-            min={100}
-            max={1000}
+            min={60}
+            max={2000}
             step={50}
             value={radio}
             onChange={(e) => setRadio(Number(e.target.value))}
             className="w-full accent-[#f4dc00]"
           />
           <p className="mt-1 text-[10px] text-texto-3">
-            Clic en otro lugar del mapa para mover el centro.
+            Mantené clic y arrastrá en el mapa para dibujar otro círculo, o afiná el radio acá.
           </p>
         </div>
 

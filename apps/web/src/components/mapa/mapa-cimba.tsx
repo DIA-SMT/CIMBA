@@ -23,7 +23,7 @@ import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { AnalisisZona } from "./analisis-zona";
-import { crearCirculo, hexbins } from "./geo-cliente";
+import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 
 /**
@@ -447,6 +447,10 @@ function MapaInterno({
   const barraEstadoRef = useRef<HTMLDivElement>(null);
   const modoAnalisisRef = useRef(false);
   modoAnalisisRef.current = modoAnalisis;
+  // Gesto de dibujo del círculo: mousedown fija el centro, arrastrar agranda
+  // el radio con las estadísticas recalculándose en vivo, mouseup lo suelta.
+  const dibujandoRef = useRef(false);
+  const arrastroRef = useRef(false);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
@@ -730,7 +734,7 @@ function MapaInterno({
 
   const alClick = useCallback((e: MapLayerMouseEvent) => {
     if (modoAnalisisRef.current) {
-      setZona({ lon: e.lngLat.lng, lat: e.lngLat.lat });
+      // el centro lo fija onMouseDown; acá solo evitamos abrir el detalle
       return;
     }
     const feature = e.features?.[0];
@@ -776,6 +780,45 @@ function MapaInterno({
           // Un estilo o capa inválidos dejarían el mapa en negro sin avisar.
           console.error("[mapa] error de MapLibre:", e.error?.message ?? e);
         }}
+        onMouseDown={(e) => {
+          if (!modoAnalisisRef.current) return;
+          e.preventDefault(); // suspende el paneo del mapa durante el dibujo
+          dibujandoRef.current = true;
+          arrastroRef.current = false;
+          setZona({ lon: e.lngLat.lng, lat: e.lngLat.lat });
+          setRadioZona(60);
+        }}
+        onMouseUp={() => {
+          if (!dibujandoRef.current) return;
+          dibujandoRef.current = false;
+          // clic seco (sin arrastre): radio cómodo por defecto
+          if (!arrastroRef.current) setRadioZona(250);
+        }}
+        onTouchStart={(e) => {
+          if (!modoAnalisisRef.current) return;
+          e.preventDefault();
+          dibujandoRef.current = true;
+          arrastroRef.current = false;
+          setZona({ lon: e.lngLat.lng, lat: e.lngLat.lat });
+          setRadioZona(60);
+        }}
+        onTouchMove={(e) => {
+          if (!dibujandoRef.current) return;
+          e.preventDefault();
+          setZona((z) => {
+            if (z) {
+              arrastroRef.current = true;
+              const r = distanciaM(z.lon, z.lat, e.lngLat.lng, e.lngLat.lat);
+              setRadioZona(Math.min(2000, Math.max(60, Math.round(r / 10) * 10)));
+            }
+            return z;
+          });
+        }}
+        onTouchEnd={() => {
+          if (!dibujandoRef.current) return;
+          dibujandoRef.current = false;
+          if (!arrastroRef.current) setRadioZona(250);
+        }}
         onMouseEnter={() => {
           const c = mapRef.current?.getCanvas();
           if (c) c.style.cursor = modoAnalisis ? "crosshair" : "pointer";
@@ -786,6 +829,18 @@ function MapaInterno({
           setTooltip(null);
         }}
         onMouseMove={(e) => {
+          if (dibujandoRef.current) {
+            // dibujo en vivo: el radio sigue al cursor y el análisis se recalcula
+            setZona((z) => {
+              if (z) {
+                arrastroRef.current = true;
+                const r = distanciaM(z.lon, z.lat, e.lngLat.lng, e.lngLat.lat);
+                setRadioZona(Math.min(2000, Math.max(60, Math.round(r / 10) * 10)));
+              }
+              return z;
+            });
+            return;
+          }
           if (barraEstadoRef.current) {
             barraEstadoRef.current.textContent =
               e.lngLat.lat.toFixed(5) + ", " + e.lngLat.lng.toFixed(5) + "  ·  z" +
@@ -939,10 +994,10 @@ function MapaInterno({
             className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
               modoAnalisis ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
-            title="Analizador de zona: clic en el mapa y obtené estadísticas instantáneas de ese radio"
+            title="Analizador de zona: mantené clic y arrastrá para dibujar un círculo — las estadísticas se calculan en vivo mientras arrastrás"
           >
             <Radar size={14} className={modoAnalisis ? "animate-pulse" : ""} />
-            {modoAnalisis ? "Elegí un punto…" : "Analizar zona"}
+            {modoAnalisis ? "Dibujá el círculo…" : "Analizar zona"}
           </button>
           <button
             onClick={() => {
