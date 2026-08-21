@@ -322,6 +322,7 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
   const [tipos, setTipos] = useState<Record<string, boolean>>({});
   const [verAvenidas, setVerAvenidas] = useState(true);
+  const [verCalles, setVerCalles] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
 
@@ -414,6 +415,66 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
     };
   }, [data, tipos, corte, demandasFiltradas, kpisIniciales]);
 
+  /**
+   * Callejero legible al hacer zoom, para poder ubicar cualquier dirección y no
+   * solo las avenidas. El estilo dark-matter de CARTO es deliberadamente
+   * minimalista: rellena las calles menores recién en zoom 15, oculta sus
+   * nombres hasta zoom 16 y pinta calles de servicio en #0b0b0b (invisible).
+   * Acá se adelantan esos zooms y se sube el contraste, sin tocar el estilo
+   * remoto: se ajustan las capas ya presentes cuando el estilo termina de cargar.
+   */
+  useEffect(() => {
+    const NOMBRES = [
+      { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#b9c6d8" },
+      { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#c8d4e4" },
+      { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#d6e0ee" },
+      { id: "roadname_major", minzoom: 11.5, size: 12, color: "#e2eaf5" },
+    ];
+    const TRAZAS = [
+      { id: "road_minor_fill", minzoom: 13.5, color: "rgba(88, 97, 118, 1)" },
+      { id: "road_minor_case", minzoom: 12.5, color: "rgba(72, 79, 98, 1)" },
+      { id: "road_service_fill", minzoom: 14.5, color: "rgba(70, 76, 94, 1)" },
+      { id: "road_sec_fill_noramp", minzoom: 12, color: "rgba(96, 105, 126, 1)" },
+    ];
+
+    let cancelado = false;
+    const aplicar = () => {
+      const mapa = mapRef.current?.getMap();
+      if (!mapa || !mapa.isStyleLoaded()) return false;
+
+      for (const c of NOMBRES) {
+        if (!mapa.getLayer(c.id)) continue;
+        mapa.setLayoutProperty(c.id, "visibility", verCalles ? "visible" : "none");
+        if (!verCalles) continue;
+        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
+        mapa.setLayoutProperty(c.id, "text-size", c.size);
+        mapa.setPaintProperty(c.id, "text-color", c.color);
+        mapa.setPaintProperty(c.id, "text-halo-color", "#070a10");
+        mapa.setPaintProperty(c.id, "text-halo-width", 1.7);
+      }
+
+      // Las trazas se realzan siempre: el toggle es solo de nombres.
+      for (const c of TRAZAS) {
+        if (!mapa.getLayer(c.id)) continue;
+        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
+        mapa.setPaintProperty(c.id, "line-color", c.color);
+      }
+      return true;
+    };
+
+    if (aplicar()) return;
+    // El estilo puede no estar listo al montar: reintenta y se engancha a styledata.
+    const id = setInterval(() => {
+      if (cancelado || aplicar()) clearInterval(id);
+    }, 300);
+    const mapa = mapRef.current?.getMap();
+    mapa?.on("styledata", aplicar);
+    return () => {
+      cancelado = true;
+      clearInterval(id);
+      mapa?.off("styledata", aplicar);
+    };
+  }, [verCalles]);
   // Pulso animado de "en ejecución"
   useEffect(() => {
     let vivo = true;
@@ -754,6 +815,19 @@ function MapaInterno({ kpisIniciales, iaHabilitada }: { kpisIniciales: Kpis; rol
               />
               <span className="inline-block h-0.5 w-4 rounded bg-celeste" />
               Avenidas principales
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Nombres de todas las calles al acercar el zoom, para ubicar cualquier dirección"
+            >
+              <input
+                type="checkbox"
+                checked={verCalles}
+                onChange={(e) => setVerCalles(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="text-[10px] text-texto-3">Aa</span>
+              Nombres de calles
             </label>
 
             <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Incidentes</p>
