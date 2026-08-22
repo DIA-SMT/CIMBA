@@ -80,7 +80,11 @@ export default async function PaginaIncidentes({
                 key={i.id}
                 className={`border-b border-borde/60 transition hover:bg-panel-2 ${foco === i.id ? "bg-azul/10" : ""}`}
               >
-                <td className="num px-4 py-2.5 text-texto-3">{i.id}</td>
+                <td className="num px-4 py-2.5">
+                  <Link href={`/incidentes/${i.id}`} className="text-celeste hover:underline" title="Ver la historia completa: qué se pidió, qué se hizo y en qué quedó">
+                    {i.id}
+                  </Link>
+                </td>
                 <td className="px-4 py-2.5">
                   {i.scorePrioridad != null ? (
                     <span
@@ -93,7 +97,15 @@ export default async function PaginaIncidentes({
                   )}
                 </td>
                 <td className="px-4 py-2.5"><BadgeTipo tipo={i.tipo} /></td>
-                <td className="max-w-56 truncate px-4 py-2.5" title={i.direccion ?? ""}>{i.direccion ?? "—"}</td>
+                <td className="max-w-56 truncate px-4 py-2.5">
+                  <Link
+                    href={`/incidentes/${i.id}`}
+                    className="hover:text-celeste hover:underline"
+                    title={i.direccion ? `${i.direccion} — ver la historia completa` : "Ver la historia completa de este incidente"}
+                  >
+                    {i.direccion ?? "—"}
+                  </Link>
+                </td>
                 <td className="px-4 py-2.5"><BadgeEstadoIncidente estado={i.estado} /></td>
                 <td className="num px-4 py-2.5">{i.demandas}</td>
                 <td className="num px-4 py-2.5">{i.intervenciones}</td>
@@ -124,14 +136,23 @@ export default async function PaginaIncidentes({
       {paginas > 1 && (
         <div className="mt-4 flex items-center justify-center gap-3 text-sm">
           {pagina > 1 && (
-            <Link className="text-celeste hover:underline" href={`/incidentes?pagina=${pagina - 1}`}>← Anterior</Link>
+            <Link className="text-celeste hover:underline" href={urlPagina(filtros, pagina - 1)}>← Anterior</Link>
           )}
           <span className="num text-texto-3">{pagina} / {paginas}</span>
           {pagina < paginas && (
-            <Link className="text-celeste hover:underline" href={`/incidentes?pagina=${pagina + 1}`}>Siguiente →</Link>
+            <Link className="text-celeste hover:underline" href={urlPagina(filtros, pagina + 1)}>Siguiente →</Link>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function urlPagina(filtros: { estado?: string; tipo?: string; orden?: string }, pagina: number): string {
+  const p = new URLSearchParams();
+  if (filtros.estado) p.set("estado", filtros.estado);
+  if (filtros.tipo) p.set("tipo", filtros.tipo);
+  if (filtros.orden) p.set("orden", filtros.orden);
+  p.set("pagina", String(pagina));
+  return `/incidentes?${p.toString()}`;
 }

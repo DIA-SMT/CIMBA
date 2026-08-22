@@ -159,9 +159,9 @@ export async function ejecutarHerramientaMigue(
         from demandas d
         where (${texto}::text is null or coalesce(d.direccion_normalizada, d.direccion_texto) ilike '%' || ${texto} || '%'
                or d.descripcion ilike '%' || ${texto} || '%')
-          and (${(args.fuente as string) ?? null}::text is null or d.fuente = (${(args.fuente as string) ?? null})::fuente_demanda)
-          and (${(args.estado as string) ?? null}::text is null or d.estado = (${(args.estado as string) ?? null})::estado_demanda)
-          and (${(args.tipo as string) ?? null}::text is null or d.tipo = (${(args.tipo as string) ?? null})::tipo_problema)
+          and (${(args.fuente as string) || null}::text is null or d.fuente = (${(args.fuente as string) || null})::fuente_demanda)
+          and (${(args.estado as string) || null}::text is null or d.estado = (${(args.estado as string) || null})::estado_demanda)
+          and (${(args.tipo as string) || null}::text is null or d.tipo = (${(args.tipo as string) || null})::tipo_problema)
         order by d.creado_en desc
         limit ${lim(args.limite)}
       `);
@@ -176,8 +176,8 @@ export async function ejecutarHerramientaMigue(
                i.metadata->>'origen' as origen
         from incidentes i
         where (${texto}::text is null or i.direccion ilike '%' || ${texto} || '%')
-          and (${(args.estado as string) ?? null}::text is null or i.estado = (${(args.estado as string) ?? null})::estado_incidente)
-          and (${(args.tipo as string) ?? null}::text is null or i.tipo = (${(args.tipo as string) ?? null})::tipo_problema)
+          and (${(args.estado as string) || null}::text is null or i.estado = (${(args.estado as string) || null})::estado_incidente)
+          and (${(args.tipo as string) || null}::text is null or i.tipo = (${(args.tipo as string) || null})::tipo_problema)
         order by i.score_prioridad desc nulls last, i.detectado_en desc
         limit ${lim(args.limite)}
       `);

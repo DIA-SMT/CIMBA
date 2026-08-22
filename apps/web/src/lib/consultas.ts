@@ -5,6 +5,13 @@ import { puedeVerContacto } from "./auth";
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
 
+/**
+ * Los <select> de los formularios GET mandan "" al elegir "Todos". Un "" que
+ * llega a un cast de enum (''::estado_incidente) revienta la consulta, así que
+ * acá cadena vacía es null (= sin filtro).
+ */
+const filtro = (v?: string | null): string | null => (v ? v : null);
+
 // ── KPIs del centro de comando ──────────────────────────────────────────────
 
 export interface Kpis {
@@ -77,14 +84,19 @@ export async function listarDemandas(
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const condCalidad = (filtros.calidad && FILTROS_CALIDAD[filtros.calidad]) || sql``;
 
+  const fuente = filtro(filtros.fuente);
+  const estado = filtro(filtros.estado);
+  const q = filtro(filtros.q);
+  const mes = filtro(filtros.mes);
+
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
-      where (${filtros.fuente ?? null}::text is null or d.fuente = (${filtros.fuente ?? null})::fuente_demanda)
-        and (${filtros.estado ?? null}::text is null or d.estado = (${filtros.estado ?? null})::estado_demanda)
-        and (${filtros.q ?? null}::text is null
-             or d.direccion_normalizada ilike '%' || ${filtros.q ?? ""} || '%'
-             or d.descripcion ilike '%' || ${filtros.q ?? ""} || '%')
-        and (${filtros.mes ?? null}::text is null or to_char(d.creado_en, 'YYYY-MM') = ${filtros.mes ?? null})
+      where (${fuente}::text is null or d.fuente = (${fuente})::fuente_demanda)
+        and (${estado}::text is null or d.estado = (${estado})::estado_demanda)
+        and (${q}::text is null
+             or d.direccion_normalizada ilike '%' || ${q ?? ""} || '%'
+             or d.descripcion ilike '%' || ${q ?? ""} || '%')
+        and (${mes}::text is null or to_char(d.creado_en, 'YYYY-MM') = ${mes})
         ${condCalidad}
     `;
     const filas = (await tx.execute(sql`
@@ -224,10 +236,12 @@ export async function listarIncidentes(
 ): Promise<{ filas: IncidenteResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
+  const estado = filtro(filtros.estado);
+  const tipo = filtro(filtros.tipo);
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
-      where (${filtros.estado ?? null}::text is null or i.estado = (${filtros.estado ?? null})::estado_incidente)
-        and (${filtros.tipo ?? null}::text is null or i.tipo = (${filtros.tipo ?? null})::tipo_problema)
+      where (${estado}::text is null or i.estado = (${estado})::estado_incidente)
+        and (${tipo}::text is null or i.tipo = (${tipo})::tipo_problema)
     `;
     const orden =
       filtros.orden === "fecha"
@@ -273,6 +287,7 @@ export interface IntervencionResumen {
   incidenteId: number;
   estado: string;
   cuadrilla: string | null;
+  tipo: TipoProblema | null;
   direccion: string | null;
   lat: number | null;
   lon: number | null;
@@ -289,17 +304,19 @@ export async function listarIntervenciones(
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
+  const estado = filtro(filtros.estado);
+  const ejecutor = filtro(filtros.ejecutor);
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
-      where (${filtros.estado ?? null}::text is null or iv.estado = (${filtros.estado ?? null})::estado_intervencion)
-        and (${filtros.ejecutor ?? null}::text is null
+      where (${estado}::text is null or iv.estado = (${estado})::estado_intervencion)
+        and (${ejecutor}::text is null
              or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
                          iv.metadata->>'contratista',
-                         'Sin asignar') = ${filtros.ejecutor ?? null})
+                         'Sin asignar') = ${ejecutor})
     `;
     const filas = (await tx.execute(sql`
       select iv.id, iv.incidente_id, iv.estado, c.nombre as cuadrilla,
-             i.direccion,
+             i.direccion, i.tipo,
              st_y(coalesce(iv.geom_ejecucion, i.geom)) as lat,
              st_x(coalesce(iv.geom_ejecucion, i.geom)) as lon,
              iv.iniciada_en, iv.finalizada_en, iv.superficie_m2, iv.metadata,
@@ -320,6 +337,7 @@ export async function listarIntervenciones(
         incidenteId: Number(f.incidente_id),
         estado: String(f.estado),
         cuadrilla: (f.cuadrilla as string) ?? null,
+        tipo: (f.tipo as TipoProblema) ?? null,
         direccion: (f.direccion as string) ?? null,
         lat: f.lat != null ? Number(f.lat) : null,
         lon: f.lon != null ? Number(f.lon) : null,
@@ -330,6 +348,154 @@ export async function listarIntervenciones(
         metadata: (f.metadata as Record<string, unknown>) ?? {},
       })),
       total: Number(total[0]?.n ?? 0),
+    };
+  });
+}
+
+/** Panorama de intervenciones para la cabecera visual de la página. */
+export interface ResumenIntervenciones {
+  total: number;
+  finalizadas: number;
+  enCurso: number;
+  asignadas: number;
+  m2: number;
+  contratadas: number;
+  municipales: number;
+}
+
+export async function resumenIntervenciones(sesion: Sesion): Promise<ResumenIntervenciones> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select count(*) as total,
+             count(*) filter (where estado = 'finalizada') as finalizadas,
+             count(*) filter (where estado = 'en_curso') as en_curso,
+             count(*) filter (where estado = 'asignada') as asignadas,
+             coalesce(sum(superficie_m2) filter (where estado = 'finalizada'), 0) as m2,
+             count(*) filter (where (metadata->>'contratista' is not null or metadata->>'obra_id' is not null)
+                                and estado <> 'anulada') as contratadas,
+             count(*) filter (where metadata->>'contratista' is null and metadata->>'obra_id' is null
+                                and estado <> 'anulada') as municipales
+      from intervenciones
+    `)) as unknown as Array<Record<string, string | number>>;
+    const f = filas[0] ?? {};
+    return {
+      total: Number(f.total ?? 0),
+      finalizadas: Number(f.finalizadas ?? 0),
+      enCurso: Number(f.en_curso ?? 0),
+      asignadas: Number(f.asignadas ?? 0),
+      m2: Math.round(Number(f.m2 ?? 0)),
+      contratadas: Number(f.contratadas ?? 0),
+      municipales: Number(f.municipales ?? 0),
+    };
+  });
+}
+
+/**
+ * Historia completa de un incidente: el problema, todos los pedidos que lo
+ * originaron y todos los trabajos que lo atendieron. Es la vista que responde
+ * "¿qué se pidió y qué se hizo acá?" para un punto concreto.
+ */
+export interface HistoriaIncidente {
+  id: number;
+  tipo: TipoProblema;
+  estado: EstadoIncidente;
+  direccion: string | null;
+  lat: number | null;
+  lon: number | null;
+  scorePrioridad: number | null;
+  superficieM2: number | null;
+  detectadoEn: string;
+  cerradoEn: string | null;
+  demandas: Array<{
+    id: number;
+    fuente: FuenteDemanda;
+    estado: string;
+    descripcion: string | null;
+    direccion: string | null;
+    creadoEn: string;
+    sinFecha: boolean;
+    automatico: boolean;
+    confianza: number | null;
+  }>;
+  intervenciones: Array<{
+    id: number;
+    estado: string;
+    ejecutor: string;
+    contratada: boolean;
+    deCuadrilla: boolean;
+    iniciadaEn: string | null;
+    finalizadaEn: string | null;
+    superficieM2: number | null;
+    fotos: number;
+  }>;
+}
+
+export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Promise<HistoriaIncidente | null> {
+  return conRls(claims(sesion), async (tx) => {
+    const inc = (await tx.execute(sql`
+      select i.id, i.tipo, i.estado, i.direccion, st_y(i.geom) as lat, st_x(i.geom) as lon,
+             i.score_prioridad, i.superficie_m2, i.detectado_en, i.cerrado_en
+      from incidentes i where i.id = ${id}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const f = inc[0];
+    if (!f) return null;
+
+    const dems = (await tx.execute(sql`
+      select d.id, d.fuente, d.estado, d.descripcion,
+             coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
+             d.creado_en, d.metadata->>'sin_fecha' as sin_fecha, di.automatico, di.confianza
+      from demanda_incidente di
+      join demandas d on d.id = di.demanda_id
+      where di.incidente_id = ${id}
+      order by d.creado_en asc
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    const ivs = (await tx.execute(sql`
+      select iv.id, iv.estado,
+             coalesce(c.nombre, iv.metadata->>'contratista', 'Sin asignar') as ejecutor,
+             (iv.metadata->>'contratista' is not null or iv.metadata->>'obra_id' is not null) as contratada,
+             (iv.cuadrilla_id is not null) as de_cuadrilla,
+             iv.iniciada_en, iv.finalizada_en, iv.superficie_m2,
+             (select count(*) from fotografias fo where fo.intervencion_id = iv.id) as fotos
+      from intervenciones iv
+      left join cuadrillas c on c.id = iv.cuadrilla_id
+      where iv.incidente_id = ${id}
+      order by coalesce(iv.iniciada_en, iv.finalizada_en, iv.creado_en) asc
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    return {
+      id: Number(f.id),
+      tipo: f.tipo as TipoProblema,
+      estado: f.estado as EstadoIncidente,
+      direccion: (f.direccion as string) ?? null,
+      lat: f.lat != null ? Number(f.lat) : null,
+      lon: f.lon != null ? Number(f.lon) : null,
+      scorePrioridad: f.score_prioridad != null ? Number(f.score_prioridad) : null,
+      superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
+      detectadoEn: String(f.detectado_en),
+      cerradoEn: f.cerrado_en != null ? String(f.cerrado_en) : null,
+      demandas: dems.map((d) => ({
+        id: Number(d.id),
+        fuente: d.fuente as FuenteDemanda,
+        estado: String(d.estado),
+        descripcion: (d.descripcion as string) ?? null,
+        direccion: (d.direccion as string) ?? null,
+        creadoEn: String(d.creado_en),
+        sinFecha: d.sin_fecha === "true",
+        automatico: Boolean(d.automatico),
+        confianza: d.confianza != null ? Number(d.confianza) : null,
+      })),
+      intervenciones: ivs.map((v) => ({
+        id: Number(v.id),
+        estado: String(v.estado),
+        ejecutor: String(v.ejecutor),
+        contratada: Boolean(v.contratada),
+        deCuadrilla: Boolean(v.de_cuadrilla),
+        iniciadaEn: v.iniciada_en != null ? String(v.iniciada_en) : null,
+        finalizadaEn: v.finalizada_en != null ? String(v.finalizada_en) : null,
+        superficieM2: v.superficie_m2 != null ? Number(v.superficie_m2) : null,
+        fotos: Number(v.fotos ?? 0),
+      })),
     };
   });
 }
