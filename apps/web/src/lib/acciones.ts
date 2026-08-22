@@ -313,6 +313,58 @@ export async function crearDemandaHcd(entrada: {
   return { ok: true, id };
 }
 
+/**
+ * Pedidos de funcionarios municipales: cargan desde el territorio (GPS o clic
+ * en el mapa) conforme el distrito que recorren. Entra como demanda con fuente
+ * 'secretaria' y el área/distrito en metadata.
+ */
+export async function crearDemandaFuncionario(entrada: {
+  lat: number;
+  lon: number;
+  tipo: string;
+  descripcion: string;
+  direccion: string;
+  solicitante: string;
+  area: string;
+  distrito?: string;
+  desdeGps?: boolean;
+}) {
+  const sesion = await requerirRol("funcionario", "planificacion", "supervision");
+  const datos = z
+    .object({
+      lat: z.number().min(-27.2).max(-26.4),
+      lon: z.number().min(-65.6).max(-64.9),
+      tipo: tipoProblemaSchema,
+      descripcion: z.string().min(5).max(2000),
+      direccion: z.string().min(3).max(300),
+      solicitante: z.string().min(3).max(200),
+      area: z.string().min(2).max(200),
+      distrito: z.string().max(120).optional(),
+      desdeGps: z.boolean().optional(),
+    })
+    .parse(entrada);
+
+  const metadata = {
+    origen: "pedidos_funcionarios",
+    area: datos.area,
+    distrito: datos.distrito ?? null,
+    desde_gps: datos.desdeGps ?? false,
+  };
+  const id = await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
+                            solicitante, creado_por, metadata)
+      values ('secretaria', ${datos.tipo}, ${datos.descripcion}, ${datos.direccion},
+              st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), 1.0,
+              ${datos.solicitante}, ${sesion.sub}, ${JSON.stringify(metadata)}::jsonb)
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    return filas[0]?.id;
+  });
+  revalidatePath("/demandas");
+  return { ok: true, id };
+}
+
 // ── Supervisión ─────────────────────────────────────────────────────────────
 
 export async function verificarIncidente(entrada: { incidenteId: number }) {

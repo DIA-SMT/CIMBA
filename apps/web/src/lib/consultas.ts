@@ -282,6 +282,58 @@ export async function listarIncidentes(
   });
 }
 
+/** Composición de la cola por estado + cuántos tienen score, para la cabecera visual. */
+export interface ResumenIncidentes {
+  porEstado: Record<string, number>;
+  total: number;
+  conScore: number;
+  sinScore: number;
+}
+
+export async function resumenIncidentes(sesion: Sesion): Promise<ResumenIncidentes> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select estado::text as estado, count(*)::int as n,
+             count(*) filter (where score_prioridad is not null)::int as con_score
+      from incidentes group by estado
+    `)) as unknown as Array<{ estado: string; n: string | number; con_score: string | number }>;
+    const porEstado: Record<string, number> = {};
+    let total = 0;
+    let conScore = 0;
+    for (const f of filas) {
+      porEstado[f.estado] = Number(f.n);
+      total += Number(f.n);
+      conScore += Number(f.con_score);
+    }
+    return { porEstado, total, conScore, sinScore: total - conScore };
+  });
+}
+
+/** Composición de la bandeja por estado y por fuente, para la cabecera visual. */
+export interface ResumenDemandas {
+  porEstado: Record<string, number>;
+  porFuente: Array<{ fuente: string; n: number }>;
+  total: number;
+}
+
+export async function resumenDemandas(sesion: Sesion): Promise<ResumenDemandas> {
+  return conRls(claims(sesion), async (tx) => {
+    const estados = (await tx.execute(sql`
+      select estado::text as estado, count(*)::int as n from demandas group by estado
+    `)) as unknown as Array<{ estado: string; n: string | number }>;
+    const fuentes = (await tx.execute(sql`
+      select fuente::text as fuente, count(*)::int as n from demandas group by fuente order by 2 desc
+    `)) as unknown as Array<{ fuente: string; n: string | number }>;
+    const porEstado: Record<string, number> = {};
+    let total = 0;
+    for (const f of estados) {
+      porEstado[f.estado] = Number(f.n);
+      total += Number(f.n);
+    }
+    return { porEstado, porFuente: fuentes.map((f) => ({ fuente: f.fuente, n: Number(f.n) })), total };
+  });
+}
+
 // ── Intervenciones ──────────────────────────────────────────────────────────
 
 export interface IntervencionResumen {

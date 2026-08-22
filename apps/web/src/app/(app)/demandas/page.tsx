@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { FUENTES_DEMANDA, ESTADOS_DEMANDA } from "@cimba/domain";
+import { FUENTES_DEMANDA, ESTADOS_DEMANDA, type FuenteDemanda } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
-import { listarDemandas } from "@/lib/consultas";
+import { listarDemandas, resumenDemandas } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
+import { CadenaFlujo } from "@/components/cadena-flujo";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
@@ -17,7 +18,10 @@ export default async function PaginaDemandas({
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
-  const { filas, total } = await listarDemandas(sesion, { ...filtros, pagina, limite: 50 });
+  const [{ filas, total }, resumen] = await Promise.all([
+    listarDemandas(sesion, { ...filtros, pagina, limite: 50 }),
+    resumenDemandas(sesion),
+  ]);
   const ETIQUETA_CALIDAD: Record<string, string> = {
     geocod_baja: "geocodificación imprecisa",
     sin_ubicacion: "sin ubicación",
@@ -36,9 +40,57 @@ export default async function PaginaDemandas({
   return (
     <div className="mx-auto max-w-6xl p-6">
       <TituloPagina
-        titulo="Bandeja de demandas"
-        sub={`${numero(total)} demandas · todas las fuentes en un solo lugar`}
+        titulo="Bandeja de demandas: todo lo que se pide"
+        sub="Cada fila es un pedido de un vecino o institución. El trabajo acá es revisarlos y vincularlos a un problema real del territorio."
       />
+
+      <CadenaFlujo actual={1} />
+
+      {/* La bandeja en números: cada estado y cada fuente es un filtro de un clic */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <Link
+          href="/demandas"
+          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${!filtros.estado && !filtros.fuente ? "border-celeste/60 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-2 hover:border-celeste/50 hover:text-texto"}`}
+        >
+          Todas <span className="num">{numero(resumen.total)}</span>
+        </Link>
+        {(
+          [
+            ["recibida", "#3987e5", "Llegaron y nadie las revisó todavía: acá está el trabajo pendiente"],
+            ["en_validacion", "#f4dc00", "Alguien las está revisando o esperan un dato"],
+            ["vinculada", "#199e70", "Ya cotejadas: apuntan a un problema real del territorio"],
+            ["descartada", "#6b7280", "Revisadas y descartadas con motivo"],
+            ["fuera_de_alcance", "#6b7280", "No corresponden a bacheo (otra área)"],
+          ] as const
+        ).map(([e, color, ayuda]) => {
+          const n = resumen.porEstado[e] ?? 0;
+          if (n === 0) return null;
+          return (
+            <Link
+              key={e}
+              href={link({ estado: e })}
+              title={ayuda}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${filtros.estado === e ? "border-borde-2 bg-panel-2 text-texto" : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"}`}
+            >
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
+              {ETIQUETA_ESTADO_DEMANDA[e]} <span className="num text-texto-3">{numero(n)}</span>
+            </Link>
+          );
+        })}
+      </div>
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Quién pide:</span>
+        {resumen.porFuente.map(({ fuente, n }) => (
+          <Link
+            key={fuente}
+            href={link({ fuente })}
+            title={`Ver solo los pedidos de ${ETIQUETA_FUENTE[fuente as FuenteDemanda] ?? fuente}`}
+            className={`rounded-full border px-2.5 py-1 text-[11px] transition ${filtros.fuente === fuente ? "border-celeste/60 bg-celeste/10 text-celeste" : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"}`}
+          >
+            {ETIQUETA_FUENTE[fuente as FuenteDemanda] ?? fuente} <span className="num text-texto-3">{numero(n)}</span>
+          </Link>
+        ))}
+      </div>
 
       {filtros.mes && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-celeste/40 bg-celeste/10 px-4 py-2.5 text-sm">

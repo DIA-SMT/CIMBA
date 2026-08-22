@@ -63,6 +63,8 @@ export const ROLES_USUARIO = [
   "supervision",
   "cuadrilla",
   "lectura",
+  // al final: el índice define el id_persona ficticio del acceso dev (90000+i)
+  "funcionario",
 ] as const;
 export const rolUsuarioSchema = z.enum(ROLES_USUARIO);
 export type RolUsuario = z.infer<typeof rolUsuarioSchema>;

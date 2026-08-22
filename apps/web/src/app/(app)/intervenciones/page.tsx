@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { HardHat, Inbox, Wrench } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarEjecutores, listarIntervenciones, resumenIntervenciones } from "@/lib/consultas";
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
+import { CadenaFlujo } from "@/components/cadena-flujo";
 
 export const dynamic = "force-dynamic";
 
@@ -42,15 +42,7 @@ export default async function PaginaIntervenciones({
         sub="Cada fila es un trabajo concreto de reparación — de una cuadrilla municipal o de una obra contratada (SIGOV)."
       />
 
-      {/* ¿Qué estoy viendo? La cadena completa, con esta página resaltada */}
-      <div className="mb-5 grid gap-2 sm:grid-cols-3">
-        <PasoCadena icono={<Inbox size={14} />} color={C.pedido} titulo="1 · Pedido (demanda)"
-          texto="Un vecino o institución reclama un problema." href="/demandas" />
-        <PasoCadena icono={<Wrench size={14} />} color="#f4dc00" titulo="2 · Problema (incidente)"
-          texto="Los pedidos del mismo lugar se agrupan y priorizan." href="/incidentes" />
-        <PasoCadena icono={<HardHat size={14} />} color={C.hecho} titulo="3 · Trabajo (intervención)"
-          texto="Una cuadrilla u obra repara. Estás acá." activo />
-      </div>
+      <CadenaFlujo actual={3} />
 
       {/* El panorama en números */}
       <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
@@ -215,32 +207,6 @@ function Avance({ estado }: { estado: string }) {
       <p className="mt-1 text-[10px] font-semibold" style={{ color }}>{ETIQUETA[estado] ?? estado}</p>
     </div>
   );
-}
-
-function PasoCadena({
-  icono,
-  color,
-  titulo,
-  texto,
-  href,
-  activo = false,
-}: {
-  icono: React.ReactNode;
-  color: string;
-  titulo: string;
-  texto: string;
-  href?: string;
-  activo?: boolean;
-}) {
-  const cuerpo = (
-    <div className={`h-full rounded-xl border px-3 py-2.5 transition ${activo ? "border-borde-2 bg-panel-2" : "border-borde bg-panel/50 hover:bg-panel-2/60"}`}>
-      <p className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
-        {icono} {titulo}
-      </p>
-      <p className="mt-0.5 text-[11px] leading-snug text-texto-3">{texto}</p>
-    </div>
-  );
-  return href ? <Link href={href} className="block">{cuerpo}</Link> : cuerpo;
 }
 
 function Cifra({ n, etiqueta, color, nota }: { n: number; etiqueta: string; color: string; nota?: string }) {

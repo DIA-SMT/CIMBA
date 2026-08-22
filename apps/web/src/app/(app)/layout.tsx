@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Smartphone,
   Upload,
+  UserRound,
 } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/calidad", etiqueta: "Calidad", icono: ShieldCheck },
   { href: "/cargar", etiqueta: "Cargar", icono: Upload },
   { href: "/hcd/nuevo", etiqueta: "HCD", icono: Landmark },
+  { href: "/funcionarios/nuevo", etiqueta: "Funcionarios", icono: UserRound },
   { href: "/campo", etiqueta: "Campo", icono: Smartphone },
 ];
 
