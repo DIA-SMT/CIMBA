@@ -8,6 +8,7 @@ import { crearDemandaFuncionario } from "@/lib/acciones";
 import { leerArchivoComoCapa, type CapaPuntos } from "@/lib/capa-archivo";
 import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
+import { CargaRapida, type CargaInterpretada } from "@/components/carga-rapida";
 import { Panel } from "@/components/ui";
 
 /** Distritos operativos de la ciudad (referencia editable; queda en metadata). */
@@ -143,8 +144,20 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
     );
   }
 
+  const aplicarCarga = (r: CargaInterpretada) => {
+    if (r.tipo) setTipo(r.tipo);
+    if (r.direccion) setDireccion(r.direccion);
+    if (r.descripcion) setDescripcion(r.descripcion);
+    if (r.punto) {
+      setPunto(r.punto);
+      setDesdeGps(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      <CargaRapida alAplicar={aplicarCarga} />
+
       <div>
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <label className="block text-xs font-semibold tracking-wider text-texto-3 uppercase">

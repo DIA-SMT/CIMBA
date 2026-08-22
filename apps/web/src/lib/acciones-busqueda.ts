@@ -116,6 +116,66 @@ export async function interpretarBusquedaMapa(
   }
 }
 
+/** Interpretación de una carga dictada: "Carga bache en Av. Sarmiento 471". */
+export interface InterpretacionCarga {
+  tipo: (typeof TIPOS_PROBLEMA)[number] | null;
+  direccion: string | null;
+  descripcion: string | null;
+}
+
+const esquemaCarga = z
+  .object({
+    tipo: z.enum(TIPOS_PROBLEMA).nullish().catch(null),
+    direccion: z.string().max(200).nullish().catch(null),
+    descripcion: z.string().max(500).nullish().catch(null),
+  })
+  .catch({ tipo: null, direccion: null, descripcion: null });
+
+const TIPO_POR_PALABRA: Array<[RegExp, (typeof TIPOS_PROBLEMA)[number]]> = [
+  [/hundimient|hundid/i, "hundimiento"],
+  [/tapa|registro/i, "tapa_registro"],
+  [/p[eé]rdida|agua|ca[ñn]o/i, "perdida_agua"],
+  [/fisura|grieta/i, "fisura"],
+  [/sumidero|boca de tormenta/i, "sumidero"],
+  [/pavimento|calzada|asfalto/i, "pavimento_deteriorado"],
+  [/bache|pozo/i, "bache"],
+];
+
+export async function interpretarCarga(
+  consulta: string,
+): Promise<{ ok: boolean; interpretacion: InterpretacionCarga }> {
+  const sesion = await leerSesion();
+  const frase = consulta.trim().slice(0, 300);
+  const respaldo: InterpretacionCarga = {
+    tipo: TIPO_POR_PALABRA.find(([re]) => re.test(frase))?.[1] ?? null,
+    direccion: lugarHeuristico(frase) || null,
+    descripcion: null,
+  };
+  if (!sesion || frase.length < 4) return { ok: false, interpretacion: respaldo };
+  if (!iaDisponible()) return { ok: true, interpretacion: respaldo };
+
+  try {
+    const r = await completarJson(
+      `Convertís una orden de carga dictada en español rioplatense en los campos de un pedido de bacheo de San Miguel de Tucumán (ej: "Carga bache en Av. Sarmiento 471", "hay un hundimiento grande en Corrientes al 800, frente a la escuela"). Respondé SOLO un objeto JSON:
+- tipo: uno de ${TIPOS_PROBLEMA.join(", ")} (pistas: "pozo"→bache, "tapa"→tapa_registro, "agua/caño roto"→perdida_agua)
+- direccion: la dirección COMPLETA como se cargaría (con altura o esquina si la dijo, ej: "Av. Sarmiento 471")
+- descripcion: el detalle extra que agregue la frase (tamaño, referencia, urgencia), o null si solo dijo tipo y dirección. No repitas la dirección acá.`,
+      frase,
+      esquemaCarga,
+    );
+    return {
+      ok: true,
+      interpretacion: {
+        tipo: r.tipo ?? respaldo.tipo,
+        direccion: r.direccion ?? respaldo.direccion,
+        descripcion: r.descripcion ?? null,
+      },
+    };
+  } catch {
+    return { ok: true, interpretacion: respaldo };
+  }
+}
+
 export async function interpretarBusqueda(
   destino: DestinoBusqueda,
   consulta: string,

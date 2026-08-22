@@ -2,7 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Boxes, ChevronDown, Crosshair, Flame, History, Layers, Radar, Search, Sparkles, X } from "lucide-react";
+import { Boxes, ChevronDown, Crosshair, Flame, History, Layers, Printer, Radar, Search, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +25,7 @@ import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from 
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { AnalisisZona } from "./analisis-zona";
 import { BuscadorMapa } from "./buscador-mapa";
+import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 
@@ -393,6 +394,7 @@ type Seleccion =
 
 function MapaInterno({
   kpisIniciales,
+  rol,
   iaHabilitada,
   foco,
   inicial,
@@ -458,7 +460,10 @@ function MapaInterno({
   const [dias, setDias] = useState<number | null>(null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
   // Resultado del buscador en lenguaje natural: puntos marcados con anillo
-  const [resaltado, setResaltado] = useState<FeatureCollection<Point, Record<string, unknown>> | null>(null);
+  const [resaltado, setResaltado] = useState<{
+    fc: FeatureCollection<Point, Record<string, unknown>>;
+    frase: string;
+  } | null>(null);
 
   const aplicarVista = (v: Vista) => {
     setVista(v);
@@ -529,7 +534,7 @@ function MapaInterno({
     if (dems.length > 0) setVerDemandas(true);
 
     if (todas.length > 0) {
-      setResaltado({ type: "FeatureCollection", features: todas });
+      setResaltado({ fc: { type: "FeatureCollection", features: todas }, frase });
       let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
       for (const f of todas) {
         const [lon, lat] = f.geometry.coordinates;
@@ -626,6 +631,61 @@ function MapaInterno({
     });
     return { type: "FeatureCollection", features };
   }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor]);
+
+  /**
+   * Reporte imprimible del estado actual: captura el lienzo del mapa (via un
+   * repintado, porque el buffer WebGL no se conserva) y arma un documento
+   * profesional con la consulta activa, los filtros y el listado preciso.
+   */
+  const capturarMapa = (): Promise<string | null> =>
+    new Promise((resolver) => {
+      const mapa = mapRef.current?.getMap();
+      if (!mapa) return resolver(null);
+      mapa.once("render", () => {
+        try {
+          resolver(mapa.getCanvas().toDataURL("image/png"));
+        } catch {
+          resolver(null);
+        }
+      });
+      mapa.triggerRepaint();
+    });
+
+  const generarReporte = async () => {
+    const imagen = await capturarMapa();
+    const enBusqueda = resaltado != null && resaltado.fc.features.length > 0;
+    const base = enBusqueda ? resaltado.fc.features : null;
+    const dems = (base ? base.filter((f) => f.properties.fuente != null) : verDemandas ? demandasFiltradas.features : []).map(
+      (f) => f.properties,
+    );
+    const incs = (base ? base.filter((f) => f.properties.fuente == null) : incidentesFiltrados.features).map(
+      (f) => f.properties,
+    );
+
+    const filtros: string[] = [`Vista: ${VISTAS[vista].etiqueta}`];
+    const tiposActivos = Object.keys(ETIQUETA_TIPO).filter((t) => tipos[t] !== false);
+    if (tiposActivos.length < Object.keys(ETIQUETA_TIPO).length) {
+      filtros.push(`Tipo: ${tiposActivos.map((t) => ETIQUETA_TIPO[t as keyof typeof ETIQUETA_TIPO]).join(", ")}`);
+    }
+    const fuentesApagadas = Object.entries(fuentes).filter(([, v]) => v === false).length;
+    if (fuentesApagadas > 0) {
+      const activas = fuentesPresentes.filter((f) => fuentes[f] !== false);
+      filtros.push(`Fuente: ${activas.map((f) => ETIQUETA_FUENTE[f as keyof typeof ETIQUETA_FUENTE] ?? f).join(", ")}`);
+    }
+    if (soloDemandasAbiertas && verDemandas) filtros.push("Solo pedidos pendientes");
+    if (vista === "brecha" && filtroBrecha) filtros.push(`Brecha: ${filtroBrecha.replaceAll("_", " ")}`);
+    if (dias) filtros.push(`Período: últimos ${dias} días`);
+
+    const ok = abrirReporte({
+      imagen,
+      consulta: enBusqueda ? resaltado.frase : null,
+      filtros,
+      demandas: dems,
+      incidentes: incs,
+      generadoPor: rol.replaceAll("_", " "),
+    });
+    if (!ok) window.alert("El navegador bloqueó la pestaña del reporte: permití las ventanas emergentes para CIMBA.");
+  };
 
   // Hexágonos 3D sobre las demandas visibles
   const hexData = useMemo(
@@ -1018,8 +1078,8 @@ function MapaInterno({
           <Layer {...capaSeleccion} />
         </Source>
 
-        {resaltado && resaltado.features.length > 0 && (
-          <Source id="resaltado" type="geojson" data={resaltado}>
+        {resaltado && resaltado.fc.features.length > 0 && (
+          <Source id="resaltado" type="geojson" data={resaltado.fc}>
             <Layer
               id="resaltado-halo"
               type="circle"
@@ -1053,7 +1113,7 @@ function MapaInterno({
         <BuscadorMapa
           alBuscar={buscarEnMapa}
           alLimpiar={() => setResaltado(null)}
-          hayResaltado={resaltado != null && resaltado.features.length > 0}
+          hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
         />
       </div>
 
@@ -1095,6 +1155,14 @@ function MapaInterno({
               {generandoInforme ? "Generando…" : "Informe IA"}
             </button>
           )}
+          <button
+            onClick={() => void generarReporte()}
+            className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
+            title="Reporte imprimible de lo visible en el mapa: extracto cartográfico, números precisos y listado — listo para PDF, mandar o imprimir"
+          >
+            <Printer size={14} />
+            Reporte
+          </button>
           <button
             onClick={() => {
               const activo = !modoAnalisis;
