@@ -58,7 +58,7 @@ export default async function PaginaCalidad() {
         <Tarjeta valor={c.sinVincular - c.vinculables} etiqueta="Requieren corrección" color="var(--color-encurso)" ayuda="Geocodificación dudosa, sin ubicación o sin tipo: se corrigen desde la bandeja (con IA) antes de poder cotejarlas." />
       </div>
 
-      {puedeConsolidar && <BotonConsolidar vinculables={c.vinculables} />}
+      {puedeConsolidar && <BotonConsolidar vinculables={c.vinculables} consolidables={c.consolidables} />}
 
       {/* Problemas de calidad */}
       <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">

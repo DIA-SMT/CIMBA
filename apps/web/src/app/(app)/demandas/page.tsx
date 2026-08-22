@@ -5,6 +5,7 @@ import { listarDemandas } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
+import { BusquedaNatural } from "@/components/busqueda-natural";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,12 @@ export default async function PaginaDemandas({
           <Link href="/calidad" className="ml-auto text-texto-3 hover:text-texto">← Volver a Calidad</Link>
         </div>
       )}
+
+      <BusquedaNatural
+        destino="demandas"
+        ejemplo="lo que pidió el concejo en barrio norte"
+        inicial={filtros.q ?? ""}
+      />
 
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/demandas" method="get">
         <select name="fuente" defaultValue={filtros.fuente ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">

@@ -24,7 +24,7 @@ export function iaDisponible(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
 }
 
-async function completarJson<T>(
+export async function completarJson<T>(
   sistema: string,
   usuario: string,
   schema: { parse: (v: unknown) => T },

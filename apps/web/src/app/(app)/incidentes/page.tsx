@@ -6,13 +6,14 @@ import { ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/
 import { BadgeEstadoIncidente, BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { AccionesIncidente } from "./acciones-incidente";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
+import { BusquedaNatural } from "@/components/busqueda-natural";
 
 export const dynamic = "force-dynamic";
 
 export default async function PaginaIncidentes({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string; tipo?: string; pagina?: string; orden?: string; foco?: string }>;
+  searchParams: Promise<{ estado?: string; tipo?: string; q?: string; pagina?: string; orden?: string; foco?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -20,6 +21,7 @@ export default async function PaginaIncidentes({
   const { filas, total } = await listarIncidentes(sesion, {
     estado: filtros.estado,
     tipo: filtros.tipo,
+    q: filtros.q,
     pagina,
     limite: 50,
     orden: filtros.orden === "fecha" ? "fecha" : "prioridad",
@@ -37,7 +39,14 @@ export default async function PaginaIncidentes({
         sub={`${numero(total)} incidentes · ordenados por score de prioridad`}
       />
 
+      <BusquedaNatural
+        destino="incidentes"
+        ejemplo="baches reparados en mate de luna"
+        inicial={filtros.q ?? ""}
+      />
+
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/incidentes" method="get">
+        {filtros.q && <input type="hidden" name="q" value={filtros.q} />}
         <select name="estado" defaultValue={filtros.estado ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
           <option value="">Todos los estados</option>
           {ESTADOS_INCIDENTE.map((e) => (
@@ -148,10 +157,11 @@ export default async function PaginaIncidentes({
   );
 }
 
-function urlPagina(filtros: { estado?: string; tipo?: string; orden?: string }, pagina: number): string {
+function urlPagina(filtros: { estado?: string; tipo?: string; q?: string; orden?: string }, pagina: number): string {
   const p = new URLSearchParams();
   if (filtros.estado) p.set("estado", filtros.estado);
   if (filtros.tipo) p.set("tipo", filtros.tipo);
+  if (filtros.q) p.set("q", filtros.q);
   if (filtros.orden) p.set("orden", filtros.orden);
   p.set("pagina", String(pagina));
   return `/incidentes?${p.toString()}`;

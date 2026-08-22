@@ -5,6 +5,7 @@ import { listarEjecutores, listarIntervenciones, resumenIntervenciones } from "@
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
+import { BusquedaNatural } from "@/components/busqueda-natural";
 
 export const dynamic = "force-dynamic";
 
@@ -21,13 +22,13 @@ const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70" } as const;
 export default async function PaginaIntervenciones({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string; ejecutor?: string; pagina?: string }>;
+  searchParams: Promise<{ estado?: string; ejecutor?: string; q?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
   const [{ filas, total }, ejecutores, resumen] = await Promise.all([
-    listarIntervenciones(sesion, { estado: filtros.estado, ejecutor: filtros.ejecutor, pagina, limite: 50 }),
+    listarIntervenciones(sesion, { estado: filtros.estado, ejecutor: filtros.ejecutor, q: filtros.q, pagina, limite: 50 }),
     listarEjecutores(sesion),
     resumenIntervenciones(sesion),
   ]);
@@ -61,7 +62,14 @@ export default async function PaginaIntervenciones({
           nota={`${numero(resumen.municipales)} de gestión municipal (bacheo y cuadrillas)`} />
       </div>
 
+      <BusquedaNatural
+        destino="intervenciones"
+        ejemplo="trabajos terminados en avenida colón"
+        inicial={filtros.q ?? ""}
+      />
+
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/intervenciones" method="get">
+        {filtros.q && <input type="hidden" name="q" value={filtros.q} />}
         <select name="estado" defaultValue={filtros.estado ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
           <option value="">Todos los estados</option>
           {Object.entries(ETIQUETA).map(([v, e]) => (
@@ -173,10 +181,11 @@ export default async function PaginaIntervenciones({
   );
 }
 
-function urlPagina(filtros: { estado?: string; ejecutor?: string }, pagina: number): string {
+function urlPagina(filtros: { estado?: string; ejecutor?: string; q?: string }, pagina: number): string {
   const p = new URLSearchParams();
   if (filtros.estado) p.set("estado", filtros.estado);
   if (filtros.ejecutor) p.set("ejecutor", filtros.ejecutor);
+  if (filtros.q) p.set("q", filtros.q);
   p.set("pagina", String(pagina));
   return `/intervenciones?${p.toString()}`;
 }

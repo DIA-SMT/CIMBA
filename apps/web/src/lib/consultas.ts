@@ -232,16 +232,18 @@ export interface IncidenteResumen {
 
 export async function listarIncidentes(
   sesion: Sesion,
-  filtros: { estado?: string; tipo?: string; limite?: number; pagina?: number; orden?: "prioridad" | "fecha" },
+  filtros: { estado?: string; tipo?: string; q?: string; limite?: number; pagina?: number; orden?: "prioridad" | "fecha" },
 ): Promise<{ filas: IncidenteResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const estado = filtro(filtros.estado);
   const tipo = filtro(filtros.tipo);
+  const q = filtro(filtros.q);
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${estado}::text is null or i.estado = (${estado})::estado_incidente)
         and (${tipo}::text is null or i.tipo = (${tipo})::tipo_problema)
+        and (${q}::text is null or i.direccion ilike '%' || ${q ?? ""} || '%')
     `;
     const orden =
       filtros.orden === "fecha"
@@ -300,15 +302,17 @@ export interface IntervencionResumen {
 
 export async function listarIntervenciones(
   sesion: Sesion,
-  filtros: { estado?: string; ejecutor?: string; limite?: number; pagina?: number },
+  filtros: { estado?: string; ejecutor?: string; q?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 200);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const estado = filtro(filtros.estado);
   const ejecutor = filtro(filtros.ejecutor);
+  const q = filtro(filtros.q);
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${estado}::text is null or iv.estado = (${estado})::estado_intervencion)
+        and (${q}::text is null or i.direccion ilike '%' || ${q ?? ""} || '%')
         and (${ejecutor}::text is null
              or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
                          iv.metadata->>'contratista',
@@ -328,7 +332,9 @@ export async function listarIntervenciones(
       order by coalesce(iv.finalizada_en, iv.iniciada_en, iv.creado_en) desc
       limit ${limite} offset ${offset}
     `)) as unknown as Array<Record<string, unknown>>;
-    const total = (await tx.execute(sql`select count(*) as n from intervenciones iv ${cond}`)) as unknown as Array<{
+    const total = (await tx.execute(sql`
+      select count(*) as n from intervenciones iv join incidentes i on i.id = iv.incidente_id ${cond}
+    `)) as unknown as Array<{
       n: string | number;
     }>;
     return {
@@ -527,6 +533,9 @@ export async function listarCuadrillas(sesion: Sesion): Promise<Array<{ id: numb
 export interface EstadisticasCalidad {
   sinVincular: number;
   vinculables: number;
+  /** De las vinculables, cuántas consolidaría una corrida AHORA (corroboradas:
+   *  incidente abierto a ≤25 m del mismo tipo, u otro pedido apto a ≤25 m). */
+  consolidables: number;
   geocodBaja: number;
   sinUbicacion: number;
   sinFecha: number;
@@ -553,12 +562,28 @@ export async function estadisticasCalidad(sesion: Sesion): Promise<EstadisticasC
         (select count(*) from demandas d where d.creado_en < now() - interval '365 days'
            and d.estado in ('recibida','en_validacion')) as antiguas,
         (select count(*) from demandas d where d.estado = 'vinculada') as vinculadas,
-        (select count(*) from demanda_incidente di where di.automatico) as auto_vinculadas
+        (select count(*) from demanda_incidente di where di.automatico) as auto_vinculadas,
+        (with aptas as (
+           select d.id, d.tipo, d.geom from demandas d
+           where d.estado = 'recibida' and d.geom is not null and d.tipo is not null
+             and coalesce(d.geocod_confianza,0) >= 0.75
+             and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)
+         )
+         select count(*) from aptas a
+         where exists (select 1 from incidentes i
+                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                         and i.tipo = a.tipo
+                         and st_dwithin(i.geom::geography, a.geom::geography, 25))
+            or exists (select 1 from aptas b
+                       where b.id <> a.id and b.tipo = a.tipo
+                         -- mismo criterio que el DBSCAN de la consolidación: eps 25 en 3857
+                         and st_dwithin(st_transform(b.geom, 3857), st_transform(a.geom, 3857), 25))) as consolidables
     `)) as unknown as Array<Record<string, string | number>>;
     const f = filas[0] ?? {};
     return {
       sinVincular: Number(f.sin_vincular ?? 0),
       vinculables: Number(f.vinculables ?? 0),
+      consolidables: Number(f.consolidables ?? 0),
       geocodBaja: Number(f.geocod_baja ?? 0),
       sinUbicacion: Number(f.sin_ubicacion ?? 0),
       sinFecha: Number(f.sin_fecha ?? 0),

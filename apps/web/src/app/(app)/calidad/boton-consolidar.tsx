@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { consolidarAutomaticamente, type ResultadoConsolidacion } from "@/lib/acciones-consolidar";
 import { numero } from "@/lib/formato";
 
-export function BotonConsolidar({ vinculables }: { vinculables: number }) {
+export function BotonConsolidar({ vinculables, consolidables }: { vinculables: number; consolidables: number }) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [resultado, setResultado] = useState<ResultadoConsolidacion | null>(null);
@@ -36,17 +36,33 @@ export function BotonConsolidar({ vinculables }: { vinculables: number }) {
             (≥ 75%). Agrupa demandas repetidas en un único incidente y recalcula prioridades. Todo queda auditado y es
             reversible (desvincular no borra nada).
           </p>
+          {consolidables === 0 && vinculables > 0 && (
+            <p className="mt-2 text-xs leading-relaxed text-amarillo">
+              Ahora mismo no hay nada corroborado para consolidar: las {numero(vinculables)} aptas son pedidos
+              sueltos, sin otro pedido igual ni incidente abierto a menos de 25 m. Van a consolidarse solas cuando
+              llegue un segundo pedido de la misma esquina; mientras tanto, se revisan una por una desde la bandeja.
+            </p>
+          )}
         </div>
         <button
           onClick={correr}
-          disabled={pendiente || vinculables === 0}
+          disabled={pendiente || consolidables === 0}
+          title={consolidables === 0 ? "No hay casos corroborados para consolidar en este momento" : undefined}
           className="rounded-xl bg-azul px-5 py-3 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-40"
         >
-          {pendiente ? "Consolidando…" : `Ejecutar consolidación (${numero(vinculables)} aptas)`}
+          {pendiente ? "Consolidando…" : `Ejecutar consolidación (${numero(consolidables)} corroboradas de ${numero(vinculables)} aptas)`}
         </button>
       </div>
 
       {error && <p className="mt-3 text-sm text-peligro">{error}</p>}
+
+      {resultado && resultado.vinculadasAExistentes + resultado.incidentesCreados + resultado.demandasAgrupadas === 0 && (
+        <p className="mt-3 text-sm text-texto-2">
+          La corrida terminó bien pero no encontró casos corroborados: ningún pedido apto tenía otro pedido
+          igual ni un incidente abierto a menos de 25 m. No es un error — es la señal de que lo repetido ya
+          se consolidó y el resto espera revisión humana.
+        </p>
+      )}
 
       {resultado && (
         <div className="mt-4 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
