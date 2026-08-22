@@ -58,6 +58,64 @@ const CONTEXTOS: Record<DestinoBusqueda, { schema: { parse: (v: unknown) => Reco
   },
 };
 
+/** Interpretación para el buscador del mapa: qué marcar y adónde volar. */
+export interface InterpretacionMapa {
+  lugar: string | null;
+  tipo: (typeof TIPOS_PROBLEMA)[number] | null;
+  capa: "pedidos" | "trabajos" | "todo" | null;
+  brecha: "sin_atencion" | "en_cola" | "posible_resuelta" | null;
+}
+
+const esquemaMapa = z
+  .object({
+    lugar: z.string().max(120).nullish().catch(null),
+    tipo: z.enum(TIPOS_PROBLEMA).nullish().catch(null),
+    capa: z.enum(["pedidos", "trabajos", "todo"]).nullish().catch(null),
+    brecha: z.enum(["sin_atencion", "en_cola", "posible_resuelta"]).nullish().catch(null),
+  })
+  .catch({ lugar: null, tipo: null, capa: null, brecha: null });
+
+/** Sin IA: nos quedamos con lo que viene después del último " en " (o toda la frase). */
+function lugarHeuristico(frase: string): string {
+  const limpia = frase.replace(/[¿?¡!.]/g, " ").replace(/\s+/g, " ").trim();
+  const idx = ` ${limpia.toLowerCase()} `.lastIndexOf(" en ");
+  const cola = idx >= 0 ? limpia.slice(idx + 3).trim() : limpia;
+  return cola.replace(/^(la |el |av\.? |avenida |calle |pasaje |pje\.? )/i, "").trim();
+}
+
+export async function interpretarBusquedaMapa(
+  consulta: string,
+): Promise<{ ok: boolean; interpretacion: InterpretacionMapa }> {
+  const sesion = await leerSesion();
+  const frase = consulta.trim().slice(0, 200);
+  const respaldo: InterpretacionMapa = { lugar: lugarHeuristico(frase) || null, tipo: null, capa: null, brecha: null };
+  if (!sesion || frase.length < 2) return { ok: false, interpretacion: respaldo };
+  if (!iaDisponible()) return { ok: true, interpretacion: respaldo };
+
+  try {
+    const r = await completarJson(
+      `Convertís frases en español rioplatense en una acción sobre el mapa de bacheo de San Miguel de Tucumán. Respondé SOLO un objeto JSON con estos campos (null si la frase no lo menciona):
+- lugar: el nombre distintivo de la calle, avenida, pasaje, esquina o barrio, SIN los prefijos "av", "avenida", "calle" (ej: "¿qué hay reclamado en av. Belgrano?" → "Belgrano"; "esquina de Corrientes y Junín" → "Corrientes"). Sirve para matchear contra direcciones guardadas.
+- tipo: uno de ${TIPOS_PROBLEMA.join(", ")} (pistas: "baches/pozos"→bache, "hundido"→hundimiento, "tapa"→tapa_registro, "agua/pérdida"→perdida_agua)
+- capa: "pedidos" (reclamos, demandas, lo que pide la gente), "trabajos" (reparaciones, arreglos, obras hechas) o "todo" (ambas). "¿Qué hay reclamado…?"→pedidos; "¿qué se arregló…?"→trabajos.
+- brecha: "sin_atencion" (pistas: sin atender, sin respuesta, abandonados), "en_cola" (en proceso), "posible_resuelta" (ya resueltos sin cerrar). Solo si la frase habla de eso.`,
+      frase,
+      esquemaMapa,
+    );
+    return {
+      ok: true,
+      interpretacion: {
+        lugar: r.lugar ?? respaldo.lugar,
+        tipo: r.tipo ?? null,
+        capa: r.capa ?? null,
+        brecha: r.brecha ?? null,
+      },
+    };
+  } catch {
+    return { ok: true, interpretacion: respaldo };
+  }
+}
+
 export async function interpretarBusqueda(
   destino: DestinoBusqueda,
   consulta: string,

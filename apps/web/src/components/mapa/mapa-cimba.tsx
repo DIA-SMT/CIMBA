@@ -22,7 +22,9 @@ import type { FilterSpecification } from "maplibre-gl";
 import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
+import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { AnalisisZona } from "./analisis-zona";
+import { BuscadorMapa } from "./buscador-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 
@@ -455,6 +457,8 @@ function MapaInterno({
   const [verCalles, setVerCalles] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
+  // Resultado del buscador en lenguaje natural: puntos marcados con anillo
+  const [resaltado, setResaltado] = useState<FeatureCollection<Point, Record<string, unknown>> | null>(null);
 
   const aplicarVista = (v: Vista) => {
     setVista(v);
@@ -490,6 +494,82 @@ function MapaInterno({
   }, [fuentesPresentes.length]);
 
   const corte = dias ? Date.now() - dias * 86_400_000 : null;
+
+  /**
+   * Buscador en lenguaje natural que ACCIONA sobre el mapa: interpreta la
+   * frase (IA), marca con anillo las coincidencias, encuadra el mapa y ajusta
+   * las capas. Si no hay datos que coincidan, geocodifica el lugar y abre el
+   * análisis de zona ahí.
+   */
+  const buscarEnMapa = async (frase: string): Promise<string> => {
+    const { interpretacion: inter } = await interpretarBusquedaMapa(frase);
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const lugar = inter.lugar ? norm(inter.lugar) : null;
+    const capa = inter.brecha ? "pedidos" : (inter.capa ?? "todo");
+
+    const coincide = (f: { properties: Record<string, unknown> }, esDemanda: boolean) => {
+      if (lugar && !norm(String(f.properties.direccion ?? "")).includes(lugar)) return false;
+      if (inter.tipo && String(f.properties.tipo) !== inter.tipo) return false;
+      if (inter.brecha && esDemanda && String(f.properties.brecha) !== inter.brecha) return false;
+      return true;
+    };
+    const dems = capa !== "trabajos" ? (data?.demandas.features ?? []).filter((f) => coincide(f, true)) : [];
+    const incs = capa !== "pedidos" ? (data?.incidentes.features ?? []).filter((f) => coincide(f, false)) : [];
+    const todas = [...dems, ...incs];
+
+    // Ajustar las capas para que lo marcado se vea
+    if (inter.brecha) {
+      aplicarVista("brecha");
+      setFiltroBrecha(inter.brecha);
+    }
+    if (inter.tipo) {
+      const t = inter.tipo;
+      setTipos(Object.fromEntries(Object.keys(ETIQUETA_TIPO).map((k) => [k, k === t])));
+    }
+    if (dems.length > 0) setVerDemandas(true);
+
+    if (todas.length > 0) {
+      setResaltado({ type: "FeatureCollection", features: todas });
+      let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+      for (const f of todas) {
+        const [lon, lat] = f.geometry.coordinates;
+        if (lon == null || lat == null) continue;
+        minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
+        minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+      }
+      const mapa = mapRef.current?.getMap();
+      if (mapa) {
+        if (maxLon - minLon < 1e-6 && maxLat - minLat < 1e-6) {
+          mapa.flyTo({ center: [minLon, minLat], zoom: 16.5, duration: 1100 });
+        } else {
+          mapa.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 90, maxZoom: 16.5, duration: 1100 });
+        }
+      }
+      const partes = [
+        dems.length > 0 ? `${numero(dems.length)} pedido${dems.length === 1 ? "" : "s"}` : null,
+        incs.length > 0 ? `${numero(incs.length)} incidente${incs.length === 1 ? "" : "s"}` : null,
+      ].filter(Boolean);
+      return `Marqué con anillo amarillo ${partes.join(" y ")}${inter.lugar ? ` en “${inter.lugar}”` : ""}${inter.tipo ? ` (${ETIQUETA_TIPO[inter.tipo] ?? inter.tipo})` : ""}. Tocá la ✕ para despejar.`;
+    }
+
+    // Nada cargado coincide: volar al lugar y abrir el análisis de zona ahí
+    if (inter.lugar) {
+      try {
+        const res = await fetch(`/api/geocodificar?q=${encodeURIComponent(`${inter.lugar}, San Miguel de Tucumán`)}`);
+        const j = (await res.json()) as { resultado: { punto: { lat: number; lon: number } } | null };
+        const p = j.resultado?.punto;
+        if (p) {
+          mapRef.current?.getMap()?.flyTo({ center: [p.lon, p.lat], zoom: 15.8, duration: 1200 });
+          setZona({ lon: p.lon, lat: p.lat });
+          setRadioZona(400);
+          return `No hay direcciones cargadas que digan “${inter.lugar}”, así que te llevé a la zona y abrí el análisis de 400 m alrededor.`;
+        }
+      } catch {
+        // el mensaje de abajo cubre este caso
+      }
+    }
+    return "No encontré nada con esa búsqueda. Probá con el nombre de la calle: “baches en Belgrano”, “qué se arregló en Mate de Luna”.";
+  };
 
   // Meses disponibles para la línea de tiempo (solo fechas confiables)
   const mesesTiempo = useMemo(() => {
@@ -938,6 +1018,27 @@ function MapaInterno({
           <Layer {...capaSeleccion} />
         </Source>
 
+        {resaltado && resaltado.features.length > 0 && (
+          <Source id="resaltado" type="geojson" data={resaltado}>
+            <Layer
+              id="resaltado-halo"
+              type="circle"
+              paint={{ "circle-radius": 15, "circle-color": "#f4dc00", "circle-opacity": 0.1 }}
+            />
+            <Layer
+              id="resaltado-anillo"
+              type="circle"
+              paint={{
+                "circle-radius": 10,
+                "circle-color": "rgba(0,0,0,0)",
+                "circle-stroke-color": "#f4dc00",
+                "circle-stroke-width": 2.5,
+                "circle-stroke-opacity": 0.95,
+              }}
+            />
+          </Source>
+        )}
+
         {marcador && (
           <Marker longitude={marcador[0]} latitude={marcador[1]} anchor="bottom">
             <div className="flex flex-col items-center">
@@ -946,6 +1047,15 @@ function MapaInterno({
           </Marker>
         )}
       </MapaGL>
+
+      {/* Buscador en lenguaje natural que acciona sobre el mapa */}
+      <div className="absolute top-[52px] left-3 z-20 lg:top-3">
+        <BuscadorMapa
+          alBuscar={buscarEnMapa}
+          alLimpiar={() => setResaltado(null)}
+          hayResaltado={resaltado != null && resaltado.features.length > 0}
+        />
+      </div>
 
       {/* Selector de vista */}
       <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
