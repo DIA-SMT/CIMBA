@@ -12,9 +12,11 @@ import {
   EyeOff,
   Flame,
   GripVertical,
+  HelpCircle,
   History,
   Layers,
   Link2,
+  Menu,
   Printer,
   Radar,
   RotateCcw,
@@ -50,6 +52,7 @@ import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
 import { AnalisisZona } from "./analisis-zona";
 import { CortinaComparar } from "./cortina-comparar";
+import { GuiaMapa } from "./guia-mapa";
 import { BuscadorMapa } from "./buscador-mapa";
 import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
@@ -423,6 +426,9 @@ export interface InicialMapa {
    *  que sí lo pone: son casos distintos, "mostrame este encuadre" vs. "fijate
    *  este punto"). */
   camara?: { lat: number; lon: number; zoom: number };
+  /** Frase para el buscador inteligente apenas carguen los datos — así Migue
+   *  (u otro link) puede mandar al mapa una acción en lenguaje natural. */
+  buscar?: string;
 }
 
 interface CandidatoCotejo {
@@ -485,6 +491,33 @@ function MapaInterno({
   const mapRef = useRef<MapRef>(null);
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
   const [panelCapas, setPanelCapas] = useState(true);
+  // En pantallas chicas el panel de Capas taparía medio mapa: arranca cerrado.
+  useEffect(() => {
+    if (window.innerWidth < 640) setPanelCapas(false);
+  }, []);
+  // Recorrido guiado ("?"): el botón pulsa hasta que lo abren por primera vez.
+  const [guiaAbierta, setGuiaAbierta] = useState(false);
+  const [guiaConocida, setGuiaConocida] = useState(true);
+  useEffect(() => {
+    try {
+      setGuiaConocida(localStorage.getItem("cimba:guia-vista") === "1");
+    } catch {
+      // sin localStorage: no pulsa, nada más
+    }
+  }, []);
+  const abrirGuia = () => {
+    setGuiaAbierta(true);
+    setGuiaConocida(true);
+    setMenuAcciones(false);
+    try {
+      localStorage.setItem("cimba:guia-vista", "1");
+    } catch {
+      // sin persistencia: pulsará de nuevo la próxima, no es grave
+    }
+  };
+  // Menú de acciones en mobile: una sola lista con nombre y explicación,
+  // en vez de una hilera de íconos crípticos que se cortaban.
+  const [menuAcciones, setMenuAcciones] = useState(false);
   const [marcador, setMarcador] = useState<[number, number] | null>(foco ? [foco.lon, foco.lat] : null);
   const [informe, setInforme] = useState<Informe | null>(null);
   const [generandoInforme, setGenerandoInforme] = useState(false);
@@ -721,6 +754,29 @@ function MapaInterno({
     }
     return "No encontré nada con esa búsqueda. Probá con el nombre de la calle: “baches en Belgrano”, “qué se arregló en Mate de Luna”.";
   };
+
+  // Migue acciona el mapa: si el chat pide "mostrame X", dispara este evento
+  // (misma pantalla) o navega a /mapa?buscar= (otra pantalla) y la frase corre
+  // por el MISMO camino que el buscador inteligente: marca, vuela y filtra.
+  const buscarEnMapaRef = useRef(buscarEnMapa);
+  buscarEnMapaRef.current = buscarEnMapa;
+  const avisarRef = useRef(avisar);
+  avisarRef.current = avisar;
+  useEffect(() => {
+    const alAccionar = (e: Event) => {
+      const frase = (e as CustomEvent<string>).detail;
+      if (typeof frase === "string" && frase.trim())
+        void buscarEnMapaRef.current(frase).then((m) => avisarRef.current(m));
+    };
+    window.addEventListener("cimba:accionar-mapa", alAccionar);
+    return () => window.removeEventListener("cimba:accionar-mapa", alAccionar);
+  }, []);
+  const buscoInicialRef = useRef(false);
+  useEffect(() => {
+    if (!inicial?.buscar || buscoInicialRef.current || !data) return;
+    buscoInicialRef.current = true;
+    void buscarEnMapaRef.current(inicial.buscar).then((m) => avisarRef.current(m));
+  }, [data, inicial?.buscar]);
 
   // Meses disponibles para la línea de tiempo (solo fechas confiables)
   const mesesTiempo = useMemo(() => {
@@ -1755,20 +1811,23 @@ function MapaInterno({
         {/* Buscador en lenguaje natural — congelado durante Comparar: cambiar
             capas ahí rompería la cortina. */}
         {!comparar && (
-          <BuscadorMapa
-            alBuscar={buscarEnMapa}
-            alLimpiar={() => setResaltado(null)}
-            hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
-          />
+          <div data-tour="buscador">
+            <BuscadorMapa
+              alBuscar={buscarEnMapa}
+              alLimpiar={() => setResaltado(null)}
+              hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
+            />
+          </div>
         )}
 
-        {/* Selector de vista — reemplazado por el aviso de Comparar mientras dura */}
+        {/* Selector de vista — reemplazado por el aviso de Comparar mientras dura.
+            En mobile no envuelve: se desliza de costado, nada se corta. */}
         {comparar ? (
           <div className="panel-vidrio rounded-xl px-3.5 py-2 text-xs font-semibold text-texto-2">
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
         ) : (
-          <div className="panel-vidrio flex flex-wrap rounded-xl p-1">
+          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] overflow-x-auto rounded-xl p-1 sm:max-w-none sm:flex-wrap sm:overflow-visible">
             {(Object.keys(VISTAS) as Vista[]).map((v) => (
               <button
                 key={v}
@@ -1787,9 +1846,10 @@ function MapaInterno({
         <div className="ml-auto flex flex-wrap items-start justify-end gap-2">
           {iaHabilitada && (
             <button
+              data-tour="informe-ia"
               onClick={() => void generarInforme()}
               disabled={generandoInforme}
-              className="panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60 sm:px-3.5 sm:py-2.5"
+              className="panel-vidrio hidden items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60 sm:flex sm:px-3.5 sm:py-2.5"
               title="Informe ejecutivo generado por IA sobre lo visible en el mapa"
             >
               <Sparkles size={14} className={generandoInforme ? "animate-pulse text-amarillo" : ""} />
@@ -1797,9 +1857,10 @@ function MapaInterno({
             </button>
           )}
           <button
+            data-tour="comparar"
             onClick={alternarComparar}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
-              comparar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
+              comparar ? "flex text-celeste ring-1 ring-celeste/60" : "hidden text-texto-2 hover:text-texto"
             }`}
             title="Cortina «Lo pedido | Lo hecho»: dos mapas sincronizados divididos por una cortina arrastrable — la brecha convertida en imagen"
           >
@@ -1820,15 +1881,16 @@ function MapaInterno({
           {panelesMovidos && (
             <button
               onClick={reubicarTodos}
-              className="panel-vidrio flex items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-texto-2 transition hover:text-texto sm:px-3 sm:py-2.5"
+              className="panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-texto-2 transition hover:text-texto sm:flex sm:px-3 sm:py-2.5"
               title="Volver los paneles a su lugar original"
             >
               <RotateCcw size={14} />
             </button>
           )}
           <button
+            data-tour="despejar"
             onClick={() => setDespejado((v) => !v)}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:px-3 sm:py-2.5 ${
+            className={`panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:flex sm:px-3 sm:py-2.5 ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title={
@@ -1840,13 +1902,14 @@ function MapaInterno({
             <EyeOff size={14} />
           </button>
           <button
+            data-tour="analizar-zona"
             onClick={() => {
               const activo = !modoAnalisis;
               setModoAnalisis(activo);
               if (!activo) setZona(null);
             }}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
-              modoAnalisis ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
+              modoAnalisis ? "flex text-amarillo ring-1 ring-amarillo/60" : "hidden text-texto-2 hover:text-texto"
             }`}
             title="Analizador de zona: mantené clic y arrastrá para dibujar un círculo — las estadísticas se calculan en vivo mientras arrastrás"
           >
@@ -1854,22 +1917,24 @@ function MapaInterno({
             <span className="hidden sm:inline">{modoAnalisis ? "Dibujá el círculo…" : "Analizar zona"}</span>
           </button>
           <button
+            data-tour="historia"
             onClick={() => {
               const activo = !tiempoActivo;
               setTiempoActivo(activo);
               setReproduciendo(false);
               if (activo) setTiempoIdx(0);
             }}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
-              tiempoActivo ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
+              tiempoActivo ? "flex text-celeste ring-1 ring-celeste/60" : "hidden text-texto-2 hover:text-texto"
             }`}
             title="Línea de tiempo: reproducí la historia del bacheo mes a mes"
           >
             <History size={14} />
             <span className="hidden sm:inline">Historia</span>
           </button>
-          <div className="relative">
+          <div className="relative hidden sm:block">
             <button
+              data-tour="exportar"
               onClick={() => {
                 setMenuExportar((v) => !v);
                 if (contactosWa.length === 0) void listarContactosWhatsapp().then(setContactosWa);
@@ -1929,6 +1994,156 @@ function MapaInterno({
               </>
             )}
           </div>
+
+          {/* "?": recorrido guiado de todas las funciones — pulsa hasta el primer uso */}
+          <button
+            onClick={abrirGuia}
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:px-3 sm:py-2.5 ${
+              guiaConocida ? "text-texto-2 hover:text-texto" : "text-amarillo ring-1 ring-amarillo/60"
+            }`}
+            title="¿Para qué sirve cada cosa? Recorrido guiado por todas las funciones del mapa"
+          >
+            <HelpCircle size={14} className={guiaConocida ? "" : "animate-pulse"} />
+          </button>
+
+          {/* Menú de acciones (solo mobile): todo con nombre y explicación */}
+          <div className="relative sm:hidden">
+            <button
+              onClick={() => {
+                setMenuAcciones((v) => !v);
+                if (contactosWa.length === 0) void listarContactosWhatsapp().then(setContactosWa);
+              }}
+              className={`panel-vidrio flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition ${
+                menuAcciones ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2"
+              }`}
+              title="Todas las acciones del mapa"
+            >
+              <Menu size={15} />
+              Acciones
+            </button>
+            {menuAcciones && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuAcciones(false)} />
+                <div className="panel-vidrio absolute right-0 z-40 mt-1.5 max-h-[65vh] w-[min(310px,calc(100vw-48px))] overflow-y-auto rounded-xl p-1.5">
+                  {iaHabilitada && (
+                    <ItemAccion
+                      icono={<Sparkles size={15} />}
+                      titulo={generandoInforme ? "Generando informe…" : "Informe IA"}
+                      desc="Informe ejecutivo de lo visible en el mapa"
+                      onClick={() => {
+                        setMenuAcciones(false);
+                        void generarInforme();
+                      }}
+                    />
+                  )}
+                  <ItemAccion
+                    icono={<Columns2 size={15} />}
+                    titulo={comparar ? "Salir de Comparar" : "Comparar"}
+                    desc="Cortina «Lo pedido | Lo hecho» con sus números"
+                    activo={comparar}
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      alternarComparar();
+                    }}
+                  />
+                  <ItemAccion
+                    icono={<Radar size={15} />}
+                    titulo={modoAnalisis ? "Salir del analizador" : "Analizar zona"}
+                    desc="Dibujá un círculo y mirá sus estadísticas al toque"
+                    activo={modoAnalisis}
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      const activo = !modoAnalisis;
+                      setModoAnalisis(activo);
+                      if (!activo) setZona(null);
+                    }}
+                  />
+                  <ItemAccion
+                    icono={<History size={15} />}
+                    titulo={tiempoActivo ? "Cerrar línea de tiempo" : "Historia"}
+                    desc="La película del bacheo, mes a mes"
+                    activo={tiempoActivo}
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      const activo = !tiempoActivo;
+                      setTiempoActivo(activo);
+                      setReproduciendo(false);
+                      if (activo) setTiempoIdx(0);
+                    }}
+                  />
+                  <ItemAccion
+                    icono={<EyeOff size={15} />}
+                    titulo={despejado ? "Mostrar todo de nuevo" : "Despejar la pantalla"}
+                    desc="Esconde paneles y números para ver el mapa limpio"
+                    activo={despejado}
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      setDespejado((v) => !v);
+                    }}
+                  />
+                  {panelesMovidos && (
+                    <ItemAccion
+                      icono={<RotateCcw size={15} />}
+                      titulo="Volver paneles a su lugar"
+                      desc="Devuelve todo lo que moviste a su posición original"
+                      onClick={() => {
+                        setMenuAcciones(false);
+                        reubicarTodos();
+                      }}
+                    />
+                  )}
+                  <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                    Exportar y compartir
+                  </p>
+                  <ItemAccion
+                    icono={<Printer size={15} />}
+                    titulo="Reporte imprimible"
+                    desc="PDF con el mapa y el detalle de lo que estás viendo"
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      void generarReporte();
+                    }}
+                  />
+                  <ItemAccion
+                    icono={<Download size={15} />}
+                    titulo="GeoJSON"
+                    desc="Los datos visibles, para QGIS o PowerBI"
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      exportarGeoJson();
+                    }}
+                  />
+                  <ItemAccion
+                    icono={<Link2 size={15} />}
+                    titulo="Copiar link de esta vista"
+                    desc="Quien lo abra ve la misma cámara y filtros"
+                    onClick={() => void copiarLinkVista()}
+                  />
+                  {contactosWa.map((c) => (
+                    <ItemAccion
+                      key={c.telefono}
+                      icono={<Send size={15} style={{ color: "#199e70" }} />}
+                      titulo={`WhatsApp a ${c.nombre}`}
+                      desc="Le llega el link de esta vista exacta"
+                      onClick={() => enviarPorWhatsApp(c.telefono, c.nombre)}
+                    />
+                  ))}
+                  <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                    Ayuda
+                  </p>
+                  <ItemAccion
+                    icono={<HelpCircle size={15} />}
+                    titulo="¿Para qué sirve cada cosa?"
+                    desc="Recorrido guiado por todas las funciones"
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      abrirGuia();
+                    }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1937,7 +2152,8 @@ function MapaInterno({
           para no superponerse sin importar en cuántas líneas envuelva esta. */}
       {!despejado && (
         <div
-          className="pointer-events-none absolute left-3 right-3 z-10 flex flex-wrap gap-2"
+          data-tour="kpis"
+          className="pointer-events-auto absolute left-3 right-3 z-10 flex gap-2 overflow-x-auto pb-1 sm:pointer-events-none sm:flex-wrap sm:overflow-visible sm:pb-0"
           style={{ top: altoHerr > 0 ? altoHerr + 24 : 64 }}
         >
           <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
@@ -1968,7 +2184,7 @@ function MapaInterno({
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
       {balance && !comparar && !despejado && (balance.pend > 0 || balance.m2 > 0) && (
         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
-          <div className="panel-vidrio rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2">
+          <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             En pantalla: <b className="num text-texto">{numero(balance.pend)}</b> pedidos pendientes ·{" "}
             <b className="num" style={{ color: "#d95926" }}>
               {balance.pend > 0 ? Math.round((100 * balance.sinAt) / balance.pend) : 0}%
@@ -2369,7 +2585,7 @@ function MapaInterno({
 
       {/* Panel de capas — oculto durante Comparar: togglear demandas/incidentes
           ahí desincroniza la cortina "Lo pedido | Lo hecho". */}
-      <div className={`absolute bottom-6 left-3 z-10 ${despejado || comparar ? "hidden" : ""}`} style={arrCapas.estilo}>
+      <div data-tour="capas" className={`absolute bottom-6 left-3 z-10 ${despejado || comparar ? "hidden" : ""}`} style={arrCapas.estilo}>
         {panelCapas ? (
           <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-64 overflow-y-auto rounded-xl p-4">
             <div
@@ -2574,6 +2790,9 @@ function MapaInterno({
         )}
       </div>
 
+      {/* Recorrido guiado: ¿para qué sirve cada cosa? */}
+      {guiaAbierta && <GuiaMapa alCerrar={() => setGuiaAbierta(false)} />}
+
       {/* Panel de detalle */}
       {seleccion && <PanelDetalle seleccion={seleccion} alCerrar={() => setSeleccion(null)} />}
     </div>
@@ -2595,15 +2814,42 @@ function Kpi({
 }) {
   return (
     <div
-      className="panel-vidrio pointer-events-auto flex cursor-help items-center gap-2.5 rounded-xl px-3.5 py-2"
+      className="panel-vidrio pointer-events-auto flex shrink-0 cursor-help items-center gap-2 rounded-xl px-2.5 py-1.5 sm:gap-2.5 sm:px-3.5 sm:py-2"
       title={ayuda}
     >
       <span className={`inline-block h-2.5 w-2.5 rounded-full ${pulso ? "pulso" : ""}`} style={{ background: color }} />
       <div className="leading-tight">
-        <div className="num text-base font-bold">{numero(valor)}</div>
+        <div className="num text-sm font-bold sm:text-base">{numero(valor)}</div>
         <div className="text-[9px] font-medium tracking-wider text-texto-3 uppercase">{etiqueta}</div>
       </div>
     </div>
+  );
+}
+
+function ItemAccion({
+  icono,
+  titulo,
+  desc,
+  onClick,
+  activo,
+}: {
+  icono: React.ReactNode;
+  titulo: string;
+  desc: string;
+  onClick: () => void;
+  activo?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-panel-3"
+    >
+      <span className={`mt-0.5 shrink-0 ${activo ? "text-amarillo" : "text-celeste"}`}>{icono}</span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold">{titulo}</span>
+        <span className="block text-[10px] leading-snug text-texto-3">{desc}</span>
+      </span>
+    </button>
   );
 }
 

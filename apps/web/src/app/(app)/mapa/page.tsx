@@ -14,6 +14,7 @@ export default async function PaginaMapa({
     vista?: string; brecha?: string; modoBrecha?: string; fuente?: string; tipo?: string;
     dias?: string; calor?: string; hex?: string; sat?: string; top?: string;
     zlat?: string; zlon?: string; zr?: string;
+    buscar?: string;
   }>;
 }) {
   const sesion = (await leerSesion())!;
@@ -55,6 +56,9 @@ export default async function PaginaMapa({
     sat: sp.sat === "1" || undefined,
     top: sp.top === "1" || undefined,
     camara,
+    // Migue (u otro link) puede mandar una acción en lenguaje natural:
+    // /mapa?buscar=baches sin atender en Belgrano
+    buscar: sp.buscar?.trim().slice(0, 200) || undefined,
     zona:
       sp.zlat && sp.zlon && sp.zr && Number.isFinite(Number(sp.zlat)) && Number.isFinite(Number(sp.zlon))
         ? {

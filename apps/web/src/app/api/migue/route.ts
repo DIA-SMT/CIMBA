@@ -50,6 +50,9 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENROUTER_API_KEY ?? "";
   const modelo = process.env.OPENROUTER_MODEL ?? "anthropic/claude-haiku-4.5";
   const herramientasUsadas: string[] = [];
+  // Si Migue llama accionar_mapa, la frase viaja al navegador y el mapa la
+  // ejecuta por el mismo camino que su buscador inteligente.
+  let accionMapa: string | null = null;
 
   try {
     for (let ronda = 0; ronda < 5; ronda++) {
@@ -88,6 +91,9 @@ export async function POST(req: NextRequest) {
             /* argumentos vacíos */
           }
           herramientasUsadas.push(llamada.function.name);
+          if (llamada.function.name === "accionar_mapa" && typeof argumentos.frase === "string") {
+            accionMapa = argumentos.frase.trim().slice(0, 200) || null;
+          }
           let resultado: unknown;
           try {
             resultado = await ejecutarHerramientaMigue(sesion, llamada.function.name, argumentos);
@@ -106,12 +112,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         respuesta: mensaje.content ?? "…",
         herramientas: [...new Set(herramientasUsadas)],
+        ...(accionMapa ? { accionMapa } : {}),
       });
     }
     return NextResponse.json({
       respuesta:
         "Uf, me enredé consultando demasiadas cosas a la vez. ¿Podés preguntármelo de una forma más específica?",
       herramientas: [...new Set(herramientasUsadas)],
+      ...(accionMapa ? { accionMapa } : {}),
     });
   } catch (e) {
     return NextResponse.json(

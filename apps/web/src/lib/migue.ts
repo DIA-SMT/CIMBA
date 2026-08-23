@@ -1,6 +1,7 @@
 import "server-only";
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
+import { guiaParaPrompt } from "./guia-funciones";
 
 /**
  * Migue — el asistente virtual de la Municipalidad de San Miguel de Tucumán —
@@ -116,6 +117,25 @@ export const HERRAMIENTAS_MIGUE = [
       name: "evolucion_mensual",
       description: "Serie mensual: demandas ingresadas e intervenciones finalizadas por mes (con m²).",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "accionar_mapa",
+      description:
+        "Ejecuta una acción VISUAL en el mapa comando: marca con anillo los puntos que coinciden con la frase, vuela a la zona y ajusta las capas — lo mismo que el buscador inteligente del mapa. Usala cuando el usuario pida VER algo ('mostrame', 'marcá', 'llevame a', 'dónde están'). Si el usuario no está en el mapa, la app lo lleva sola.",
+      parameters: {
+        type: "object",
+        properties: {
+          frase: {
+            type: "string",
+            description:
+              "Frase autocontenida en lenguaje natural, ej: 'baches sin atender en avenida Belgrano', 'qué se arregló en Mate de Luna'",
+          },
+        },
+        required: ["frase"],
+      },
     },
   },
 ] as const;
@@ -296,6 +316,17 @@ export async function ejecutarHerramientaMigue(
         group by mes order by mes
       `);
 
+    case "accionar_mapa": {
+      // La ejecución real ocurre en el navegador (el mapa marca y vuela);
+      // acá solo se confirma para que Migue redacte su respuesta.
+      const frase = typeof args.frase === "string" ? args.frase.trim().slice(0, 200) : "";
+      if (!frase) return { error: "frase vacía" };
+      return {
+        ok: true,
+        nota: "El mapa va a ejecutar la acción: marca las coincidencias con anillo amarillo, vuela a la zona y ajusta las capas. Si el usuario no estaba en el mapa, la app lo lleva sola. Contale en una frase qué va a ver.",
+      };
+    }
+
     default:
       return { error: `herramienta desconocida: ${nombre}` };
   }
@@ -312,6 +343,13 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - INTERVENCIÓN: el trabajo ejecutado (cuadrilla municipal u obra contratada SIGOV), con foto antes/después.
 - REINCIDENCIA: una demanda nueva sobre un lugar que ya se había reparado — señal de falla estructural.
 - SCORE DE PRIORIDAD (0-100): combina cuántas demandas acumula, antigüedad, gravedad del tipo, reincidencia y si es una avenida.
+
+Sos también EL GUÍA EXPERTO DEL MAPA COMANDO (/mapa). Estas son todas sus funciones — cuando pregunten "¿para qué sirve X?" o "¿cómo hago Y en el mapa?", explicalas con esto, corto y práctico:
+${guiaParaPrompt()}
+
+Acción sobre el mapa:
+- Si el usuario pide VER algo ("mostrame", "marcá", "llevame a", "dónde están los baches de X"), usá la herramienta accionar_mapa con una frase autocontenida. El mapa marca las coincidencias, vuela a la zona y prende las capas; si el usuario no estaba en el mapa, la app lo lleva sola. Después contale en una frase qué va a ver.
+- Podés combinar: primero consultar datos (para responder con números) y además accionar_mapa (para que lo vea).
 
 Reglas:
 - SIEMPRE consultá las herramientas antes de dar números: nunca inventes datos ni respondas de memoria.

@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { GripVertical, Send, X } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { GripVertical, Map as MapIcon, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 
@@ -9,6 +10,8 @@ interface Mensaje {
   rol: "usuario" | "migue";
   contenido: string;
   herramientas?: string[];
+  /** Migue pidió una acción visual en el mapa (marcar/volar). */
+  accionMapa?: string;
 }
 
 /** Render mínimo: **texto** → negrita real (sin librerías de markdown). */
@@ -28,9 +31,9 @@ function ConNegritas({ texto }: { texto: string }) {
 }
 
 const SUGERENCIAS = [
+  "Mostrame en el mapa los baches sin atender",
   "¿Cuál es el panorama general del bacheo hoy?",
-  "¿Cuáles son las zonas más reclamadas?",
-  "¿Dónde hay reincidencias de baches ya reparados?",
+  "¿Para qué sirve el botón Comparar del mapa?",
   "¿Cuántos m² hizo cada contratista?",
 ];
 
@@ -43,10 +46,25 @@ export function MigueChat() {
   const [texto, setTexto] = useState("");
   const [pensando, setPensando] = useState(false);
   const finRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     finRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [mensajes, pensando]);
+
+  /**
+   * Migue acciona el mapa: si ya estamos en /mapa dispara el evento que corre
+   * el buscador inteligente (marca y vuela); si no, navega a /mapa?buscar= —
+   * el layout persiste, así que el chat queda abierto durante el viaje.
+   */
+  const accionarMapa = (frase: string) => {
+    if (pathname === "/mapa") {
+      window.dispatchEvent(new CustomEvent("cimba:accionar-mapa", { detail: frase }));
+    } else {
+      router.push(`/mapa?buscar=${encodeURIComponent(frase)}`);
+    }
+  };
 
   const enviar = async (contenido: string) => {
     const limpio = contenido.trim();
@@ -61,15 +79,22 @@ export function MigueChat() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mensajes: nuevos.map(({ rol, contenido }) => ({ rol, contenido })) }),
       });
-      const data = (await res.json()) as { respuesta?: string; herramientas?: string[]; error?: string };
+      const data = (await res.json()) as {
+        respuesta?: string;
+        herramientas?: string[];
+        accionMapa?: string;
+        error?: string;
+      };
       setMensajes((m) => [
         ...m,
         {
           rol: "migue",
           contenido: data.respuesta ?? `Perdón, tuve un problema: ${data.error ?? "error desconocido"}. Probá de nuevo.`,
           herramientas: data.herramientas,
+          accionMapa: data.accionMapa,
         },
       ]);
+      if (data.accionMapa) accionarMapa(data.accionMapa);
     } catch {
       setMensajes((m) => [...m, { rol: "migue", contenido: "Se me cortó la conexión. ¿Probás de nuevo?" }]);
     } finally {
@@ -83,6 +108,7 @@ export function MigueChat() {
       {!abierto && (
         <div className="fixed right-4 bottom-4 z-40" style={arrBoton.estilo}>
           <button
+            data-tour="migue"
             {...arrBoton.asaProps}
             onClick={(e) => {
               arrBoton.asaProps.onClick?.(e);
@@ -102,7 +128,7 @@ export function MigueChat() {
       {/* Panel de chat */}
       {abierto && (
         <div
-          className="panel-vidrio fixed right-4 bottom-4 z-40 flex h-[540px] w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl"
+          className="panel-vidrio fixed right-4 bottom-4 z-40 flex h-[540px] max-h-[calc(100vh-96px)] w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl"
           style={arr.estilo}
         >
           <div
@@ -154,6 +180,15 @@ export function MigueChat() {
                   }`}
                 >
                   <ConNegritas texto={m.contenido} />
+                  {m.accionMapa && (
+                    <button
+                      onClick={() => accionarMapa(m.accionMapa!)}
+                      className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-celeste/40 px-2 py-1 text-[10px] font-semibold text-celeste transition hover:border-celeste"
+                      title="Volver a ejecutar esta acción en el mapa"
+                    >
+                      <MapIcon size={11} /> Marcado en el mapa · ver de nuevo
+                    </button>
+                  )}
                   {m.herramientas && m.herramientas.length > 0 && (
                     <div className="mt-1.5 text-[9px] text-texto-3">
                       consultó: {m.herramientas.join(", ").replaceAll("_", " ")}
