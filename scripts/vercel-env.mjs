@@ -41,6 +41,7 @@ const VARIABLES = [
   "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
   "VAPID_PRIVATE_KEY",
   "VAPID_SUBJECT",
+  "CONTACTOS_WHATSAPP",
 ];
 
 const cuerpo = VARIABLES.filter((k) => process.env[k]).map((key) => ({

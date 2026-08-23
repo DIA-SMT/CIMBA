@@ -53,8 +53,11 @@ export function CortinaComparar({
 
   return (
     <div ref={contRef} className="pointer-events-none absolute inset-0 z-[6]">
-      {/* Mapa espejo (solo pedidos), recortado a la izquierda del divisor */}
-      <div className="absolute inset-0" style={{ clipPath: `inset(0 ${100 - corte}% 0 0)` }}>
+      {/* Mapa espejo (solo pedidos), recortado a la izquierda del divisor.
+          pointer-events-auto: sin esto, hover/clic sobre "Lo pedido" atraviesa
+          este mapa (no interactivo) y llega al mapa principal de abajo,
+          disparando tooltips/paneos de puntos que ni siquiera se ven ahí. */}
+      <div className="pointer-events-auto absolute inset-0" style={{ clipPath: `inset(0 ${100 - corte}% 0 0)` }}>
         <MapaGL
           {...vistaMapa}
           mapStyle={ESTILO}

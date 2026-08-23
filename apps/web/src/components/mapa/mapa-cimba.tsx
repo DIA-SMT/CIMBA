@@ -40,13 +40,13 @@ import {
 } from "react-map-gl/maplibre";
 import type { FeatureCollection, Point } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
-import type { RolUsuario } from "@cimba/domain";
+import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 import { vincularDemanda } from "@/lib/acciones";
-import { CONTACTOS_WHATSAPP } from "@/lib/contactos";
+import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
 import { AnalisisZona } from "./analisis-zona";
 import { CortinaComparar } from "./cortina-comparar";
@@ -417,7 +417,12 @@ export interface InicialMapa {
   hex?: boolean;
   sat?: boolean;
   top?: boolean;
+  modoBrecha?: "categoria" | "antiguedad";
   zona?: { lat: number; lon: number; radio: number };
+  /** Cámara de una vista compartida (sin marcador — a diferencia de `foco`,
+   *  que sí lo pone: son casos distintos, "mostrame este encuadre" vs. "fijate
+   *  este punto"). */
+  camara?: { lat: number; lon: number; zoom: number };
 }
 
 interface CandidatoCotejo {
@@ -428,6 +433,9 @@ interface CandidatoCotejo {
   direccion: string | null;
   dist: number;
   lngLat: [number, number];
+  cerradoEn: string | null;
+  /** true si se cerró ANTES del pedido: es reincidencia, no la respuesta a este pedido. */
+  posibleReincidencia: boolean;
 }
 
 interface CotejoActivo {
@@ -528,17 +536,19 @@ function MapaInterno({
   const arrastroRef = useRef(false);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
-  const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? false);
+  const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? true);
   // Si el estilo no trae la capa de nombres, el raster satelital va sin ancla.
   const [hayAnclaEtiquetas, setHayAnclaEtiquetas] = useState(true);
   // ── Recursos de precisión y brecha ──────────────────────────────────────
   const [verTop20, setVerTop20] = useState(inicial?.top ?? false);
-  const [modoBrecha, setModoBrecha] = useState<"categoria" | "antiguedad">("categoria");
+  const [modoBrecha, setModoBrecha] = useState<"categoria" | "antiguedad">(inicial?.modoBrecha ?? "categoria");
   const [comparar, setComparar] = useState(false);
   const [vistaComp, setVistaComp] = useState<ViewState | null>(null);
   const snapshotComp = useRef<{ verDemandas: boolean; verMacro: Record<string, boolean> } | null>(null);
   const [menuExportar, setMenuExportar] = useState(false);
+  const [contactosWa, setContactosWa] = useState<Array<{ nombre: string; telefono: string }>>([]);
   const [menuCtx, setMenuCtx] = useState<{ x: number; y: number; lat: number; lon: number } | null>(null);
+  const contenedorRef = useRef<HTMLDivElement>(null);
   const [altaRapida, setAltaRapida] = useState<{ lat: number; lon: number } | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [cotejo, setCotejo] = useState<CotejoActivo | null>(null);
@@ -549,10 +559,17 @@ function MapaInterno({
   const vistaRef = useRef(vista);
   vistaRef.current = vista;
 
+  const avisoTimerRef = useRef<number | null>(null);
   const avisar = (texto: string) => {
+    if (avisoTimerRef.current) window.clearTimeout(avisoTimerRef.current);
     setAviso(texto);
-    window.setTimeout(() => setAviso(null), 3500);
+    avisoTimerRef.current = window.setTimeout(() => setAviso(null), 3500);
   };
+  useEffect(() => {
+    return () => {
+      if (avisoTimerRef.current) window.clearTimeout(avisoTimerRef.current);
+    };
+  }, []);
   const [dias, setDias] = useState<number | null>(inicial?.dias ?? null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
   // Resultado del buscador en lenguaje natural: puntos marcados con anillo
@@ -740,19 +757,55 @@ function MapaInterno({
       }
       return true;
     });
-    // edad en días para "la deuda envejece" (-1 = sin fecha confiable)
+    // edad en días para "la deuda envejece" (-1 = sin fecha confiable).
+    // Date.parse del formato Postgres (espacio, no "T") es implementation-
+    // defined: Safari puede devolver NaN. Sin guarda, ese NaN llega como
+    // null a MapLibre y la capa de antigüedad se pinta con el color/radio
+    // por defecto (invisible sobre fondo oscuro) en vez de -1 (gris, honesto).
     const ahora = Date.now();
-    const conEdad = features.map((f) => ({
-      ...f,
-      properties: {
-        ...f.properties,
-        edad_dias: f.properties.sin_fecha
-          ? -1
-          : Math.max(0, Math.round((ahora - Date.parse(String(f.properties.creado_en))) / 86400000)),
-      },
-    }));
+    const conEdad = features.map((f) => {
+      let edadDias = -1;
+      if (!f.properties.sin_fecha) {
+        const creado = Date.parse(String(f.properties.creado_en).replace(" ", "T"));
+        if (Number.isFinite(creado)) edadDias = Math.max(0, Math.round((ahora - creado) / 86400000));
+      }
+      return { ...f, properties: { ...f.properties, edad_dias: edadDias } };
+    });
     return { type: "FeatureCollection", features: conEdad };
   }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor]);
+
+  // Memoizados: sin esto, cada render (uno por frame al panear con Comparar
+  // activo) recalcula el polígono del círculo entero para nada.
+  const circuloZona = useMemo(() => (zona ? crearCirculo(zona.lon, zona.lat, radioZona) : null), [zona, radioZona]);
+  const circuloZonaA = useMemo(
+    () => (zonaA ? crearCirculo(zonaA.centro.lon, zonaA.centro.lat, zonaA.radio) : null),
+    [zonaA],
+  );
+
+  /**
+   * Versión de los datos para MÉTRICAS (balance, Top 20, cifras de deuda):
+   * respeta los filtros de datos reales (tipo/fuente/período) pero, como los
+   * KPIs de arriba, IGNORA los interruptores de visibilidad de capa
+   * (verMacro/vista) — apagar una capa no hace desaparecer el problema.
+   */
+  const incidentesParaMetricas = useMemo<FC>(() => {
+    const features = (data?.incidentes.features ?? []).filter((f) => {
+      if (tipos[String(f.properties.tipo)] === false) return false;
+      if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
+      return true;
+    });
+    return { type: "FeatureCollection", features };
+  }, [data, tipos, corte]);
+
+  const demandasParaMetricas = useMemo<FC>(() => {
+    const features = (data?.demandas.features ?? []).filter((f) => {
+      if (fuentes[String(f.properties.fuente)] === false) return false;
+      if (tipos[String(f.properties.tipo)] === false) return false;
+      if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
+      return true;
+    });
+    return { type: "FeatureCollection", features };
+  }, [data, fuentes, tipos, corte]);
 
   /**
    * Reporte imprimible del estado actual: captura el lienzo del mapa (via un
@@ -840,24 +893,33 @@ function MapaInterno({
     URL.revokeObjectURL(url);
   };
 
-  /** Link que reproduce EXACTAMENTE esta vista (cámara + filtros + capas + zona). */
+  /**
+   * Link que reproduce la cámara, la vista y los filtros principales — no
+   * cada micro-ajuste (selección múltiple de tipo/fuente, "solo pendientes"
+   * tocado a mano). Usa clat/clon/cz (cámara) en vez de lat/lon/z: esos
+   * quedan reservados para "centrame en este punto" (que además pone un
+   * marcador que un link de vista no debería mostrar).
+   */
   const construirLinkVista = (): string => {
     const p = new URLSearchParams();
     const mapa = mapRef.current?.getMap();
     if (mapa) {
       const c = mapa.getCenter();
-      p.set("lat", c.lat.toFixed(6));
-      p.set("lon", c.lng.toFixed(6));
-      p.set("z", mapa.getZoom().toFixed(2));
+      p.set("clat", c.lat.toFixed(6));
+      p.set("clon", c.lng.toFixed(6));
+      p.set("cz", mapa.getZoom().toFixed(2));
     }
     p.set("vista", vista);
     if (vista === "brecha" && filtroBrecha) p.set("brecha", filtroBrecha);
+    if (vista === "brecha" && modoBrecha === "antiguedad") p.set("modoBrecha", "antiguedad");
     const tiposActivos = Object.keys(ETIQUETA_TIPO).filter((t) => tipos[t] !== false);
     if (tiposActivos.length === 1 && tiposActivos[0]) p.set("tipo", tiposActivos[0]);
     const fuentesActivas = fuentesPresentes.filter((fu) => fuentes[fu] !== false);
     if (fuentesActivas.length === 1 && fuentesActivas[0] && fuentesPresentes.length > 1) p.set("fuente", fuentesActivas[0]);
     if (dias) p.set("dias", String(dias));
-    if (verCalor) p.set("calor", "1");
+    // calor tiene default distinto por vista (prendido en Análisis): hay que
+    // decir explícitamente 0 o 1 siempre, "ausente" no alcanza para saber cuál.
+    p.set("calor", verCalor ? "1" : "0");
     if (verHex) p.set("hex", "1");
     if (verSatelite) p.set("sat", "1");
     if (verTop20) p.set("top", "1");
@@ -873,7 +935,7 @@ function MapaInterno({
     const link = construirLinkVista();
     try {
       await navigator.clipboard.writeText(link);
-      avisar("Link de esta vista copiado ✓ — quien lo abra ve exactamente lo mismo");
+      avisar("Link de esta vista copiado ✓ — quien lo abra ve la misma cámara y vista");
     } catch {
       // Fallback clásico para contextos sin permiso de portapapeles
       const ta = document.createElement("textarea");
@@ -888,7 +950,7 @@ function MapaInterno({
   };
 
   const enviarPorWhatsApp = (telefono: string, nombre: string) => {
-    const texto = `Mirá esta vista del mapa de CIMBA: ${construirLinkVista()}`;
+    const texto = `Mirá esta vista del mapa de CIMBA (cámara y filtros principales): ${construirLinkVista()}`;
     window.open(`https://wa.me/${telefono}?text=${encodeURIComponent(texto)}`, "_blank");
     avisar(`Abriendo WhatsApp para ${nombre}…`);
     setMenuExportar(false);
@@ -922,7 +984,9 @@ function MapaInterno({
 
   const vincularDesdeMapa = (demandaId: number, incidenteId: number) => {
     setVinculando(true);
-    void vincularDemanda({ demandaId, incidenteId, confianza: 0.99 })
+    // Sin confianza fabricada: la puso una persona mirando el mapa, no un
+    // cálculo — dejar el campo vacío mantiene auditable qué vínculo fue cuál.
+    void vincularDemanda({ demandaId, incidenteId })
       .then(() => {
         avisar(`Pedido #${demandaId} vinculado al incidente #${incidenteId} ✓ — sale de la deuda`);
         setCotejo(null);
@@ -943,34 +1007,35 @@ function MapaInterno({
       if (ln == null || la == null) return false;
       return ln >= b.getWest() && ln <= b.getEast() && la >= b.getSouth() && la <= b.getNorth();
     };
-    const dems = demandasFiltradas.features.filter(dentro);
+    const dems = demandasParaMetricas.features.filter(dentro);
     const pend = dems.filter((f) => ["recibida", "en_validacion"].includes(String(f.properties.estado))).length;
     const sinAt = dems.filter((f) => f.properties.brecha === "sin_atencion").length;
-    const m2 = incidentesFiltrados.features
-      .filter(dentro)
+    const m2 = incidentesParaMetricas.features
+      .filter((f) => dentro(f) && f.properties.macro === "resuelto")
       .reduce((acc, f) => acc + (Number(f.properties.m2) || 0), 0);
     setBalance({ pend, sinAt, m2: Math.round(m2) });
-  }, [demandasFiltradas, incidentesFiltrados]);
+  }, [demandasParaMetricas, incidentesParaMetricas]);
 
   useEffect(() => {
     recalcularBalance();
   }, [recalcularBalance]);
 
-  // Top 20 urgentes numerados sobre el territorio
+  // Top 20 urgentes numerados sobre el territorio (independiente de qué
+  // capas estén prendidas: si no, en vista Brecha nunca mostraría nada).
   const top20 = useMemo<FC | null>(() => {
     if (!verTop20) return null;
-    const urgentes = incidentesFiltrados.features
+    const urgentes = incidentesParaMetricas.features
       .filter((f) => f.properties.score != null && (f.properties.macro === "abierto" || f.properties.macro === "en_curso"))
       .sort((a, b) => Number(b.properties.score) - Number(a.properties.score))
       .slice(0, 20)
       .map((f, i) => ({ ...f, properties: { ...f.properties, rank: i + 1 } }));
     return { type: "FeatureCollection", features: urgentes };
-  }, [verTop20, incidentesFiltrados]);
+  }, [verTop20, incidentesParaMetricas]);
 
   // Cifras de deuda por zona: aparecen solas al alejar el zoom
   const cifrasZona = useMemo<FC>(() => {
     const celdas = new Map<string, { lon: number; lat: number; n: number }>();
-    for (const f of demandasFiltradas.features) {
+    for (const f of demandasParaMetricas.features) {
       if (f.properties.brecha !== "sin_atencion") continue;
       const ln = f.geometry.coordinates[0];
       const la = f.geometry.coordinates[1];
@@ -990,7 +1055,7 @@ function MapaInterno({
         properties: { n: c.n } as Record<string, unknown>,
       }));
     return { type: "FeatureCollection", features };
-  }, [demandasFiltradas]);
+  }, [demandasParaMetricas]);
 
   // Hilos del cotejo activo: demanda → candidatos a ≤60 m
   const hilosCotejo = useMemo(() => {
@@ -1221,14 +1286,21 @@ function MapaInterno({
       const props = feature.properties ?? {};
       const brechaProp = String(props.brecha ?? "");
       if (vistaRef.current === "brecha" && ["sin_atencion", "en_cola", "posible_resuelta"].includes(brechaProp)) {
-        // Cotejo desde el mapa: hilos hacia lo que hay a menos de 60 m
+        // Cotejo desde el mapa: hilos hacia lo que hay a menos de 60 m.
+        // Se excluyen los desestimados (macro inactivo): la gestión decidió
+        // no atenderlos, vincular ahí sería sacar un pedido real de la
+        // deuda sin que nadie lo haya resuelto.
+        const creadoDemanda = props.sin_fecha ? null : Date.parse(String(props.creado_en));
         const candidatos = (dataRef.current?.incidentes.features ?? [])
           .map((fi): CandidatoCotejo | null => {
+            if (fi.properties.macro === "inactivo") return null;
             const ln = fi.geometry.coordinates[0];
             const la = fi.geometry.coordinates[1];
             if (ln == null || la == null) return null;
             const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
             if (dist > 60) return null;
+            const cerradoEn = (fi.properties.cerrado_en as string | null) ?? null;
+            const cierreMs = cerradoEn ? Date.parse(cerradoEn) : null;
             return {
               id: Number(fi.properties.id),
               tipo: String(fi.properties.tipo ?? "otro"),
@@ -1237,6 +1309,12 @@ function MapaInterno({
               direccion: (fi.properties.direccion as string | null) ?? null,
               dist: Math.round(dist),
               lngLat: [ln, la],
+              cerradoEn,
+              // Se cerró ANTES de que este pedido existiera: es el problema
+              // volviendo (reincidencia), no la respuesta a ESTE pedido.
+              posibleReincidencia: Boolean(
+                cierreMs != null && creadoDemanda != null && Number.isFinite(cierreMs) && cierreMs < creadoDemanda,
+              ),
             };
           })
           .filter((c): c is CandidatoCotejo => c != null)
@@ -1252,13 +1330,13 @@ function MapaInterno({
   }, []);
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div ref={contenedorRef} className="relative h-full w-full overflow-hidden">
       <MapaGL
         ref={mapRef}
         initialViewState={{
-          longitude: foco?.lon ?? CENTRO_SMT[0],
-          latitude: foco?.lat ?? CENTRO_SMT[1],
-          zoom: foco?.zoom ?? 12.6,
+          longitude: foco?.lon ?? inicial?.camara?.lon ?? CENTRO_SMT[0],
+          latitude: foco?.lat ?? inicial?.camara?.lat ?? CENTRO_SMT[1],
+          zoom: foco?.zoom ?? inicial?.camara?.zoom ?? 12.6,
         }}
         mapStyle={ESTILO_MAPA}
         maxZoom={19.5}
@@ -1413,15 +1491,15 @@ function MapaInterno({
           </Source>
         )}
 
-        {zona && (
-          <Source id="zona" type="geojson" data={crearCirculo(zona.lon, zona.lat, radioZona)}>
+        {zona && circuloZona && (
+          <Source id="zona" type="geojson" data={circuloZona}>
             <Layer {...capaZonaRelleno} />
             <Layer {...capaZonaBorde} />
           </Source>
         )}
 
-        {zonaA && (
-          <Source id="zona-a" type="geojson" data={crearCirculo(zonaA.centro.lon, zonaA.centro.lat, zonaA.radio)}>
+        {zonaA && circuloZonaA && (
+          <Source id="zona-a" type="geojson" data={circuloZonaA}>
             <Layer id="zona-a-relleno" type="fill" paint={{ "fill-color": "#2EB1FF", "fill-opacity": 0.08 }} />
             <Layer id="zona-a-borde" type="line" paint={{ "line-color": "#2EB1FF", "line-width": 2, "line-dasharray": [3, 2] }} />
           </Source>
@@ -1433,6 +1511,45 @@ function MapaInterno({
               id="cotejo-linea"
               type="line"
               paint={{ "line-color": "#f4dc00", "line-width": 1.8, "line-dasharray": [2, 1.5], "line-opacity": 0.9 }}
+            />
+          </Source>
+        )}
+
+        {cotejo && cotejo.candidatos.length > 0 && (
+          <Source
+            id="cotejo-candidatos"
+            type="geojson"
+            data={{
+              type: "FeatureCollection",
+              features: cotejo.candidatos.map((c) => ({
+                type: "Feature" as const,
+                geometry: { type: "Point" as const, coordinates: c.lngLat },
+                properties: { macro: c.macro },
+              })),
+            }}
+          >
+            {/* Los candidatos del cotejo no se ven si su capa está apagada:
+                se marcan siempre mientras el panel de cotejo está abierto. */}
+            <Layer
+              id="cotejo-candidatos-halo"
+              type="circle"
+              paint={{ "circle-radius": 13, "circle-color": "#f4dc00", "circle-opacity": 0.18 }}
+            />
+            <Layer
+              id="cotejo-candidatos-punto"
+              type="circle"
+              paint={{
+                "circle-radius": 7,
+                "circle-color": [
+                  "match", ["get", "macro"],
+                  "abierto", COLOR_MACRO.abierto,
+                  "en_curso", COLOR_MACRO.en_curso,
+                  "resuelto", COLOR_MACRO.resuelto,
+                  "#8b94a3",
+                ],
+                "circle-stroke-color": "#0B0F16",
+                "circle-stroke-width": 2,
+              }}
             />
           </Source>
         )}
@@ -1531,8 +1648,9 @@ function MapaInterno({
         )}
       </MapaGL>
 
-      {/* Buscador en lenguaje natural que acciona sobre el mapa */}
-      <div className={`absolute top-[52px] left-3 z-20 lg:top-3 ${despejado ? "hidden" : ""}`}>
+      {/* Buscador en lenguaje natural que acciona sobre el mapa — congelado
+          durante Comparar: cambiar capas ahí rompería la cortina. */}
+      <div className={`absolute top-[52px] left-3 z-20 lg:top-3 ${despejado || comparar ? "hidden" : ""}`}>
         <BuscadorMapa
           alBuscar={buscarEnMapa}
           alLimpiar={() => setResaltado(null)}
@@ -1540,23 +1658,31 @@ function MapaInterno({
         />
       </div>
 
-      {/* Selector de vista */}
-      <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
-        <div className="panel-vidrio flex rounded-xl p-1">
-          {(Object.keys(VISTAS) as Vista[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => aplicarVista(v)}
-              title={VISTAS[v].descripcion}
-              className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
-              }`}
-            >
-              {VISTAS[v].etiqueta}
-            </button>
-          ))}
+      {/* Selector de vista — oculto durante Comparar (ídem arriba) */}
+      {comparar ? (
+        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+          <div className="panel-vidrio rounded-xl px-3.5 py-2 text-xs font-semibold text-texto-2">
+            Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+          <div className="panel-vidrio flex rounded-xl p-1">
+            {(Object.keys(VISTAS) as Vista[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => aplicarVista(v)}
+                title={VISTAS[v].descripcion}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                }`}
+              >
+                {VISTAS[v].etiqueta}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="pointer-events-none absolute top-16 left-3 right-3 z-10 flex flex-wrap gap-2">
@@ -1643,11 +1769,14 @@ function MapaInterno({
           </button>
           <div className="relative">
             <button
-              onClick={() => setMenuExportar((v) => !v)}
+              onClick={() => {
+                setMenuExportar((v) => !v);
+                if (contactosWa.length === 0) void listarContactosWhatsapp().then(setContactosWa);
+              }}
               className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
                 menuExportar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
               }`}
-              title="Sacar esta vista del mapa: reporte imprimible, GeoJSON para QGIS, o el link exacto para compartir por WhatsApp"
+              title="Sacar esta vista del mapa: reporte imprimible, GeoJSON para QGIS, o el link de la cámara y filtros para compartir por WhatsApp"
             >
               <Download size={14} />
               Exportar
@@ -1681,10 +1810,12 @@ function MapaInterno({
                   >
                     <Link2 size={14} className="text-texto-2" /> Copiar link de esta vista
                   </button>
-                  <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
-                    Enviar esta vista por WhatsApp
-                  </p>
-                  {CONTACTOS_WHATSAPP.map((c) => (
+                  {contactosWa.length > 0 && (
+                    <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                      Enviar esta vista por WhatsApp
+                    </p>
+                  )}
+                  {contactosWa.map((c) => (
                     <button
                       key={c.telefono}
                       onClick={() => enviarPorWhatsApp(c.telefono, c.nombre)}
@@ -1763,8 +1894,8 @@ function MapaInterno({
             ) : (
               <>
                 <p className="text-[11px] leading-relaxed text-texto-3">
-                  Los hilos amarillos muestran lo que hay cerca. Si alguno ES este mismo problema, vinculalo: el pedido
-                  sale de la deuda sin poner un metro de asfalto.
+                  Los hilos amarillos (y los puntos marcados con anillo) muestran lo que hay cerca. Si alguno ES este
+                  mismo problema, vinculalo: el pedido sale de la deuda sin poner un metro de asfalto.
                 </p>
                 {cotejo.candidatos.map((c) => (
                   <div key={c.id} className="rounded-lg border border-borde bg-panel-2/60 p-2.5">
@@ -1779,6 +1910,15 @@ function MapaInterno({
                       <span className="num ml-auto shrink-0 text-[11px] font-bold text-amarillo">{c.dist} m</span>
                     </div>
                     {c.direccion && <p className="mt-0.5 truncate text-[11px] text-texto-3">{c.direccion}</p>}
+                    {c.cerradoEn && (
+                      <p className="num mt-0.5 text-[11px] text-texto-3">Cerrado: {fechaCorta(c.cerradoEn)}</p>
+                    )}
+                    {c.posibleReincidencia && (
+                      <p className="mt-1 rounded border border-amarillo/40 bg-amarillo/10 px-2 py-1 text-[10px] leading-snug text-amarillo">
+                        Se cerró ANTES de este pedido: puede ser que el problema volvió (reincidencia), no que esto lo
+                        haya resuelto. Revisá antes de vincular.
+                      </p>
+                    )}
                     <div className="mt-1.5 flex items-center gap-2.5">
                       {puedeVincular && (
                         <button
@@ -1817,11 +1957,21 @@ function MapaInterno({
           />
           <div
             className="panel-vidrio absolute z-40 w-52 rounded-xl p-1.5 text-[13px]"
-            style={{ left: Math.max(8, Math.min(menuCtx.x, window.innerWidth - 260)), top: menuCtx.y }}
+            style={{
+              // Acotado contra el contenedor real del mapa (no window): con
+              // sidebar+header, window.innerWidth corta el menú a la mitad.
+              left: Math.max(8, Math.min(menuCtx.x, (contenedorRef.current?.clientWidth ?? menuCtx.x) - 216)),
+              top: Math.max(8, Math.min(menuCtx.y, (contenedorRef.current?.clientHeight ?? menuCtx.y) - 180)),
+            }}
           >
             {puedeCargar && (
               <button
                 onClick={() => {
+                  if (!dentroDeSMT({ lat: menuCtx.lat, lon: menuCtx.lon })) {
+                    avisar("Ese punto está fuera del ejido de San Miguel de Tucumán: no se puede cargar ahí.");
+                    setMenuCtx(null);
+                    return;
+                  }
                   setAltaRapida({ lat: menuCtx.lat, lon: menuCtx.lon });
                   setMenuCtx(null);
                 }}
@@ -1868,18 +2018,23 @@ function MapaInterno({
         </>
       )}
 
-      {/* Alta rápida desde el clic derecho */}
+      {/* Alta rápida desde el clic derecho — con fondo modal: evita reabrir
+          en otro punto con clic derecho debajo mientras el formulario está abierto */}
       {altaRapida && (
-        <AltaRapida
-          punto={altaRapida}
-          alCerrar={() => setAltaRapida(null)}
-          alCreado={(id) => {
-            setMarcador([altaRapida.lon, altaRapida.lat]);
-            setAltaRapida(null);
-            avisar(`Pedido #${id} registrado con coordenada exacta ✓`);
-            void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
-          }}
-        />
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setAltaRapida(null)} />
+          <AltaRapida
+            key={`${altaRapida.lat},${altaRapida.lon}`}
+            punto={altaRapida}
+            alCerrar={() => setAltaRapida(null)}
+            alCreado={(id) => {
+              setMarcador([altaRapida.lon, altaRapida.lat]);
+              setAltaRapida(null);
+              avisar(`Pedido #${id} registrado con coordenada exacta ✓`);
+              void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
+            }}
+          />
+        </>
       )}
 
       {/* Aviso flotante */}
@@ -2090,8 +2245,9 @@ function MapaInterno({
         </div>
       )}
 
-      {/* Panel de capas */}
-      <div className={`absolute bottom-6 left-3 z-10 ${despejado ? "hidden" : ""}`} style={arrCapas.estilo}>
+      {/* Panel de capas — oculto durante Comparar: togglear demandas/incidentes
+          ahí desincroniza la cortina "Lo pedido | Lo hecho". */}
+      <div className={`absolute bottom-6 left-3 z-10 ${despejado || comparar ? "hidden" : ""}`} style={arrCapas.estilo}>
         {panelCapas ? (
           <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-64 overflow-y-auto rounded-xl p-4">
             <div

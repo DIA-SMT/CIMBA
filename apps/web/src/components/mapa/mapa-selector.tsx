@@ -31,7 +31,9 @@ export function MapaSelector({
   capa?: CapaPuntos | null;
 }) {
   const mapRef = useRef<MapRef>(null);
-  const [satelite, setSatelite] = useState(false);
+  // Arranca en satelital: es la vista que se necesita para ubicar puntos con
+  // precisión mirando la imagen real (el reemplazo de QGIS).
+  const [satelite, setSatelite] = useState(true);
   // Si el estilo no tiene la capa de nombres, el raster va arriba de todo
   // (sin beforeId) en vez de fallar silenciosamente.
   const [hayAncla, setHayAncla] = useState(true);
