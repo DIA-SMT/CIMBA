@@ -46,7 +46,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "capas",
     titulo: "Panel de Capas",
-    desc: "El control fino de qué se ve: vista satelital, avenidas, nombres de calles, distritos, incidentes por estado, puntos de demanda, mapa de calor, densidad 3D, Top 20 urgentes, filtro por quién pide (fuente), por tipo de problema y por período.",
+    desc: "El control fino de qué se ve: vista satelital, avenidas, nombres de calles, límites de distritos/circuitos electorales/barrios (los barrios con problemas reportados se tiñen de rojo), incidentes por estado, puntos de demanda, mapa de calor, densidad 3D, Top 20 urgentes, filtro por quién pide (fuente), por tipo de problema y por período.",
     como: "Se abre y cierra con el botón de capas (abajo a la izquierda). Cada casilla prende o apaga una capa.",
     tour: "capas",
   },

@@ -40,7 +40,7 @@ import {
   type MapRef,
   type ViewState,
 } from "react-map-gl/maplibre";
-import type { FeatureCollection, Point } from "geojson";
+import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
 import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
@@ -119,6 +119,8 @@ const AYUDA_KPI = {
 // ── Tipos del contrato /api/geodata ─────────────────────────────────────────
 
 type FC = FeatureCollection<Point, Record<string, unknown>>;
+/** Capas de referencia territorial (distritos/circuitos/barrios): polígonos. */
+type FCPoligono = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
 interface GeoDatos {
   incidentes: FC;
   demandas: FC;
@@ -200,6 +202,89 @@ const capaAvenidasNombre: LayerProps = {
     "text-halo-color": "#070a10",
     "text-halo-width": 1.8,
   },
+};
+
+// ── Límites territoriales de referencia ──────────────────────────────────────
+// Tres capas de contexto administrativo (no accionan nada, no tienen datos
+// propios): distritos (violeta, la más "oficial" — alimenta distrito_id),
+// circuitos electorales (verde), barrios (rosa, la más fina — 327 polígonos,
+// solo con etiqueta a partir de zoom 14 para no saturar la pantalla).
+const capaDistritosLinea: LayerProps = {
+  id: "distritos-linea",
+  type: "line",
+  source: "distritos",
+  paint: {
+    "line-color": "#a78bfa",
+    "line-opacity": 0.75,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1, 14, 2, 17, 3],
+    "line-dasharray": [4, 2],
+  },
+};
+const capaDistritosNombre: LayerProps = {
+  id: "distritos-nombre",
+  type: "symbol",
+  source: "distritos",
+  minzoom: 12,
+  layout: {
+    "text-field": ["get", "nombre"],
+    "text-font": ["Open Sans Bold"],
+    "text-size": 12,
+  },
+  paint: { "text-color": "#a78bfa", "text-halo-color": "#070a10", "text-halo-width": 1.6 },
+};
+
+const capaCircuitosLinea: LayerProps = {
+  id: "circuitos-linea",
+  type: "line",
+  source: "circuitos",
+  paint: {
+    "line-color": "#34d399",
+    "line-opacity": 0.65,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.8, 14, 1.4, 17, 2.2],
+    "line-dasharray": [1, 1.6],
+  },
+};
+const capaCircuitosNombre: LayerProps = {
+  id: "circuitos-nombre",
+  type: "symbol",
+  source: "circuitos",
+  minzoom: 13,
+  layout: {
+    "text-field": ["concat", "Circuito ", ["get", "circuito"]],
+    "text-font": ["Open Sans Regular"],
+    "text-size": 10.5,
+  },
+  paint: { "text-color": "#34d399", "text-halo-color": "#070a10", "text-halo-width": 1.4 },
+};
+
+const capaBarriosRelleno: LayerProps = {
+  id: "barrios-relleno",
+  type: "fill",
+  source: "barrios",
+  // Los que tienen problemas reportados se leen sin abrir el panel: rojo tenue.
+  paint: { "fill-color": "#ff3b30", "fill-opacity": ["case", ["get", "problemas"], 0.1, 0] },
+};
+const capaBarriosLinea: LayerProps = {
+  id: "barrios-linea",
+  type: "line",
+  source: "barrios",
+  paint: {
+    "line-color": "#f472b6",
+    "line-opacity": 0.55,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 15, 1.2, 17, 1.8],
+  },
+};
+const capaBarriosNombre: LayerProps = {
+  id: "barrios-nombre",
+  type: "symbol",
+  source: "barrios",
+  minzoom: 14,
+  layout: {
+    "text-field": ["get", "nombre"],
+    "text-font": ["Open Sans Regular"],
+    "text-size": 9.5,
+  },
+  paint: { "text-color": "#f472b6", "text-halo-color": "#070a10", "text-halo-width": 1.4 },
 };
 
 const capaClusters: LayerProps = {
@@ -570,6 +655,27 @@ function MapaInterno({
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
   const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? true);
+  // Límites territoriales (distritos, circuitos electorales, barrios): capas de
+  // referencia livianas, servidas como GeoJSON estático y cargadas solo si se
+  // prenden — nadie quiere pagar el fetch de 327 barrios sin pedirlo.
+  const [verDistritos, setVerDistritos] = useState(false);
+  const [verCircuitos, setVerCircuitos] = useState(false);
+  const [verBarrios, setVerBarrios] = useState(false);
+  const [distritosGeo, setDistritosGeo] = useState<FCPoligono | null>(null);
+  const [circuitosGeo, setCircuitosGeo] = useState<FCPoligono | null>(null);
+  const [barriosGeo, setBarriosGeo] = useState<FCPoligono | null>(null);
+  useEffect(() => {
+    if (!verDistritos || distritosGeo) return;
+    fetch("/data/distritos.json").then((r) => r.json()).then(setDistritosGeo).catch(() => {});
+  }, [verDistritos, distritosGeo]);
+  useEffect(() => {
+    if (!verCircuitos || circuitosGeo) return;
+    fetch("/data/circuitos.json").then((r) => r.json()).then(setCircuitosGeo).catch(() => {});
+  }, [verCircuitos, circuitosGeo]);
+  useEffect(() => {
+    if (!verBarrios || barriosGeo) return;
+    fetch("/data/barrios.json").then((r) => r.json()).then(setBarriosGeo).catch(() => {});
+  }, [verBarrios, barriosGeo]);
   // Si el estilo no trae la capa de nombres, el raster satelital va sin ancla.
   const [hayAnclaEtiquetas, setHayAnclaEtiquetas] = useState(true);
   // ── Recursos de precisión y brecha ──────────────────────────────────────
@@ -1622,6 +1728,27 @@ function MapaInterno({
           </>
         )}
 
+        {/* Límites territoriales de referencia — igual, debajo de los datos */}
+        {verBarrios && barriosGeo && (
+          <Source id="barrios" type="geojson" data={barriosGeo}>
+            <Layer {...capaBarriosRelleno} />
+            <Layer {...capaBarriosLinea} />
+            <Layer {...capaBarriosNombre} />
+          </Source>
+        )}
+        {verCircuitos && circuitosGeo && (
+          <Source id="circuitos" type="geojson" data={circuitosGeo}>
+            <Layer {...capaCircuitosLinea} />
+            <Layer {...capaCircuitosNombre} />
+          </Source>
+        )}
+        {verDistritos && distritosGeo && (
+          <Source id="distritos" type="geojson" data={distritosGeo}>
+            <Layer {...capaDistritosLinea} />
+            <Layer {...capaDistritosNombre} />
+          </Source>
+        )}
+
         {verDemandas && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capaCalor} />}
@@ -2643,6 +2770,45 @@ function MapaInterno({
               />
               <Satellite size={13} className="text-celeste" />
               Vista satelital
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Los 20 distritos oficiales — de acá sale el distrito_id que ya tienen las demandas e incidentes"
+            >
+              <input
+                type="checkbox"
+                checked={verDistritos}
+                onChange={(e) => setVerDistritos(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="inline-block h-0.5 w-4 rounded" style={{ background: "#a78bfa", borderTop: "1px dashed #a78bfa" }} />
+              Distritos
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Circuitos electorales de San Miguel de Tucumán (INDEC) — se etiquetan al acercar el zoom"
+            >
+              <input
+                type="checkbox"
+                checked={verCircuitos}
+                onChange={(e) => setVerCircuitos(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="inline-block h-0.5 w-4 rounded bg-[#34d399]" />
+              Circuitos electorales
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="327 barrios — los que tienen problemas reportados se marcan con un tinte rojo tenue. Etiquetas solo de cerca."
+            >
+              <input
+                type="checkbox"
+                checked={verBarrios}
+                onChange={(e) => setVerBarrios(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="inline-block h-0.5 w-4 rounded bg-[#f472b6]" />
+              Barrios
             </label>
             </>)}
 
