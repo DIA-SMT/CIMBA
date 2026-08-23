@@ -1,10 +1,11 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   ChevronDown,
+  Columns2,
   Crosshair,
   Download,
   EyeOff,
@@ -12,11 +13,13 @@ import {
   GripVertical,
   History,
   Layers,
+  Link2,
   Printer,
   Radar,
   RotateCcw,
   Satellite,
   Search,
+  Send,
   Sparkles,
   X,
 } from "lucide-react";
@@ -33,6 +36,7 @@ import {
   type LayerProps,
   type MapLayerMouseEvent,
   type MapRef,
+  type ViewState,
 } from "react-map-gl/maplibre";
 import type { FeatureCollection, Point } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
@@ -41,7 +45,11 @@ import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
+import { vincularDemanda } from "@/lib/acciones";
+import { CONTACTOS_WHATSAPP } from "@/lib/contactos";
+import { AltaRapida } from "./alta-rapida";
 import { AnalisisZona } from "./analisis-zona";
+import { CortinaComparar } from "./cortina-comparar";
 import { BuscadorMapa } from "./buscador-mapa";
 import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
@@ -294,6 +302,27 @@ const capaDemandas: LayerProps = {
 };
 
 /** Vista Brecha: el color de cada pedido dice si fue atendido o no. */
+/** Vista Brecha, sub-modo antigüedad: la deuda envejece a la vista (amarillo
+ * reciente → rojo encendido con más de un año esperando; gris = sin fecha). */
+const capaDemandasEdad: LayerProps = {
+  id: "demandas-punto",
+  type: "circle",
+  paint: {
+    "circle-radius": [
+      "case", ["<", ["get", "edad_dias"], 0], 4,
+      ["interpolate", ["linear"], ["get", "edad_dias"], 30, 4, 730, 7],
+    ],
+    "circle-color": [
+      "case", ["<", ["get", "edad_dias"], 0], "#6b7280",
+      ["interpolate", ["linear"], ["get", "edad_dias"],
+        30, "#f4dc00", 180, "#f59e0b", 365, "#d95926", 730, "#ff3b30"],
+    ],
+    "circle-stroke-color": "#0B0F16",
+    "circle-stroke-width": 1,
+    "circle-opacity": 0.92,
+  },
+};
+
 const capaDemandasBrecha: LayerProps = {
   id: "demandas-punto",
   type: "circle",
@@ -383,6 +412,28 @@ export interface InicialMapa {
   brecha?: string;
   fuente?: string;
   tipo?: string;
+  dias?: number;
+  calor?: boolean;
+  hex?: boolean;
+  sat?: boolean;
+  top?: boolean;
+  zona?: { lat: number; lon: number; radio: number };
+}
+
+interface CandidatoCotejo {
+  id: number;
+  tipo: string;
+  estado: string;
+  macro: string;
+  direccion: string | null;
+  dist: number;
+  lngLat: [number, number];
+}
+
+interface CotejoActivo {
+  demanda: Record<string, unknown>;
+  lngLat: [number, number];
+  candidatos: CandidatoCotejo[];
 }
 
 export function MapaCimba(props: {
@@ -437,7 +488,7 @@ function MapaInterno({
   const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS[vistaInicial].macro });
   const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(VISTAS[vistaInicial].demandasAbiertas);
   const [verDemandas, setVerDemandas] = useState(VISTAS[vistaInicial].verDemandas);
-  const [verCalor, setVerCalor] = useState(VISTAS[vistaInicial].calor);
+  const [verCalor, setVerCalor] = useState(inicial?.calor ?? VISTAS[vistaInicial].calor);
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
   const [tipos, setTipos] = useState<Record<string, boolean>>(() => {
     // ?tipo=bache aísla ese tipo (los demás quedan apagados)
@@ -449,10 +500,12 @@ function MapaInterno({
   const [filtroBrecha, setFiltroBrecha] = useState<string | null>(inicial?.brecha ?? null);
   // Analizador de zona (lupa territorial)
   const [modoAnalisis, setModoAnalisis] = useState(false);
-  const [zona, setZona] = useState<{ lon: number; lat: number } | null>(null);
-  const [radioZona, setRadioZona] = useState(250);
+  const [zona, setZona] = useState<{ lon: number; lat: number } | null>(
+    inicial?.zona ? { lon: inicial.zona.lon, lat: inicial.zona.lat } : null,
+  );
+  const [radioZona, setRadioZona] = useState(inicial?.zona?.radio ?? 250);
   // Densidad 3D en hexágonos
-  const [verHex, setVerHex] = useState(false);
+  const [verHex, setVerHex] = useState(inicial?.hex ?? false);
   // Línea de tiempo
   const [tiempoActivo, setTiempoActivo] = useState(false);
   const [tiempoIdx, setTiempoIdx] = useState(0);
@@ -475,10 +528,32 @@ function MapaInterno({
   const arrastroRef = useRef(false);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
-  const [verSatelite, setVerSatelite] = useState(false);
+  const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? false);
   // Si el estilo no trae la capa de nombres, el raster satelital va sin ancla.
   const [hayAnclaEtiquetas, setHayAnclaEtiquetas] = useState(true);
-  const [dias, setDias] = useState<number | null>(null); // null = todo
+  // ── Recursos de precisión y brecha ──────────────────────────────────────
+  const [verTop20, setVerTop20] = useState(inicial?.top ?? false);
+  const [modoBrecha, setModoBrecha] = useState<"categoria" | "antiguedad">("categoria");
+  const [comparar, setComparar] = useState(false);
+  const [vistaComp, setVistaComp] = useState<ViewState | null>(null);
+  const snapshotComp = useRef<{ verDemandas: boolean; verMacro: Record<string, boolean> } | null>(null);
+  const [menuExportar, setMenuExportar] = useState(false);
+  const [menuCtx, setMenuCtx] = useState<{ x: number; y: number; lat: number; lon: number } | null>(null);
+  const [altaRapida, setAltaRapida] = useState<{ lat: number; lon: number } | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [cotejo, setCotejo] = useState<CotejoActivo | null>(null);
+  const [vinculando, setVinculando] = useState(false);
+  const [balance, setBalance] = useState<{ pend: number; sinAt: number; m2: number } | null>(null);
+  const [zonaA, setZonaA] = useState<{ centro: { lon: number; lat: number }; radio: number } | null>(null);
+  const clienteQuery = useQueryClient();
+  const vistaRef = useRef(vista);
+  vistaRef.current = vista;
+
+  const avisar = (texto: string) => {
+    setAviso(texto);
+    window.setTimeout(() => setAviso(null), 3500);
+  };
+  const [dias, setDias] = useState<number | null>(inicial?.dias ?? null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
   // Resultado del buscador en lenguaje natural: puntos marcados con anillo
   const [resaltado, setResaltado] = useState<{
@@ -514,6 +589,10 @@ function MapaInterno({
     },
     refetchInterval: 60_000,
   });
+  const dataRef = useRef<GeoDatos | undefined>(undefined);
+  dataRef.current = data;
+  const puedeVincular = rol === "admin" || rol === "atencion_ciudadana";
+  const puedeCargar = ["admin", "atencion_ciudadana", "informacion_estrategica", "planificacion"].includes(rol);
 
   // Fuentes presentes en los datos (chips dinámicos)
   const fuentesPresentes = useMemo(() => {
@@ -661,7 +740,18 @@ function MapaInterno({
       }
       return true;
     });
-    return { type: "FeatureCollection", features };
+    // edad en días para "la deuda envejece" (-1 = sin fecha confiable)
+    const ahora = Date.now();
+    const conEdad = features.map((f) => ({
+      ...f,
+      properties: {
+        ...f.properties,
+        edad_dias: f.properties.sin_fecha
+          ? -1
+          : Math.max(0, Math.round((ahora - Date.parse(String(f.properties.creado_en))) / 86400000)),
+      },
+    }));
+    return { type: "FeatureCollection", features: conEdad };
   }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor]);
 
   /**
@@ -749,6 +839,171 @@ function MapaInterno({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  /** Link que reproduce EXACTAMENTE esta vista (cámara + filtros + capas + zona). */
+  const construirLinkVista = (): string => {
+    const p = new URLSearchParams();
+    const mapa = mapRef.current?.getMap();
+    if (mapa) {
+      const c = mapa.getCenter();
+      p.set("lat", c.lat.toFixed(6));
+      p.set("lon", c.lng.toFixed(6));
+      p.set("z", mapa.getZoom().toFixed(2));
+    }
+    p.set("vista", vista);
+    if (vista === "brecha" && filtroBrecha) p.set("brecha", filtroBrecha);
+    const tiposActivos = Object.keys(ETIQUETA_TIPO).filter((t) => tipos[t] !== false);
+    if (tiposActivos.length === 1 && tiposActivos[0]) p.set("tipo", tiposActivos[0]);
+    const fuentesActivas = fuentesPresentes.filter((fu) => fuentes[fu] !== false);
+    if (fuentesActivas.length === 1 && fuentesActivas[0] && fuentesPresentes.length > 1) p.set("fuente", fuentesActivas[0]);
+    if (dias) p.set("dias", String(dias));
+    if (verCalor) p.set("calor", "1");
+    if (verHex) p.set("hex", "1");
+    if (verSatelite) p.set("sat", "1");
+    if (verTop20) p.set("top", "1");
+    if (zona) {
+      p.set("zlat", zona.lat.toFixed(6));
+      p.set("zlon", zona.lon.toFixed(6));
+      p.set("zr", String(radioZona));
+    }
+    return `${window.location.origin}/mapa?${p.toString()}`;
+  };
+
+  const copiarLinkVista = async () => {
+    const link = construirLinkVista();
+    try {
+      await navigator.clipboard.writeText(link);
+      avisar("Link de esta vista copiado ✓ — quien lo abra ve exactamente lo mismo");
+    } catch {
+      // Fallback clásico para contextos sin permiso de portapapeles
+      const ta = document.createElement("textarea");
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      avisar(ok ? "Link de esta vista copiado ✓" : "No se pudo copiar al portapapeles");
+    }
+    setMenuExportar(false);
+  };
+
+  const enviarPorWhatsApp = (telefono: string, nombre: string) => {
+    const texto = `Mirá esta vista del mapa de CIMBA: ${construirLinkVista()}`;
+    window.open(`https://wa.me/${telefono}?text=${encodeURIComponent(texto)}`, "_blank");
+    avisar(`Abriendo WhatsApp para ${nombre}…`);
+    setMenuExportar(false);
+  };
+
+  /** Cortina «Lo pedido | Lo hecho»: el mapa principal pasa a mostrar lo hecho. */
+  const alternarComparar = () => {
+    const activo = !comparar;
+    const mapa = mapRef.current?.getMap();
+    if (activo && mapa) {
+      const c = mapa.getCenter();
+      setVistaComp({
+        longitude: c.lng,
+        latitude: c.lat,
+        zoom: mapa.getZoom(),
+        bearing: mapa.getBearing(),
+        pitch: mapa.getPitch(),
+        padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      });
+      snapshotComp.current = { verDemandas, verMacro: { ...verMacro } };
+      setVerDemandas(false);
+      setVerMacro({ abierto: false, en_curso: true, resuelto: true, inactivo: false });
+      setCotejo(null);
+      setSeleccion(null);
+    } else if (!activo && snapshotComp.current) {
+      setVerDemandas(snapshotComp.current.verDemandas);
+      setVerMacro(snapshotComp.current.verMacro);
+    }
+    setComparar(activo);
+  };
+
+  const vincularDesdeMapa = (demandaId: number, incidenteId: number) => {
+    setVinculando(true);
+    void vincularDemanda({ demandaId, incidenteId, confianza: 0.99 })
+      .then(() => {
+        avisar(`Pedido #${demandaId} vinculado al incidente #${incidenteId} ✓ — sale de la deuda`);
+        setCotejo(null);
+        void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
+      })
+      .catch(() => avisar("No se pudo vincular: probá de nuevo."))
+      .finally(() => setVinculando(false));
+  };
+
+  /** Balance vivo de lo que se está viendo: recalcula al mover el mapa. */
+  const recalcularBalance = useCallback(() => {
+    const mapa = mapRef.current?.getMap();
+    if (!mapa) return;
+    const b = mapa.getBounds();
+    const dentro = (f: { geometry: { coordinates: number[] } }) => {
+      const ln = f.geometry.coordinates[0];
+      const la = f.geometry.coordinates[1];
+      if (ln == null || la == null) return false;
+      return ln >= b.getWest() && ln <= b.getEast() && la >= b.getSouth() && la <= b.getNorth();
+    };
+    const dems = demandasFiltradas.features.filter(dentro);
+    const pend = dems.filter((f) => ["recibida", "en_validacion"].includes(String(f.properties.estado))).length;
+    const sinAt = dems.filter((f) => f.properties.brecha === "sin_atencion").length;
+    const m2 = incidentesFiltrados.features
+      .filter(dentro)
+      .reduce((acc, f) => acc + (Number(f.properties.m2) || 0), 0);
+    setBalance({ pend, sinAt, m2: Math.round(m2) });
+  }, [demandasFiltradas, incidentesFiltrados]);
+
+  useEffect(() => {
+    recalcularBalance();
+  }, [recalcularBalance]);
+
+  // Top 20 urgentes numerados sobre el territorio
+  const top20 = useMemo<FC | null>(() => {
+    if (!verTop20) return null;
+    const urgentes = incidentesFiltrados.features
+      .filter((f) => f.properties.score != null && (f.properties.macro === "abierto" || f.properties.macro === "en_curso"))
+      .sort((a, b) => Number(b.properties.score) - Number(a.properties.score))
+      .slice(0, 20)
+      .map((f, i) => ({ ...f, properties: { ...f.properties, rank: i + 1 } }));
+    return { type: "FeatureCollection", features: urgentes };
+  }, [verTop20, incidentesFiltrados]);
+
+  // Cifras de deuda por zona: aparecen solas al alejar el zoom
+  const cifrasZona = useMemo<FC>(() => {
+    const celdas = new Map<string, { lon: number; lat: number; n: number }>();
+    for (const f of demandasFiltradas.features) {
+      if (f.properties.brecha !== "sin_atencion") continue;
+      const ln = f.geometry.coordinates[0];
+      const la = f.geometry.coordinates[1];
+      if (ln == null || la == null) continue;
+      const k = `${Math.round(ln / 0.02)}|${Math.round(la / 0.018)}`;
+      const c = celdas.get(k) ?? { lon: 0, lat: 0, n: 0 };
+      c.lon += ln;
+      c.lat += la;
+      c.n += 1;
+      celdas.set(k, c);
+    }
+    const features = [...celdas.values()]
+      .filter((c) => c.n >= 15)
+      .map((c) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [c.lon / c.n, c.lat / c.n] as [number, number] },
+        properties: { n: c.n } as Record<string, unknown>,
+      }));
+    return { type: "FeatureCollection", features };
+  }, [demandasFiltradas]);
+
+  // Hilos del cotejo activo: demanda → candidatos a ≤60 m
+  const hilosCotejo = useMemo(() => {
+    if (!cotejo || cotejo.candidatos.length === 0) return null;
+    return {
+      type: "FeatureCollection" as const,
+      features: cotejo.candidatos.map((c) => ({
+        type: "Feature" as const,
+        geometry: { type: "LineString" as const, coordinates: [cotejo.lngLat, c.lngLat] },
+        properties: {} as Record<string, unknown>,
+      })),
+    };
+  }, [cotejo]);
 
   // Hexágonos 3D sobre las demandas visibles
   const hexData = useMemo(
@@ -944,6 +1199,7 @@ function MapaInterno({
     const feature = e.features?.[0];
     if (!feature) {
       setSeleccion(null);
+      setCotejo(null);
       return;
     }
     if (feature.layer.id === "clusters") {
@@ -962,7 +1218,35 @@ function MapaInterno({
     if (feature.layer.id === "incidentes-punto") {
       setSeleccion({ capa: "incidente", props: feature.properties ?? {}, lngLat });
     } else if (feature.layer.id === "demandas-punto") {
-      setSeleccion({ capa: "demanda", props: feature.properties ?? {}, lngLat });
+      const props = feature.properties ?? {};
+      const brechaProp = String(props.brecha ?? "");
+      if (vistaRef.current === "brecha" && ["sin_atencion", "en_cola", "posible_resuelta"].includes(brechaProp)) {
+        // Cotejo desde el mapa: hilos hacia lo que hay a menos de 60 m
+        const candidatos = (dataRef.current?.incidentes.features ?? [])
+          .map((fi): CandidatoCotejo | null => {
+            const ln = fi.geometry.coordinates[0];
+            const la = fi.geometry.coordinates[1];
+            if (ln == null || la == null) return null;
+            const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
+            if (dist > 60) return null;
+            return {
+              id: Number(fi.properties.id),
+              tipo: String(fi.properties.tipo ?? "otro"),
+              estado: String(fi.properties.estado ?? ""),
+              macro: String(fi.properties.macro ?? ""),
+              direccion: (fi.properties.direccion as string | null) ?? null,
+              dist: Math.round(dist),
+              lngLat: [ln, la],
+            };
+          })
+          .filter((c): c is CandidatoCotejo => c != null)
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 5);
+        setCotejo({ demanda: props, lngLat, candidatos });
+        setSeleccion(null);
+      } else {
+        setSeleccion({ capa: "demanda", props, lngLat });
+      }
     }
     mapRef.current?.easeTo({ center: lngLat, duration: 400, offset: [-140, 0] });
   }, []);
@@ -980,6 +1264,14 @@ function MapaInterno({
         maxZoom={19.5}
         interactiveLayerIds={["clusters", "incidentes-punto", "demandas-punto"]}
         onClick={alClick}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuCtx({ x: e.point.x, y: e.point.y, lat: e.lngLat.lat, lon: e.lngLat.lng });
+        }}
+        onMove={(e) => {
+          if (comparar) setVistaComp(e.viewState);
+        }}
+        onMoveEnd={recalcularBalance}
         onError={(e) => {
           // Un estilo o capa inválidos dejarían el mapa en negro sin avisar.
           console.error("[mapa] error de MapLibre:", e.error?.message ?? e);
@@ -1111,7 +1403,7 @@ function MapaInterno({
         {verDemandas && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capaCalor} />}
-            <Layer {...(vista === "brecha" ? capaDemandasBrecha : capaDemandas)} />
+            <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capaDemandasEdad : capaDemandasBrecha) : capaDemandas)} />
           </Source>
         )}
 
@@ -1125,6 +1417,60 @@ function MapaInterno({
           <Source id="zona" type="geojson" data={crearCirculo(zona.lon, zona.lat, radioZona)}>
             <Layer {...capaZonaRelleno} />
             <Layer {...capaZonaBorde} />
+          </Source>
+        )}
+
+        {zonaA && (
+          <Source id="zona-a" type="geojson" data={crearCirculo(zonaA.centro.lon, zonaA.centro.lat, zonaA.radio)}>
+            <Layer id="zona-a-relleno" type="fill" paint={{ "fill-color": "#2EB1FF", "fill-opacity": 0.08 }} />
+            <Layer id="zona-a-borde" type="line" paint={{ "line-color": "#2EB1FF", "line-width": 2, "line-dasharray": [3, 2] }} />
+          </Source>
+        )}
+
+        {hilosCotejo && (
+          <Source id="cotejo-hilos" type="geojson" data={hilosCotejo}>
+            <Layer
+              id="cotejo-linea"
+              type="line"
+              paint={{ "line-color": "#f4dc00", "line-width": 1.8, "line-dasharray": [2, 1.5], "line-opacity": 0.9 }}
+            />
+          </Source>
+        )}
+
+        {top20 && top20.features.length > 0 && (
+          <Source id="top20" type="geojson" data={top20}>
+            <Layer
+              id="top20-circulo"
+              type="circle"
+              paint={{ "circle-radius": 11, "circle-color": "#f4dc00", "circle-stroke-color": "#0B0F16", "circle-stroke-width": 2 }}
+            />
+            <Layer
+              id="top20-num"
+              type="symbol"
+              layout={{
+                "text-field": ["to-string", ["get", "rank"]],
+                "text-size": 12,
+                "text-font": ["Montserrat Regular"],
+                "text-allow-overlap": true,
+              }}
+              paint={{ "text-color": "#0B0F16" }}
+            />
+          </Source>
+        )}
+
+        {cifrasZona.features.length > 0 && (
+          <Source id="cifras-zona" type="geojson" data={cifrasZona}>
+            <Layer
+              id="cifras-zona-texto"
+              type="symbol"
+              maxzoom={12.8}
+              layout={{
+                "text-field": ["format", ["to-string", ["get", "n"]], { "font-scale": 1.5 }, "\nsin respuesta", { "font-scale": 0.75 }],
+                "text-font": ["Montserrat Regular"],
+                "text-size": 14,
+              }}
+              paint={{ "text-color": "#f4dc00", "text-halo-color": "#070a10", "text-halo-width": 1.8 }}
+            />
           </Source>
         )}
 
@@ -1235,20 +1581,14 @@ function MapaInterno({
             </button>
           )}
           <button
-            onClick={() => void generarReporte()}
-            className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
-            title="Reporte imprimible de lo visible en el mapa: extracto cartográfico, números precisos y listado — listo para PDF, mandar o imprimir"
+            onClick={alternarComparar}
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+              comparar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
+            }`}
+            title="Cortina «Lo pedido | Lo hecho»: dos mapas sincronizados divididos por una cortina arrastrable — la brecha convertida en imagen"
           >
-            <Printer size={14} />
-            Reporte
-          </button>
-          <button
-            onClick={exportarGeoJson}
-            className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
-            title="Descarga lo visible como GeoJSON: se abre directo en QGIS, Google Earth o cualquier GIS"
-          >
-            <Download size={14} />
-            GeoJSON
+            <Columns2 size={14} />
+            Comparar
           </button>
           {panelesMovidos && (
             <button
@@ -1301,6 +1641,62 @@ function MapaInterno({
             <History size={14} />
             Historia
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setMenuExportar((v) => !v)}
+              className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+                menuExportar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
+              }`}
+              title="Sacar esta vista del mapa: reporte imprimible, GeoJSON para QGIS, o el link exacto para compartir por WhatsApp"
+            >
+              <Download size={14} />
+              Exportar
+              <ChevronDown size={12} className={`transition-transform ${menuExportar ? "rotate-180" : ""}`} />
+            </button>
+            {menuExportar && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuExportar(false)} />
+                <div className="panel-vidrio absolute right-0 z-40 mt-1.5 w-64 rounded-xl p-1.5 text-[13px]">
+                  <button
+                    onClick={() => {
+                      setMenuExportar(false);
+                      void generarReporte();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+                  >
+                    <Printer size={14} className="text-texto-2" /> Reporte imprimible (PDF)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuExportar(false);
+                      exportarGeoJson();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+                  >
+                    <Download size={14} className="text-texto-2" /> GeoJSON (QGIS / PowerBI)
+                  </button>
+                  <button
+                    onClick={() => void copiarLinkVista()}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+                  >
+                    <Link2 size={14} className="text-texto-2" /> Copiar link de esta vista
+                  </button>
+                  <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                    Enviar esta vista por WhatsApp
+                  </p>
+                  {CONTACTOS_WHATSAPP.map((c) => (
+                    <button
+                      key={c.telefono}
+                      onClick={() => enviarPorWhatsApp(c.telefono, c.nombre)}
+                      className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+                    >
+                      <Send size={14} style={{ color: "#199e70" }} /> {c.nombre}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <Buscador
             alEncontrar={(lon, lat) => {
               setMarcador([lon, lat]);
@@ -1326,6 +1722,173 @@ function MapaInterno({
         <div ref={barraEstadoRef} className="num rounded-md bg-fondo/70 px-2 py-0.5 text-[10px] text-texto-3" />
       </div>
 
+      {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
+      {balance && !comparar && !despejado && (balance.pend > 0 || balance.m2 > 0) && (
+        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
+          <div className="panel-vidrio rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2">
+            En pantalla: <b className="num text-texto">{numero(balance.pend)}</b> pedidos pendientes ·{" "}
+            <b className="num" style={{ color: "#d95926" }}>
+              {balance.pend > 0 ? Math.round((100 * balance.sinAt) / balance.pend) : 0}%
+            </b>{" "}
+            sin respuesta · <b className="num" style={{ color: "#199e70" }}>{numero(balance.m2)} m²</b> hechos
+          </div>
+        </div>
+      )}
+
+      {/* Cortina «Lo pedido | Lo hecho» */}
+      {comparar && vistaComp && <CortinaComparar vistaMapa={vistaComp} demandas={demandasFiltradas} />}
+
+      {/* Panel de cotejo desde el mapa */}
+      {cotejo && !comparar && (
+        <aside className="panel-vidrio absolute top-28 right-3 z-20 flex max-h-[calc(100%-8.5rem)] w-80 flex-col rounded-xl">
+          <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+            <span className="text-sm font-bold">Cotejo: ¿esto ya se atendió?</span>
+            <button onClick={() => setCotejo(null)} className="text-texto-3 hover:text-texto">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-[13px]">
+            <div>
+              <p className="font-semibold">{String(cotejo.demanda.direccion ?? `Pedido #${String(cotejo.demanda.id)}`)}</p>
+              <p className="text-[11px] text-texto-3">
+                Pedido #{String(cotejo.demanda.id)} ·{" "}
+                {ETIQUETA_FUENTE[String(cotejo.demanda.fuente) as keyof typeof ETIQUETA_FUENTE] ?? String(cotejo.demanda.fuente)} ·{" "}
+                {cotejo.demanda.sin_fecha ? "sin fecha" : fechaCorta(String(cotejo.demanda.creado_en))}
+              </p>
+            </div>
+            {cotejo.candidatos.length === 0 ? (
+              <p className="rounded-lg border border-encurso/40 bg-encurso/10 px-3 py-2.5 text-xs leading-relaxed" style={{ color: "#d95926" }}>
+                No hay incidentes ni reparaciones a menos de 60 m: <b>brecha real confirmada</b> — nadie tocó esto todavía.
+              </p>
+            ) : (
+              <>
+                <p className="text-[11px] leading-relaxed text-texto-3">
+                  Los hilos amarillos muestran lo que hay cerca. Si alguno ES este mismo problema, vinculalo: el pedido
+                  sale de la deuda sin poner un metro de asfalto.
+                </p>
+                {cotejo.candidatos.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-borde bg-panel-2/60 p-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: COLOR_MACRO[c.macro as keyof typeof COLOR_MACRO] ?? "#8b94a3" }}
+                      />
+                      <span className="truncate text-[12px] font-semibold">
+                        {ETIQUETA_TIPO[c.tipo as keyof typeof ETIQUETA_TIPO] ?? c.tipo} · {c.estado.replaceAll("_", " ")}
+                      </span>
+                      <span className="num ml-auto shrink-0 text-[11px] font-bold text-amarillo">{c.dist} m</span>
+                    </div>
+                    {c.direccion && <p className="mt-0.5 truncate text-[11px] text-texto-3">{c.direccion}</p>}
+                    <div className="mt-1.5 flex items-center gap-2.5">
+                      {puedeVincular && (
+                        <button
+                          onClick={() => vincularDesdeMapa(Number(cotejo.demanda.id), c.id)}
+                          disabled={vinculando}
+                          className="rounded-md bg-azul px-2.5 py-1 text-[11px] font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                        >
+                          {vinculando ? "Vinculando…" : "Vincular acá"}
+                        </button>
+                      )}
+                      <Link href={`/incidentes/${c.id}`} className="text-[11px] font-semibold text-celeste hover:underline">
+                        Historia →
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+                {!puedeVincular && (
+                  <p className="text-[10px] text-texto-3">Vincular requiere el rol Atención Ciudadana (o admin).</p>
+                )}
+              </>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* Menú contextual del clic derecho */}
+      {menuCtx && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setMenuCtx(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuCtx(null);
+            }}
+          />
+          <div
+            className="panel-vidrio absolute z-40 w-52 rounded-xl p-1.5 text-[13px]"
+            style={{ left: Math.max(8, Math.min(menuCtx.x, window.innerWidth - 260)), top: menuCtx.y }}
+          >
+            {puedeCargar && (
+              <button
+                onClick={() => {
+                  setAltaRapida({ lat: menuCtx.lat, lon: menuCtx.lon });
+                  setMenuCtx(null);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-semibold text-amarillo transition hover:bg-panel-3"
+              >
+                Cargar pedido acá
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setZona({ lon: menuCtx.lon, lat: menuCtx.lat });
+                setRadioZona(300);
+                setModoAnalisis(true);
+                setMenuCtx(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+            >
+              Analizar zona acá
+            </button>
+            <button
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(`${menuCtx.lat.toFixed(6)}, ${menuCtx.lon.toFixed(6)}`)
+                  .then(() => avisar("Coordenadas copiadas ✓"));
+                setMenuCtx(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+            >
+              Copiar coordenadas
+            </button>
+            <button
+              onClick={() => {
+                window.open(
+                  `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${menuCtx.lat},${menuCtx.lon}`,
+                  "_blank",
+                );
+                setMenuCtx(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition hover:bg-panel-3"
+            >
+              Street View acá
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Alta rápida desde el clic derecho */}
+      {altaRapida && (
+        <AltaRapida
+          punto={altaRapida}
+          alCerrar={() => setAltaRapida(null)}
+          alCreado={(id) => {
+            setMarcador([altaRapida.lon, altaRapida.lat]);
+            setAltaRapida(null);
+            avisar(`Pedido #${id} registrado con coordenada exacta ✓`);
+            void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
+          }}
+        />
+      )}
+
+      {/* Aviso flotante */}
+      {aviso && (
+        <div className="pointer-events-none absolute bottom-16 left-1/2 z-50 -translate-x-1/2">
+          <div className="panel-vidrio rounded-xl border border-resuelto/40 px-4 py-2 text-[13px] font-semibold">{aviso}</div>
+        </div>
+      )}
+
       {/* Analizador de zona */}
       {zona && (
         <AnalisisZona
@@ -1334,8 +1897,12 @@ function MapaInterno({
           setRadio={setRadioZona}
           demandas={demandasFiltradas}
           incidentes={incidentesFiltrados}
+          zonaA={zonaA}
+          alFijarA={() => zona && setZonaA({ centro: zona, radio: radioZona })}
+          alQuitarA={() => setZonaA(null)}
           alCerrar={() => {
             setZona(null);
+            setZonaA(null);
             setModoAnalisis(false);
           }}
           arr={arrAnalisis}
@@ -1490,8 +2057,35 @@ function MapaInterno({
               Informe →
             </Link>
           </div>
+          <div className="mt-1.5 flex items-center justify-center gap-2 border-t border-borde pt-1.5">
+            <span className="text-[10px] text-texto-3">Pintar por:</span>
+            {(
+              [
+                ["categoria", "Categoría"],
+                ["antiguedad", "Antigüedad de la deuda"],
+              ] as const
+            ).map(([clave, etiqueta]) => (
+              <button
+                key={clave}
+                onClick={() => setModoBrecha(clave)}
+                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition ${
+                  modoBrecha === clave ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                }`}
+              >
+                {etiqueta}
+              </button>
+            ))}
+            {modoBrecha === "antiguedad" && (
+              <span className="flex items-center gap-1.5 text-[10px] text-texto-3">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#f4dc00" }} /> reciente
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#d95926" }} /> +1 año
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#ff3b30" }} /> +2 años
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#6b7280" }} /> sin fecha
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-center text-[10px] text-texto-3">
-            Clic en una categoría para aislarla · clic en un punto para ver por qué y cotejarlo
+            Clic en una categoría para aislarla · clic en un punto para cotejarlo con lo que hay cerca
           </p>
         </div>
       )}
@@ -1587,6 +2181,14 @@ function MapaInterno({
             <p className="mt-1 mb-2 flex items-center gap-1.5 text-[10px] text-texto-3">
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amarillo" /> anillo amarillo = obra SIGOV
             </p>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
+            >
+              <input type="checkbox" checked={verTop20} onChange={(e) => setVerTop20(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="num rounded bg-amarillo px-1 text-[10px] font-black text-fondo">1</span>
+              Top 20 urgentes
+            </label>
             </>)}
 
             <Seccion titulo="Demandas" resumen={numero(kpis.demandas)}

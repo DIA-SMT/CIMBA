@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function PaginaMapa({
   searchParams,
 }: {
-  searchParams: Promise<{ lat?: string; lon?: string; z?: string; vista?: string; brecha?: string; fuente?: string; tipo?: string }>;
+  searchParams: Promise<{ lat?: string; lon?: string; z?: string; vista?: string; brecha?: string; fuente?: string; tipo?: string; dias?: string; calor?: string; hex?: string; sat?: string; top?: string; zlat?: string; zlon?: string; zr?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const kpis = await obtenerKpis(sesion);
@@ -29,6 +29,19 @@ export default async function PaginaMapa({
     brecha: ["sin_atencion", "en_cola", "posible_resuelta"].includes(sp.brecha ?? "") ? sp.brecha : undefined,
     fuente: sp.fuente,
     tipo: sp.tipo,
+    dias: sp.dias && [30, 90, 180].includes(Number(sp.dias)) ? Number(sp.dias) : undefined,
+    calor: sp.calor === "1" || undefined,
+    hex: sp.hex === "1" || undefined,
+    sat: sp.sat === "1" || undefined,
+    top: sp.top === "1" || undefined,
+    zona:
+      sp.zlat && sp.zlon && sp.zr && Number.isFinite(Number(sp.zlat)) && Number.isFinite(Number(sp.zlon))
+        ? {
+            lat: Number(sp.zlat),
+            lon: Number(sp.zlon),
+            radio: Math.min(2000, Math.max(60, Number(sp.zr) || 250)),
+          }
+        : undefined,
   };
 
   return (
