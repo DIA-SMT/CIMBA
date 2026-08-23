@@ -1,33 +1,10 @@
 "use client";
 
 import { Mic, Wand2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { interpretarCarga } from "@/lib/acciones-busqueda";
+import { useDictadoVoz } from "@/lib/dictado";
 import { ETIQUETA_TIPO } from "@/lib/formato";
-
-/** API de dictado del navegador (Chrome/Edge la exponen con prefijo webkit). */
-interface ReconocimientoVoz {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-function crearReconocimiento(): ReconocimientoVoz | null {
-  if (typeof window === "undefined") return null;
-  const W = window as unknown as Record<string, new () => ReconocimientoVoz>;
-  const Ctor = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-  if (!Ctor) return null;
-  const r = new Ctor();
-  r.lang = "es-AR";
-  r.interimResults = false;
-  r.maxAlternatives = 1;
-  return r;
-}
 
 export interface CargaInterpretada {
   tipo: string | null;
@@ -45,13 +22,6 @@ export function CargaRapida({ alAplicar }: { alAplicar: (r: CargaInterpretada) =
   const [texto, setTexto] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [trabajando, setTrabajando] = useState(false);
-  const [escuchando, setEscuchando] = useState(false);
-  const [hayVoz, setHayVoz] = useState(false);
-  const recRef = useRef<ReconocimientoVoz | null>(null);
-
-  useEffect(() => {
-    setHayVoz(Boolean(crearReconocimiento()));
-  }, []);
 
   const interpretar = async (frase: string) => {
     if (!frase.trim() || trabajando) return;
@@ -86,26 +56,10 @@ export function CargaRapida({ alAplicar }: { alAplicar: (r: CargaInterpretada) =
     }
   };
 
-  const dictar = () => {
-    if (escuchando) {
-      recRef.current?.stop();
-      return;
-    }
-    const rec = crearReconocimiento();
-    if (!rec) return;
-    recRef.current = rec;
-    rec.onresult = (e) => {
-      const frase = e.results[0]?.[0]?.transcript ?? "";
-      if (frase) {
-        setTexto(frase);
-        void interpretar(frase);
-      }
-    };
-    rec.onend = () => setEscuchando(false);
-    rec.onerror = () => setEscuchando(false);
-    setEscuchando(true);
-    rec.start();
-  };
+  const { hayVoz, escuchando, error: errorVoz, alternar: dictar, limpiarError } = useDictadoVoz((frase) => {
+    setTexto(frase);
+    void interpretar(frase);
+  });
 
   return (
     <div className="mb-4 rounded-xl border border-celeste/30 bg-celeste/5 p-3">
@@ -137,10 +91,16 @@ export function CargaRapida({ alAplicar }: { alAplicar: (r: CargaInterpretada) =
           {trabajando ? "Interpretando…" : "Completar"}
         </button>
       </div>
-      {mensaje && (
-        <p className="mt-2 flex items-start gap-2 text-xs leading-relaxed text-texto-2">
-          <span className="flex-1">{mensaje}</span>
-          <button onClick={() => setMensaje(null)} className="shrink-0 text-texto-3 hover:text-texto">
+      {(mensaje || errorVoz) && (
+        <p className={`mt-2 flex items-start gap-2 text-xs leading-relaxed ${errorVoz ? "text-amarillo" : "text-texto-2"}`}>
+          <span className="flex-1">{errorVoz ?? mensaje}</span>
+          <button
+            onClick={() => {
+              setMensaje(null);
+              limpiarError();
+            }}
+            className="shrink-0 text-texto-3 hover:text-texto"
+          >
             <X size={12} />
           </button>
         </p>

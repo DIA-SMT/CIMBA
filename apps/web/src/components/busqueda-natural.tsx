@@ -2,32 +2,9 @@
 
 import { Mic, Search, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { interpretarBusqueda, type DestinoBusqueda } from "@/lib/acciones-busqueda";
-
-/** API de dictado del navegador (Chrome/Edge la exponen con prefijo webkit). */
-interface ReconocimientoVoz {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-function crearReconocimiento(): ReconocimientoVoz | null {
-  if (typeof window === "undefined") return null;
-  const W = window as unknown as Record<string, new () => ReconocimientoVoz>;
-  const Ctor = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-  if (!Ctor) return null;
-  const r = new Ctor();
-  r.lang = "es-AR";
-  r.interimResults = false;
-  r.maxAlternatives = 1;
-  return r;
-}
+import { useDictadoVoz } from "@/lib/dictado";
 
 /**
  * Búsqueda en lenguaje natural, escrita o dictada: "baches reparados en
@@ -45,14 +22,7 @@ export function BusquedaNatural({
 }) {
   const router = useRouter();
   const [texto, setTexto] = useState(inicial);
-  const [escuchando, setEscuchando] = useState(false);
-  const [hayVoz, setHayVoz] = useState(false);
   const [pendiente, startTransition] = useTransition();
-  const recRef = useRef<ReconocimientoVoz | null>(null);
-
-  useEffect(() => {
-    setHayVoz(Boolean(crearReconocimiento()));
-  }, []);
 
   const buscar = (consulta: string) => {
     const frase = consulta.trim();
@@ -67,26 +37,10 @@ export function BusquedaNatural({
     });
   };
 
-  const dictar = () => {
-    if (escuchando) {
-      recRef.current?.stop();
-      return;
-    }
-    const rec = crearReconocimiento();
-    if (!rec) return;
-    recRef.current = rec;
-    rec.onresult = (e) => {
-      const frase = e.results[0]?.[0]?.transcript ?? "";
-      if (frase) {
-        setTexto(frase);
-        buscar(frase);
-      }
-    };
-    rec.onend = () => setEscuchando(false);
-    rec.onerror = () => setEscuchando(false);
-    setEscuchando(true);
-    rec.start();
-  };
+  const { hayVoz, escuchando, error: errorVoz, alternar: dictar } = useDictadoVoz((frase) => {
+    setTexto(frase);
+    buscar(frase);
+  });
 
   return (
     <div className="mb-4">
@@ -119,10 +73,10 @@ export function BusquedaNatural({
           <Search size={16} className={pendiente ? "animate-pulse" : ""} />
         </button>
       </div>
-      <p className="mt-1 text-[10px] text-texto-3">
+      <p className={`mt-1 text-[10px] ${errorVoz ? "text-amarillo" : "text-texto-3"}`}>
         {pendiente
           ? "Interpretando la búsqueda…"
-          : "Entiende calles, tipos y estados: los filtros de abajo se completan solos."}
+          : errorVoz ?? "Entiende calles, tipos y estados: los filtros de abajo se completan solos."}
       </p>
     </div>
   );

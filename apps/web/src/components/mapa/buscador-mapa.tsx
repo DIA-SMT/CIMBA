@@ -1,31 +1,8 @@
 "use client";
 
 import { Mic, Search, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-
-/** API de dictado del navegador (Chrome/Edge la exponen con prefijo webkit). */
-interface ReconocimientoVoz {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-function crearReconocimiento(): ReconocimientoVoz | null {
-  if (typeof window === "undefined") return null;
-  const W = window as unknown as Record<string, new () => ReconocimientoVoz>;
-  const Ctor = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-  if (!Ctor) return null;
-  const r = new Ctor();
-  r.lang = "es-AR";
-  r.interimResults = false;
-  r.maxAlternatives = 1;
-  return r;
-}
+import { useState } from "react";
+import { useDictadoVoz } from "@/lib/dictado";
 
 /**
  * Buscador del mapa en lenguaje natural, escrito o dictado: "¿qué hay
@@ -44,13 +21,6 @@ export function BuscadorMapa({
   const [texto, setTexto] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [buscando, setBuscando] = useState(false);
-  const [escuchando, setEscuchando] = useState(false);
-  const [hayVoz, setHayVoz] = useState(false);
-  const recRef = useRef<ReconocimientoVoz | null>(null);
-
-  useEffect(() => {
-    setHayVoz(Boolean(crearReconocimiento()));
-  }, []);
 
   const buscar = async (frase: string) => {
     if (!frase.trim() || buscando) return;
@@ -65,30 +35,15 @@ export function BuscadorMapa({
     }
   };
 
-  const dictar = () => {
-    if (escuchando) {
-      recRef.current?.stop();
-      return;
-    }
-    const rec = crearReconocimiento();
-    if (!rec) return;
-    recRef.current = rec;
-    rec.onresult = (e) => {
-      const frase = e.results[0]?.[0]?.transcript ?? "";
-      if (frase) {
-        setTexto(frase);
-        void buscar(frase);
-      }
-    };
-    rec.onend = () => setEscuchando(false);
-    rec.onerror = () => setEscuchando(false);
-    setEscuchando(true);
-    rec.start();
-  };
+  const { hayVoz, escuchando, error: errorVoz, alternar: dictar, limpiarError } = useDictadoVoz((frase) => {
+    setTexto(frase);
+    void buscar(frase);
+  });
 
   const limpiar = () => {
     setTexto("");
     setMensaje(null);
+    limpiarError();
     alLimpiar();
   };
 
@@ -124,9 +79,11 @@ export function BuscadorMapa({
         </button>
       </div>
 
-      {(mensaje || buscando) && (
+      {(mensaje || buscando || errorVoz) && (
         <div className="panel-vidrio mt-1.5 flex items-start gap-2 rounded-xl px-3 py-2 text-xs leading-relaxed">
-          <span className="flex-1 text-texto-2">{buscando ? "Interpretando y buscando en el mapa…" : mensaje}</span>
+          <span className={`flex-1 ${errorVoz && !buscando ? "text-amarillo" : "text-texto-2"}`}>
+            {buscando ? "Interpretando y buscando en el mapa…" : errorVoz ?? mensaje}
+          </span>
           {!buscando && (
             <button
               onClick={limpiar}
