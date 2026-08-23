@@ -10,11 +10,11 @@
 
 Para su flujo diario (marcar puntos, geocodificar planillas, consolidar, informar) CIMBA ya lo cubre con ventajas. Para jubilar QGIS faltan:
 
-- [ ] **Q1. Fondo satelital opcional** en el mapa (IGN/Argenmap, gratuito y oficial argentino) para ubicar puntos mirando la imagen aérea — *bajo*
-- [ ] **Q2. Aceptar GPKG en la carga web** (`/cargar` hoy solo toma CSV/XLSX; el GeoPackage entra por CLI local) — *bajo*
-- [ ] **Q3. Corregir un punto arrastrándolo** en el mapa (demanda mal geocodificada → arrastrar el marcador y guardar) — *bajo*
-- [ ] **Q4. Exportar datos crudos** (CSV/GeoJSON de lo filtrado) para convivir con QGIS/PowerBI en la transición — *bajo*
-- [ ] **Q5. Polígonos y líneas** (tramos de calle, áreas de obra; hoy CIMBA es 100 % puntos) — *medio/alto; solo si el Director realmente los dibuja*
+- [x] **Q1. Fondo satelital opcional** en el mapa (IGN/Argenmap, gratuito y oficial argentino) para ubicar puntos mirando la imagen aérea — *bajo*
+- [x] **Q2. Aceptar GPKG en la carga web** (`/cargar` hoy solo toma CSV/XLSX; el GeoPackage entra por CLI local) — *bajo*
+- [x] **Q3. Corregir un punto arrastrándolo** en el mapa (demanda mal geocodificada → arrastrar el marcador y guardar) — *bajo*
+- [x] **Q4. Exportar datos crudos** (CSV/GeoJSON de lo filtrado) para convivir con QGIS/PowerBI en la transición — *bajo*
+- [~] **Q5. Polígonos y líneas** — VISUALIZACIÓN hecha (las capas GeoJSON/GPKG se dibujan con su forma real); el DIBUJO/edición de polígonos sigue pendiente — *solo si el Director realmente los dibuja*
 
 ---
 
