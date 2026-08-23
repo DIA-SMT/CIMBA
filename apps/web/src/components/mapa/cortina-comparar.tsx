@@ -4,7 +4,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Layer, Map as MapaGL, Source } from "react-map-gl/maplibre";
 import type { FeatureCollection, Point } from "geojson";
-import type { ViewState } from "react-map-gl/maplibre";
+import type { MapRef, ViewState } from "react-map-gl/maplibre";
+import { numero } from "@/lib/formato";
 
 const ESTILO =
   process.env.NEXT_PUBLIC_MAP_STYLE_DARK ??
@@ -21,19 +22,37 @@ type FC = FeatureCollection<Point, Record<string, unknown>>;
 export function CortinaComparar({
   vistaMapa,
   demandas,
+  espejoRef,
+  alCambiarCorte,
+  balance,
 }: {
   vistaMapa: ViewState;
   demandas: FC;
+  /** Para poder capturar el mapa espejo junto con el principal en una imagen. */
+  espejoRef?: React.Ref<MapRef>;
+  alCambiarCorte?: (corte: number) => void;
+  /** La brecha en números, de lo que hay en pantalla en este momento — para
+   *  que no haya que interpretar la densidad de puntos a ojo. */
+  balance?: { pend: number; sinAt: number; m2: number } | null;
 }) {
   const [corte, setCorte] = useState(50);
   const arrastrando = useRef(false);
   const contRef = useRef<HTMLDivElement>(null);
 
-  const mover = useCallback((clientX: number) => {
-    const r = contRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const pct = ((clientX - r.left) / r.width) * 100;
-    setCorte(Math.min(92, Math.max(8, pct)));
+  const mover = useCallback(
+    (clientX: number) => {
+      const r = contRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const pct = Math.min(92, Math.max(8, ((clientX - r.left) / r.width) * 100));
+      setCorte(pct);
+      alCambiarCorte?.(pct);
+    },
+    [alCambiarCorte],
+  );
+
+  useEffect(() => {
+    alCambiarCorte?.(corte);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -59,6 +78,7 @@ export function CortinaComparar({
           disparando tooltips/paneos de puntos que ni siquiera se ven ahí. */}
       <div className="pointer-events-auto absolute inset-0" style={{ clipPath: `inset(0 ${100 - corte}% 0 0)` }}>
         <MapaGL
+          ref={espejoRef}
           {...vistaMapa}
           mapStyle={ESTILO}
           interactive={false}
@@ -100,16 +120,26 @@ export function CortinaComparar({
         </div>
       </div>
 
-      {/* Etiquetas de lectura */}
-      <div className="absolute bottom-16 z-10 select-none" style={{ left: `max(12px, calc(${corte}% - 130px))` }}>
-        <span className="rounded-lg bg-[#3987e5] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
+      {/* Etiquetas de lectura: el número sale de lo que hay en pantalla en
+          este momento, para no tener que interpretar la densidad de puntos
+          a ojo — la brecha, convertida en una cifra clara. */}
+      <div className="absolute bottom-16 z-10 max-w-44 select-none" style={{ left: `max(12px, calc(${corte}% - 170px))` }}>
+        <span className="inline-block rounded-lg bg-[#3987e5] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
           Lo pedido
         </span>
+        <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
+          <p className="num text-2xl font-black text-[#6fadf5]">{numero(balance?.pend ?? 0)}</p>
+          <p className="text-[10px] leading-snug text-texto-2">pedidos pendientes en pantalla</p>
+        </div>
       </div>
-      <div className="absolute bottom-16 z-10 select-none" style={{ left: `calc(${corte}% + 14px)` }}>
-        <span className="rounded-lg bg-[#199e70] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
+      <div className="absolute bottom-16 z-10 max-w-44 select-none" style={{ left: `calc(${corte}% + 14px)` }}>
+        <span className="inline-block rounded-lg bg-[#199e70] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
           Lo hecho
         </span>
+        <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
+          <p className="num text-2xl font-black text-[#3ecb92]">{numero(balance?.m2 ?? 0)} m²</p>
+          <p className="text-[10px] leading-snug text-texto-2">reparados o en obra, en pantalla</p>
+        </div>
       </div>
     </div>
   );

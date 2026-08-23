@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
+  Camera,
   ChevronDown,
   Columns2,
   Crosshair,
@@ -18,7 +19,6 @@ import {
   Radar,
   RotateCcw,
   Satellite,
-  Search,
   Send,
   Sparkles,
   X,
@@ -545,6 +545,9 @@ function MapaInterno({
   const [comparar, setComparar] = useState(false);
   const [vistaComp, setVistaComp] = useState<ViewState | null>(null);
   const snapshotComp = useRef<{ verDemandas: boolean; verMacro: Record<string, boolean> } | null>(null);
+  const espejoRef = useRef<MapRef>(null);
+  const corteComparaRef = useRef(50);
+  const [capturando, setCapturando] = useState(false);
   const [menuExportar, setMenuExportar] = useState(false);
   const [contactosWa, setContactosWa] = useState<Array<{ nombre: string; telefono: string }>>([]);
   const [menuCtx, setMenuCtx] = useState<{ x: number; y: number; lat: number; lon: number } | null>(null);
@@ -584,9 +587,24 @@ function MapaInterno({
   const arrZonas = usePanelArrastrable("zonas");
   const arrInforme = usePanelArrastrable("informe");
   const arrAnalisis = usePanelArrastrable("analisis");
-  const panelesMovidos = [arrCapas, arrZonas, arrInforme, arrAnalisis].some((p) => p.movido);
+  const arrHerr = usePanelArrastrable("herramientas");
+  // La barra de herramientas envuelve en 1, 2 o 3 líneas según el ancho de
+  // pantalla; los KPI se acomodan debajo midiendo su alto real en vez de
+  // adivinar un offset fijo que se rompería en algún tamaño intermedio.
+  const herrRef = useRef<HTMLDivElement>(null);
+  const [altoHerr, setAltoHerr] = useState(0);
+  useEffect(() => {
+    const el = herrRef.current;
+    if (!el) return;
+    const medir = () => setAltoHerr(el.offsetHeight);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const panelesMovidos = [arrCapas, arrZonas, arrInforme, arrAnalisis, arrHerr].some((p) => p.movido);
   const reubicarTodos = () => {
-    for (const p of [arrCapas, arrZonas, arrInforme, arrAnalisis]) p.reubicar();
+    for (const p of [arrCapas, arrZonas, arrInforme, arrAnalisis, arrHerr]) p.reubicar();
   };
 
   const aplicarVista = (v: Vista) => {
@@ -975,11 +993,81 @@ function MapaInterno({
       setVerMacro({ abierto: false, en_curso: true, resuelto: true, inactivo: false });
       setCotejo(null);
       setSeleccion(null);
+      avisar("Izquierda: lo pedido (reclamos abiertos). Derecha: lo hecho (reparado o en obra). Arrastrá la línea amarilla — y podés capturarlo como imagen.");
     } else if (!activo && snapshotComp.current) {
       setVerDemandas(snapshotComp.current.verDemandas);
       setVerMacro(snapshotComp.current.verMacro);
     }
     setComparar(activo);
+  };
+
+  /**
+   * Captura la comparación completa (mapa espejo + principal + divisor +
+   * etiquetas) como UNA imagen: compone ambos canvases en uno según dónde
+   * esté la cortina en este momento, con la línea y los rótulos dibujados.
+   */
+  const capturarComparacion = async () => {
+    const mapaPrincipal = mapRef.current?.getMap();
+    const mapaEspejo = espejoRef.current?.getMap();
+    if (!mapaPrincipal || !mapaEspejo) return;
+    setCapturando(true);
+    try {
+      await Promise.all(
+        [mapaPrincipal, mapaEspejo].map(
+          (m) =>
+            new Promise<void>((resolver) => {
+              m.once("render", () => resolver());
+              m.triggerRepaint();
+            }),
+        ),
+      );
+      const canvasP = mapaPrincipal.getCanvas();
+      const canvasE = mapaEspejo.getCanvas();
+      const ancho = canvasP.width;
+      const alto = canvasP.height;
+      const salida = document.createElement("canvas");
+      salida.width = ancho;
+      salida.height = alto;
+      const ctx = salida.getContext("2d");
+      if (!ctx) return;
+      const corteX = Math.round((ancho * corteComparaRef.current) / 100);
+      ctx.drawImage(canvasE, 0, 0, canvasE.width, canvasE.height, 0, 0, corteX, alto);
+      ctx.drawImage(canvasP, 0, 0, canvasP.width, canvasP.height, corteX, 0, ancho - corteX, alto);
+      // línea divisoria amarilla, igual que en pantalla
+      ctx.fillStyle = "#f4dc00";
+      ctx.fillRect(corteX - 2, 0, 4, alto);
+      // rótulos con la misma paleta de la cortina
+      const esc = ancho / (canvasP.clientWidth || ancho);
+      const chip = (texto: string, x: number, alinear: "left" | "right", color: string) => {
+        ctx.font = `bold ${13 * esc}px sans-serif`;
+        const anchoTexto = ctx.measureText(texto).width;
+        const padX = 10 * esc;
+        const px = alinear === "left" ? x : x - anchoTexto - padX * 2;
+        ctx.fillStyle = color;
+        ctx.fillRect(px, 14 * esc, anchoTexto + padX * 2, 26 * esc);
+        ctx.fillStyle = "#ffffff";
+        ctx.textBaseline = "middle";
+        ctx.fillText(texto, px + padX, 14 * esc + 13 * esc);
+      };
+      chip("LO PEDIDO", 14 * esc, "left", "#3987e5");
+      chip("LO HECHO", ancho - 14 * esc, "right", "#199e70");
+      // marca y fecha, discretas, abajo a la derecha
+      ctx.font = `${11 * esc}px sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.textAlign = "right";
+      ctx.fillText(`CIMBA · ${new Date().toLocaleDateString("es-AR")}`, ancho - 12 * esc, alto - 12 * esc);
+
+      const url = salida.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cimba-comparacion-${new Date().toISOString().slice(0, 10)}.png`;
+      a.click();
+      avisar("Comparación capturada ✓ — se descargó como imagen");
+    } catch {
+      avisar("No se pudo capturar la comparación: probá de nuevo.");
+    } finally {
+      setCapturando(false);
+    }
   };
 
   const vincularDesdeMapa = (demandaId: number, incidenteId: number) => {
@@ -1648,32 +1736,45 @@ function MapaInterno({
         )}
       </MapaGL>
 
-      {/* Buscador en lenguaje natural que acciona sobre el mapa — congelado
-          durante Comparar: cambiar capas ahí rompería la cortina. */}
-      <div className={`absolute top-[52px] left-3 z-20 lg:top-3 ${despejado || comparar ? "hidden" : ""}`}>
-        <BuscadorMapa
-          alBuscar={buscarEnMapa}
-          alLimpiar={() => setResaltado(null)}
-          hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
-        />
-      </div>
+      {/* Barra de herramientas: buscador, vista y acciones, todo junto en UN
+          panel movible (como Migue) — así ya no se amontonan sueltos y el
+          usuario los saca de en medio arrastrándolos de un solo lugar. */}
+      <div
+        ref={herrRef}
+        className={`absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 ${despejado ? "hidden" : ""}`}
+        style={arrHerr.estilo}
+      >
+        <div
+          {...arrHerr.asaProps}
+          className="panel-vidrio flex shrink-0 cursor-grab items-center justify-center self-stretch rounded-xl px-1.5 text-texto-3 transition hover:text-texto active:cursor-grabbing"
+          title="Arrastrar para mover esta barra de herramientas"
+        >
+          <GripVertical size={14} />
+        </div>
 
-      {/* Selector de vista — oculto durante Comparar (ídem arriba) */}
-      {comparar ? (
-        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+        {/* Buscador en lenguaje natural — congelado durante Comparar: cambiar
+            capas ahí rompería la cortina. */}
+        {!comparar && (
+          <BuscadorMapa
+            alBuscar={buscarEnMapa}
+            alLimpiar={() => setResaltado(null)}
+            hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
+          />
+        )}
+
+        {/* Selector de vista — reemplazado por el aviso de Comparar mientras dura */}
+        {comparar ? (
           <div className="panel-vidrio rounded-xl px-3.5 py-2 text-xs font-semibold text-texto-2">
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
-        </div>
-      ) : (
-        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
-          <div className="panel-vidrio flex rounded-xl p-1">
+        ) : (
+          <div className="panel-vidrio flex flex-wrap rounded-xl p-1">
             {(Object.keys(VISTAS) as Vista[]).map((v) => (
               <button
                 key={v}
                 onClick={() => aplicarVista(v)}
                 title={VISTAS[v].descripcion}
-                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition sm:px-3.5 ${
                   vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
                 }`}
               >
@@ -1681,45 +1782,45 @@ function MapaInterno({
               </button>
             ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* KPIs */}
-      <div className="pointer-events-none absolute top-16 left-3 right-3 z-10 flex flex-wrap gap-2">
-        {!despejado && (<>
-        <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
-        <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" ayuda={AYUDA_KPI.sinVincular} />
-        <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
-        <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
-        <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
-        <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" ayuda={AYUDA_KPI.m2} />
-        </>)}
-        <div className="pointer-events-auto ml-auto flex items-start gap-2">
+        <div className="ml-auto flex flex-wrap items-start justify-end gap-2">
           {iaHabilitada && (
             <button
               onClick={() => void generarInforme()}
               disabled={generandoInforme}
-              className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60"
+              className="panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60 sm:px-3.5 sm:py-2.5"
               title="Informe ejecutivo generado por IA sobre lo visible en el mapa"
             >
               <Sparkles size={14} className={generandoInforme ? "animate-pulse text-amarillo" : ""} />
-              {generandoInforme ? "Generando…" : "Informe IA"}
+              <span className="hidden sm:inline">{generandoInforme ? "Generando…" : "Informe IA"}</span>
             </button>
           )}
           <button
             onClick={alternarComparar}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
               comparar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
             }`}
             title="Cortina «Lo pedido | Lo hecho»: dos mapas sincronizados divididos por una cortina arrastrable — la brecha convertida en imagen"
           >
             <Columns2 size={14} />
-            Comparar
+            <span className="hidden sm:inline">Comparar</span>
           </button>
+          {comparar && (
+            <button
+              onClick={() => void capturarComparacion()}
+              disabled={capturando}
+              className="panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold text-amarillo ring-1 ring-amarillo/60 transition hover:text-texto disabled:opacity-60 sm:px-3.5 sm:py-2.5"
+              title="Descargar esta comparación como una imagen"
+            >
+              <Camera size={14} className={capturando ? "animate-pulse" : ""} />
+              <span className="hidden sm:inline">{capturando ? "Capturando…" : "Capturar"}</span>
+            </button>
+          )}
           {panelesMovidos && (
             <button
               onClick={reubicarTodos}
-              className="panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
+              className="panel-vidrio flex items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-texto-2 transition hover:text-texto sm:px-3 sm:py-2.5"
               title="Volver los paneles a su lugar original"
             >
               <RotateCcw size={14} />
@@ -1727,7 +1828,7 @@ function MapaInterno({
           )}
           <button
             onClick={() => setDespejado((v) => !v)}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition ${
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:px-3 sm:py-2.5 ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title={
@@ -1744,13 +1845,13 @@ function MapaInterno({
               setModoAnalisis(activo);
               if (!activo) setZona(null);
             }}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
               modoAnalisis ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title="Analizador de zona: mantené clic y arrastrá para dibujar un círculo — las estadísticas se calculan en vivo mientras arrastrás"
           >
             <Radar size={14} className={modoAnalisis ? "animate-pulse" : ""} />
-            {modoAnalisis ? "Dibujá el círculo…" : "Analizar zona"}
+            <span className="hidden sm:inline">{modoAnalisis ? "Dibujá el círculo…" : "Analizar zona"}</span>
           </button>
           <button
             onClick={() => {
@@ -1759,13 +1860,13 @@ function MapaInterno({
               setReproduciendo(false);
               if (activo) setTiempoIdx(0);
             }}
-            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
               tiempoActivo ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
             }`}
             title="Línea de tiempo: reproducí la historia del bacheo mes a mes"
           >
             <History size={14} />
-            Historia
+            <span className="hidden sm:inline">Historia</span>
           </button>
           <div className="relative">
             <button
@@ -1773,13 +1874,13 @@ function MapaInterno({
                 setMenuExportar((v) => !v);
                 if (contactosWa.length === 0) void listarContactosWhatsapp().then(setContactosWa);
               }}
-              className={`panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
+              className={`panel-vidrio flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
                 menuExportar ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2 hover:text-texto"
               }`}
               title="Sacar esta vista del mapa: reporte imprimible, GeoJSON para QGIS, o el link de la cámara y filtros para compartir por WhatsApp"
             >
               <Download size={14} />
-              Exportar
+              <span className="hidden sm:inline">Exportar</span>
               <ChevronDown size={12} className={`transition-transform ${menuExportar ? "rotate-180" : ""}`} />
             </button>
             {menuExportar && (
@@ -1828,14 +1929,25 @@ function MapaInterno({
               </>
             )}
           </div>
-          <Buscador
-            alEncontrar={(lon, lat) => {
-              setMarcador([lon, lat]);
-              mapRef.current?.flyTo({ center: [lon, lat], zoom: 16.5, duration: 1200 });
-            }}
-          />
         </div>
       </div>
+
+      {/* KPIs — fila propia, informativa y fija (no forma parte de la barra movible).
+          El top se mide en vivo contra el alto real de la barra de herramientas,
+          para no superponerse sin importar en cuántas líneas envuelva esta. */}
+      {!despejado && (
+        <div
+          className="pointer-events-none absolute left-3 right-3 z-10 flex flex-wrap gap-2"
+          style={{ top: altoHerr > 0 ? altoHerr + 24 : 64 }}
+        >
+          <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
+          <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" ayuda={AYUDA_KPI.sinVincular} />
+          <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
+          <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
+          <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
+          <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" ayuda={AYUDA_KPI.m2} />
+        </div>
+      )}
 
       {/* Tooltip instantáneo al pasar el mouse */}
       {tooltip && !modoAnalisis && (
@@ -1867,7 +1979,17 @@ function MapaInterno({
       )}
 
       {/* Cortina «Lo pedido | Lo hecho» */}
-      {comparar && vistaComp && <CortinaComparar vistaMapa={vistaComp} demandas={demandasFiltradas} />}
+      {comparar && vistaComp && (
+        <CortinaComparar
+          vistaMapa={vistaComp}
+          demandas={demandasFiltradas}
+          espejoRef={espejoRef}
+          alCambiarCorte={(c) => {
+            corteComparaRef.current = c;
+          }}
+          balance={balance}
+        />
+      )}
 
       {/* Panel de cotejo desde el mapa */}
       {cotejo && !comparar && (
@@ -2481,40 +2603,6 @@ function Kpi({
         <div className="num text-base font-bold">{numero(valor)}</div>
         <div className="text-[9px] font-medium tracking-wider text-texto-3 uppercase">{etiqueta}</div>
       </div>
-    </div>
-  );
-}
-
-function Buscador({ alEncontrar }: { alEncontrar: (lon: number, lat: number) => void }) {
-  const [q, setQ] = useState("");
-  const [buscando, setBuscando] = useState(false);
-  const [sinResultado, setSinResultado] = useState(false);
-
-  const buscar = async () => {
-    if (q.trim().length < 4) return;
-    setBuscando(true);
-    setSinResultado(false);
-    try {
-      const res = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}`);
-      const cuerpo = (await res.json()) as { resultado: { punto: { lat: number; lon: number } } | null };
-      if (cuerpo.resultado) alEncontrar(cuerpo.resultado.punto.lon, cuerpo.resultado.punto.lat);
-      else setSinResultado(true);
-    } finally {
-      setBuscando(false);
-    }
-  };
-
-  return (
-    <div className="panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2">
-      <Search size={14} className={buscando ? "animate-pulse text-amarillo" : "text-texto-3"} />
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && void buscar()}
-        placeholder="Buscar dirección… (Enter)"
-        className="w-52 bg-transparent text-[13px] outline-none placeholder:text-texto-3"
-      />
-      {sinResultado && <span className="text-[10px] text-peligro">sin resultado</span>}
     </div>
   );
 }
