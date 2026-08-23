@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { GlifoCimba } from "@/components/marca";
-import { SelectorRolDev } from "./selector-rol";
+import { FormularioAcceso } from "./formulario-acceso";
 
 export default async function Acceso({
   searchParams,
@@ -8,8 +8,6 @@ export default async function Acceso({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
-  const devSso = process.env.DEV_FAKE_SSO === "1";
-  const portal = "https://ciudaddigital.smt.gob.ar";
 
   return (
     <main className="fondo-grilla flex min-h-screen items-center justify-center p-6">
@@ -41,17 +39,7 @@ export default async function Acceso({
           </div>
         )}
 
-        <a
-          href={portal}
-          className="block w-full rounded-xl bg-azul px-4 py-3.5 text-center font-semibold text-white transition hover:brightness-110"
-        >
-          Ingresar con Ciudad Digital
-        </a>
-        <p className="mt-3 text-center text-xs text-texto-3">
-          El acceso se gestiona desde el portal municipal. CIMBA no usa contraseñas propias.
-        </p>
-
-        {devSso && <SelectorRolDev requiereCodigo={Boolean(process.env.DEV_SSO_CODIGO)} />}
+        <FormularioAcceso />
       </div>
     </main>
   );
