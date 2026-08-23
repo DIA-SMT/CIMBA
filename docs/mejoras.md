@@ -18,6 +18,27 @@ Para su flujo diario (marcar puntos, geocodificar planillas, consolidar, informa
 
 ---
 
+## Mapa: siguiente nivel (exploración 23/08/2026)
+
+Específicas del mapa comando, ordenadas por (impacto × esfuerzo × finalidad brecha):
+
+- [ ] **M1. Hilos de cotejo desde el mapa** *(brecha · medio)* — En vista Brecha, clic en un pedido "sin atención" → se dibujan líneas a las reparaciones candidatas a ≤40 m con botón "Vincular" ahí mismo. El cotejo manual donde la cercanía se VE, sin ir a la bandeja. Ataca directo el 71 %.
+- [ ] **M2. Cinta métrica con m² reales** *(precisión · bajo)* — Dibujar un tramo/polígono sobre el mapa (reusa el gesto del círculo) → distancia y superficie en vivo → "Usar estos m²" precarga la superficie real de la intervención. Deja de depender de los m² declarados: los mide.
+- [ ] **M3. La deuda envejece** *(impacto · bajo)* — En vista Brecha, sub-modo "Antigüedad": cada pedido pendiente coloreado por días de espera (amarillo <90d → rojo >1 año). La zona con deuda VIEJA salta a la vista; las 1.631 sin fecha en gris honesto.
+- [ ] **M4. Balance de brecha del encuadre** *(brecha · bajo)* — Tarjetita viva que recalcula al mover el mapa: "En lo que estás viendo: N pedidos, X % sin respuesta, N m²". Responde "¿cómo está esta zona?" con el gesto que todos ya hacen: navegar.
+- [ ] **M5. Alta de pedido con clic derecho** *(precisión · medio)* — Menú contextual: "Cargar pedido acá" → georreversa + mini-formulario → nace con coordenada exacta y confianza 1.0, sin pasar por el geocodificador. El mapa como herramienta de carga.
+- [ ] **M6. Copiar esta vista** *(brecha · bajo)* — Botón que serializa TODO el estado del mapa (vista, filtros, capas, círculo, búsqueda) en un link para mandar por WhatsApp: el que lo abre ve exactamente lo mismo.
+- [ ] **M7. Top 20 urgentes numerados** *(impacto · bajo)* — Los 20 incidentes de mayor score con su número (1-20) sobre el territorio: el mapa pasa de "dónde está todo" a "qué hacemos primero".
+- [ ] **M8. Cifras de deuda flotantes al alejar** *(impacto · bajo)* — Con zoom de ciudad completa, números grandes de pedidos sin atención por zona en vez de nube de puntitos.
+- [ ] **M9. Cortina Pedido | Hecho** *(brecha · medio)* — Dos mapas sincronizados con cortina deslizable: izquierda lo pedido, derecha lo hecho. La brecha convertida en imagen que se recorre con la mano.
+- [ ] **M10. Cortina de épocas** *(impacto · medio)* — "Así estaba en marzo | así está hoy": comparador temporal del territorio con slider, complementa la línea de tiempo.
+- [ ] **M11. Capa de reincidencias con hilos obra→reclamo** *(impacto · medio)* — El mapa de la obra que no duró: cada reparación con reclamo posterior a <40 m, con línea que las conecta. Munición para reclamar a contratistas en garantía.
+- [ ] **M12. Trabajo huérfano visible** *(brecha · bajo)* — La vista Brecha hoy muestra los pedidos sin respuesta pero esconde el otro lado: el 58 % de trabajo sin pedido. Capa propia para verlo.
+- [ ] **M13. Snapping a esquinas** *(precisión · medio)* — Imán a "calle y calle" al cargar o corregir puntos (las planillas reales viven en esquinas): dos operadores cargan el mismo bache en el mismo punto exacto.
+- [ ] **M14. Comparador de zonas A/B** *(precisión · medio)* — Fijar el círculo actual como Zona A, dibujar Zona B → tabla comparativa con deltas y densidades por hectárea, exportable al reporte PDF. "¿La zona sur está peor que el centro?" con números.
+
+---
+
 ## Nivel 1 — Golpes inmediatos (horas, impacto desproporcionado)
 
 - [ ] **1. Evidencia antes/después visible** *(visual · bajo)* — Las fotos con GPS y hora que las cuadrillas están obligadas a sacar viven en Storage y ninguna pantalla las muestra (solo "📷 3"). Galería en la historia del incidente con comparador deslizable antes/después, sello de fecha+coordenadas, miniaturas en Campo y fotos dentro del reporte PDF. **La mejor relación impacto/esfuerzo de todo el sistema**: la prueba irrefutable del trabajo hecho, para prensa, Concejo y auditoría.
