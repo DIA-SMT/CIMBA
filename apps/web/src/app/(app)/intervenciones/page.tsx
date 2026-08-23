@@ -81,6 +81,17 @@ export default async function PaginaIntervenciones({
           <Link href="/intervenciones" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
         <span className="ml-auto text-xs text-texto-3">{numero(total)} trabajos con estos filtros</span>
+        <a
+          href={`/api/exportar?entidad=intervenciones&${new URLSearchParams(
+            Object.fromEntries(
+              Object.entries({ estado: filtros.estado, ejecutor: filtros.ejecutor, q: filtros.q }).filter(([, v]) => v),
+            ) as Record<string, string>,
+          ).toString()}`}
+          className="text-xs font-semibold text-celeste hover:underline"
+          title="Descargar lo filtrado como CSV (Excel, PowerBI, QGIS)"
+        >
+          ⤓ CSV
+        </a>
       </form>
 
       <Panel className="overflow-x-auto">

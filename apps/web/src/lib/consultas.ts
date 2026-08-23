@@ -80,7 +80,7 @@ export async function listarDemandas(
   filtros: { fuente?: string; estado?: string; q?: string; calidad?: string; mes?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: DemandaResumen[]; total: number }> {
   const verContacto = puedeVerContacto(sesion.rol_cimba);
-  const limite = Math.min(filtros.limite ?? 50, 200);
+  const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const condCalidad = (filtros.calidad && FILTROS_CALIDAD[filtros.calidad]) || sql``;
 
@@ -234,7 +234,7 @@ export async function listarIncidentes(
   sesion: Sesion,
   filtros: { estado?: string; tipo?: string; q?: string; limite?: number; pagina?: number; orden?: "prioridad" | "fecha" },
 ): Promise<{ filas: IncidenteResumen[]; total: number }> {
-  const limite = Math.min(filtros.limite ?? 50, 200);
+  const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const estado = filtro(filtros.estado);
   const tipo = filtro(filtros.tipo);
@@ -356,7 +356,7 @@ export async function listarIntervenciones(
   sesion: Sesion,
   filtros: { estado?: string; ejecutor?: string; q?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
-  const limite = Math.min(filtros.limite ?? 50, 200);
+  const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const estado = filtro(filtros.estado);
   const ejecutor = filtro(filtros.ejecutor);

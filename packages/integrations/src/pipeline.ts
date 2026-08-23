@@ -70,20 +70,33 @@ export async function ingestarDemandas(
           r.sinCambios++;
           continue;
         }
+        // Una ubicación corregida a mano en el mapa NUNCA se pisa con la del
+        // archivo: la corrección humana gana sobre cualquier re-importación.
         await db.execute(sql`
           update demandas set
             tipo = ${d.tipo},
             descripcion = ${d.descripcion},
             direccion_texto = ${d.direccionTexto},
-            direccion_normalizada = ${d.direccionNormalizada},
-            geocod_confianza = ${d.geocodConfianza},
-            geom = ${geomSql(d.punto)},
+            direccion_normalizada = case
+              when metadata->>'ubicacion_corregida' = 'true' then direccion_normalizada
+              else ${d.direccionNormalizada} end,
+            geocod_confianza = case
+              when metadata->>'ubicacion_corregida' = 'true' then geocod_confianza
+              else ${d.geocodConfianza} end,
+            geom = case
+              when metadata->>'ubicacion_corregida' = 'true' then geom
+              else ${geomSql(d.punto)} end,
             solicitante = ${d.solicitante},
             prioridad_informada = ${d.prioridadInformada},
             menciones = ${d.menciones},
             url_origen = ${d.urlOrigen},
             contacto = ${JSON.stringify(d.contacto)}::jsonb,
-            metadata = ${JSON.stringify(d.metadata)}::jsonb
+            metadata = ${JSON.stringify(d.metadata)}::jsonb ||
+              case when metadata->>'ubicacion_corregida' = 'true'
+                   then jsonb_build_object(
+                          'ubicacion_corregida', metadata->'ubicacion_corregida',
+                          'ubicacion_corregida_en', metadata->'ubicacion_corregida_en')
+                   else '{}'::jsonb end
           where id = ${existente[0].id_local}
         `);
         await db.execute(sql`

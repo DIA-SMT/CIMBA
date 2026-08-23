@@ -4,7 +4,7 @@ import { FileUp, MapPin } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { TIPOS_PROBLEMA } from "@cimba/domain";
-import { crearDemandaManual, importarArchivo } from "@/lib/acciones-consolidar";
+import { crearDemandaManual, importarArchivo, importarConsolidadoWeb } from "@/lib/acciones-consolidar";
 import { ETIQUETA_TIPO } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
 import { Panel } from "@/components/ui";
@@ -31,9 +31,46 @@ function CargaArchivo() {
     setError(null);
     setResultado(null);
     try {
-      const fd = new FormData();
-      fd.set("archivo", archivo);
-      const r = await importarArchivo(fd);
+      let r: { formato: string; resultados: string[] };
+      if (archivo.name.toLowerCase().endsWith(".gpkg")) {
+        // El GeoPackage se lee en el navegador (sql.js) y al servidor viajan
+        // solo las filas: sin SQLite nativo en Vercel.
+        const { leerGpkg } = await import("@/lib/gpkg");
+        const { tabla, filas } = await leerGpkg(archivo);
+        const col = (f: Record<string, unknown>, nombre: string) => {
+          const k = Object.keys(f).find((c) => c.toLowerCase() === nombre);
+          return k ? f[k] : undefined;
+        };
+        const requeridas = ["id", "tipo", "ubicacion", "latitud", "longitud", "fuente"];
+        const columnas = Object.keys(filas[0] ?? {}).map((c) => c.toLowerCase());
+        const faltan = requeridas.filter((c) => !columnas.includes(c));
+        if (faltan.length > 0) {
+          throw new Error(
+            `La capa "${tabla}" no tiene el formato del consolidado: faltan las columnas ${faltan.join(", ").toUpperCase()}. ` +
+              "Para ingerir demandas el GPKG debe traer ID, TIPO, UBICACION, LATITUD, LONGITUD y FUENTE " +
+              "(para solo VERLO como capa de referencia, cargalo desde el mapa de HCD o Funcionarios).",
+          );
+        }
+        const num = (v: unknown) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : null;
+        };
+        r = await importarConsolidadoWeb({
+          archivo: archivo.name,
+          filas: filas.map((f) => ({
+            id: String(col(f, "id") ?? ""),
+            tipo: col(f, "tipo") != null ? String(col(f, "tipo")) : null,
+            ubicacion: col(f, "ubicacion") != null ? String(col(f, "ubicacion")) : null,
+            lat: num(col(f, "latitud")),
+            lon: num(col(f, "longitud")),
+            fuente: String(col(f, "fuente") ?? ""),
+          })),
+        });
+      } else {
+        const fd = new FormData();
+        fd.set("archivo", archivo);
+        r = await importarArchivo(fd);
+      }
       setResultado({ formato: r.formato, resultados: r.resultados });
       router.refresh();
     } catch (e) {
@@ -51,12 +88,12 @@ function CargaArchivo() {
       </p>
       <p className="mt-1 mb-4 text-xs leading-relaxed text-texto-2">
         Detecta el formato solo por los encabezados: intimaciones SAT (csv), planillas de bacheo (csv), reclamos de
-        Atención Ciudadana (xlsx) y obras SIGOV (xlsx). Los GeoPackage de QGIS por ahora van por la CLI local.
+        Atención Ciudadana (xlsx), obras SIGOV (xlsx) y el GeoPackage consolidado de QGIS (.gpkg, se lee en tu navegador).
       </p>
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,.xlsx,.xls"
+        accept=".csv,.xlsx,.xls,.gpkg"
         className="hidden"
         onChange={(e) => void subir(e.target.files?.[0])}
       />
@@ -65,7 +102,7 @@ function CargaArchivo() {
         disabled={subiendo}
         className="w-full rounded-xl border-2 border-dashed border-borde-2 bg-panel-2/50 px-4 py-8 text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-texto disabled:opacity-50"
       >
-        {subiendo ? "Importando… (puede tardar según el tamaño)" : "Elegir archivo CSV o XLSX"}
+        {subiendo ? "Importando… (puede tardar según el tamaño)" : "Elegir archivo CSV, XLSX o GPKG"}
       </button>
 
       {error && <p className="mt-3 text-sm text-peligro">{error}</p>}
@@ -92,15 +129,19 @@ function CargaManual() {
   const [error, setError] = useState<string | null>(null);
   const [creado, setCreado] = useState<number | null>(null);
 
+  const georevRef = useRef(0);
   const elegirPunto = async (lat: number, lon: number) => {
     setPunto({ lat, lon });
     setBuscandoDireccion(true);
+    const pedido = ++georevRef.current;
     try {
       const res = await fetch(`/api/georreversa?lat=${lat}&lon=${lon}`);
       const data = (await res.json()) as { direccion: string | null };
-      if (data.direccion) setDireccion(data.direccion);
+      if (pedido === georevRef.current && data.direccion) setDireccion(data.direccion);
+    } catch {
+      // sin dirección automática: se escribe a mano
     } finally {
-      setBuscandoDireccion(false);
+      if (pedido === georevRef.current) setBuscandoDireccion(false);
     }
   };
 

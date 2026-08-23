@@ -6,3 +6,5 @@ export { crearGeocoderNominatim } from "./geocoder/nominatim";
 export { mapearTipo } from "./archivos/util";
 export { detectarYParsear } from "./archivos/importar";
 export type { ResultadoDeteccion } from "./archivos/importar";
+export { mapearFilasConsolidado } from "./archivos/consolidado";
+export type { FilaConsolidado } from "./archivos/consolidado";

@@ -34,14 +34,18 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
   const [errorCapa, setErrorCapa] = useState<string | null>(null);
   const inputArchivo = useRef<HTMLInputElement>(null);
 
+  const georevRef = useRef(0);
   const resolverDireccion = async (lat: number, lon: number) => {
     setBuscandoDireccion(true);
+    const pedido = ++georevRef.current;
     try {
       const res = await fetch(`/api/georreversa?lat=${lat}&lon=${lon}`);
       const data = (await res.json()) as { direccion: string | null };
-      if (data.direccion) setDireccion(data.direccion);
+      if (pedido === georevRef.current && data.direccion) setDireccion(data.direccion);
+    } catch {
+      // sin dirección automática: se escribe a mano
     } finally {
-      setBuscandoDireccion(false);
+      if (pedido === georevRef.current) setBuscandoDireccion(false);
     }
   };
 
@@ -166,7 +170,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
           <div className="flex items-center gap-2">
             {nombreCapa && capa ? (
               <span className="flex items-center gap-1.5 rounded-lg border border-celeste/40 bg-celeste/10 px-2.5 py-1 text-[11px] text-celeste">
-                {nombreCapa} · <span className="num font-bold">{numero(capa.features.length)}</span> puntos
+                {nombreCapa} · <span className="num font-bold">{numero(capa.features.length)}</span> elementos
                 <button
                   onClick={() => {
                     setCapa(null);
@@ -181,7 +185,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
             ) : (
               <button
                 onClick={() => inputArchivo.current?.click()}
-                title="Superponer un archivo de puntos como referencia: GeoJSON, CSV o Excel con columnas de latitud y longitud"
+                title="Superponer un archivo de puntos como referencia: GeoJSON, CSV, Excel o GeoPackage de QGIS (.gpkg)"
                 className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-2.5 py-1 text-[11px] font-semibold text-texto-2 transition hover:border-celeste hover:text-celeste"
               >
                 <FileUp size={12} /> Cargar capa
@@ -190,7 +194,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
             <input
               ref={inputArchivo}
               type="file"
-              accept=".geojson,.json,.csv,.tsv,.txt,.xlsx,.xls"
+              accept=".geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.gpkg"
               className="hidden"
               onChange={(e) => void cargarArchivo(e.target.files?.[0])}
             />

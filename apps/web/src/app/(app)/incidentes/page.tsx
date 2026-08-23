@@ -119,6 +119,19 @@ export default async function PaginaIncidentes({
           Filtrar
         </button>
         <span className="ml-auto text-xs text-texto-3">{numero(total)} con estos filtros</span>
+        <a
+          href={`/api/exportar?entidad=incidentes&${new URLSearchParams(
+            Object.fromEntries(
+              Object.entries({ estado: filtros.estado, tipo: filtros.tipo, q: filtros.q, orden: filtros.orden }).filter(
+                ([, v]) => v,
+              ),
+            ) as Record<string, string>,
+          ).toString()}`}
+          className="text-xs font-semibold text-celeste hover:underline"
+          title="Descargar lo filtrado como CSV (Excel, PowerBI, QGIS)"
+        >
+          ⤓ CSV
+        </a>
       </form>
 
       <Panel className="overflow-x-auto">

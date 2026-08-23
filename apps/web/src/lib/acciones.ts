@@ -365,6 +365,51 @@ export async function crearDemandaFuncionario(entrada: {
   return { ok: true, id };
 }
 
+/**
+ * Corrección de ubicación arrastrando el punto en el mapa (el reemplazo del
+ * ajuste manual que se hacía en QGIS). Deja constancia en metadata y sube la
+ * confianza a 1.0: la puso una persona mirando el mapa.
+ */
+export async function corregirUbicacionDemanda(entrada: {
+  demandaId: number;
+  lat: number;
+  lon: number;
+  direccion?: string;
+}) {
+  const sesion = await requerirRol("atencion_ciudadana", "planificacion", "informacion_estrategica");
+  const datos = z
+    .object({
+      demandaId: z.number().int().positive(),
+      lat: z.number().min(-27.2).max(-26.4),
+      lon: z.number().min(-65.6).max(-64.9),
+      direccion: z.string().min(3).max(300).optional(),
+    })
+    .parse(entrada);
+
+  const marca = JSON.stringify({
+    ubicacion_corregida: true,
+    ubicacion_corregida_en: new Date().toISOString(),
+  });
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      update demandas set
+        geom = st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+        geocod_confianza = 1.0,
+        direccion_normalizada = coalesce(${datos.direccion ?? null}, direccion_normalizada),
+        distrito_id = null, -- el trigger espacial la recalcula
+        metadata = metadata || ${marca}::jsonb
+      where id = ${datos.demandaId}
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    // Con RLS efectivo un update sin permiso matchea 0 filas: nunca "ok" falso.
+    if (filas.length === 0) throw new Error("No se pudo actualizar la demanda (no existe o sin permiso).");
+  });
+  revalidatePath(`/demandas/${datos.demandaId}`);
+  revalidatePath("/demandas");
+  revalidatePath("/mapa");
+  return { ok: true };
+}
+
 // ── Supervisión ─────────────────────────────────────────────────────────────
 
 export async function verificarIncidente(entrada: { incidenteId: number }) {
@@ -379,25 +424,3 @@ export async function verificarIncidente(entrada: { incidenteId: number }) {
   return { ok: true };
 }
 
-export async function corregirUbicacionDemanda(entrada: { demandaId: number; lat: number; lon: number }) {
-  const sesion = await requerirRol("atencion_ciudadana");
-  const datos = z
-    .object({
-      demandaId: z.number().int(),
-      lat: z.number().min(-27.2).max(-26.4),
-      lon: z.number().min(-65.6).max(-64.9),
-    })
-    .parse(entrada);
-  await conRls(claims(sesion), async (tx) => {
-    await tx.execute(sql`
-      update demandas set
-        geom = st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-        geocod_confianza = 1.0,
-        distrito_id = null, -- el trigger la recalcula
-        metadata = metadata || '{"ubicacion_corregida_manualmente": true}'::jsonb
-      where id = ${datos.demandaId}
-    `);
-  });
-  revalidatePath("/demandas");
-  return { ok: true };
-}

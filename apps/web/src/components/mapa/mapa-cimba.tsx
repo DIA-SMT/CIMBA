@@ -6,6 +6,7 @@ import {
   Boxes,
   ChevronDown,
   Crosshair,
+  Download,
   EyeOff,
   Flame,
   GripVertical,
@@ -14,6 +15,7 @@ import {
   Printer,
   Radar,
   RotateCcw,
+  Satellite,
   Search,
   Sparkles,
   X,
@@ -473,6 +475,9 @@ function MapaInterno({
   const arrastroRef = useRef(false);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
+  const [verSatelite, setVerSatelite] = useState(false);
+  // Si el estilo no trae la capa de nombres, el raster satelital va sin ancla.
+  const [hayAnclaEtiquetas, setHayAnclaEtiquetas] = useState(true);
   const [dias, setDias] = useState<number | null>(null); // null = todo
   const [verZonas, setVerZonas] = useState(false);
   // Resultado del buscador en lenguaje natural: puntos marcados con anillo
@@ -714,6 +719,37 @@ function MapaInterno({
     if (!ok) window.alert("El navegador bloqueó la pestaña del reporte: permití las ventanas emergentes para CIMBA.");
   };
 
+  /**
+   * Exporta lo visible como GeoJSON (abre directo en QGIS) — si hay una
+   * búsqueda activa exporta esos resultados; si no, lo que muestran los
+   * filtros. Cada feature lleva `capa: "pedido" | "incidente"`.
+   */
+  const exportarGeoJson = () => {
+    const enBusqueda = resaltado != null && resaltado.fc.features.length > 0;
+    const dems = enBusqueda
+      ? resaltado.fc.features.filter((f) => f.properties.fuente != null)
+      : verDemandas
+        ? demandasFiltradas.features
+        : [];
+    const incs = enBusqueda
+      ? resaltado.fc.features.filter((f) => f.properties.fuente == null)
+      : incidentesFiltrados.features;
+    const fc = {
+      type: "FeatureCollection",
+      features: [
+        ...dems.map((f) => ({ ...f, properties: { capa: "pedido", ...f.properties } })),
+        ...incs.map((f) => ({ ...f, properties: { capa: "incidente", ...f.properties } })),
+      ],
+    };
+    const blob = new Blob([JSON.stringify(fc)], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cimba-mapa-${new Date().toISOString().slice(0, 10)}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Hexágonos 3D sobre las demandas visibles
   const hexData = useMemo(
     () => (verHex ? hexbins(demandasFiltradas.features, 140) : null),
@@ -792,6 +828,7 @@ function MapaInterno({
     const aplicar = () => {
       const mapa = mapRef.current?.getMap();
       if (!mapa || !mapa.isStyleLoaded()) return false;
+      if (!mapa.getLayer("roadname_minor")) setHayAnclaEtiquetas(false);
 
       for (const c of NOMBRES) {
         if (!mapa.getLayer(c.id)) continue;
@@ -1040,6 +1077,19 @@ function MapaInterno({
         }}
         attributionControl={{ compact: true }}
       >
+        {verSatelite && (
+          <Source
+            id="satelite"
+            type="raster"
+            tiles={["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}
+            tileSize={256}
+            attribution="Esri, Maxar, Earthstar Geographics"
+          >
+            {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
+            <Layer id="satelite-capa" type="raster" beforeId={hayAnclaEtiquetas ? "roadname_minor" : undefined} />
+          </Source>
+        )}
+
         <NavigationControl position="bottom-right" visualizePitch />
         <GeolocateControl
           position="bottom-right"
@@ -1191,6 +1241,14 @@ function MapaInterno({
           >
             <Printer size={14} />
             Reporte
+          </button>
+          <button
+            onClick={exportarGeoJson}
+            className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
+            title="Descarga lo visible como GeoJSON: se abre directo en QGIS, Google Earth o cualquier GIS"
+          >
+            <Download size={14} />
+            GeoJSON
           </button>
           {panelesMovidos && (
             <button
@@ -1484,6 +1542,19 @@ function MapaInterno({
               />
               <span className="text-[10px] text-texto-3">Aa</span>
               Nombres de calles
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Imagen satelital real (Esri) para ubicar con precisión — los nombres de calles quedan encima"
+            >
+              <input
+                type="checkbox"
+                checked={verSatelite}
+                onChange={(e) => setVerSatelite(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <Satellite size={13} className="text-celeste" />
+              Vista satelital
             </label>
             </>)}
 

@@ -141,6 +141,23 @@ export default async function PaginaDemandas({
         {(filtros.fuente || filtros.estado || filtros.q) && (
           <Link href="/demandas" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
+        <a
+          href={`/api/exportar?entidad=demandas&${new URLSearchParams(
+            Object.fromEntries(
+              Object.entries({
+                fuente: filtros.fuente,
+                estado: filtros.estado,
+                q: filtros.q,
+                calidad: filtros.calidad,
+                mes: filtros.mes,
+              }).filter(([, v]) => v),
+            ) as Record<string, string>,
+          ).toString()}`}
+          className="ml-auto text-xs font-semibold text-celeste hover:underline"
+          title="Descargar lo filtrado como CSV (Excel, PowerBI, QGIS) — sin datos de contacto"
+        >
+          ⤓ CSV
+        </a>
       </form>
 
       <Panel className="overflow-x-auto">

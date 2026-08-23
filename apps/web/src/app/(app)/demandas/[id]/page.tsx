@@ -6,6 +6,7 @@ import { analisisDemandaSchema, iaDisponible, type AnalisisDemanda } from "@/lib
 import { fechaCorta } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { AccionesDemanda } from "./acciones-demanda";
+import { CorregirUbicacion } from "./corregir-ubicacion";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,9 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
 
   const sugerencias = demanda.lat != null ? await sugerenciasParaDemanda(sesion, demanda.id) : [];
   const puedeGestionar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "atencion_ciudadana";
+  const puedeCorregir = ["admin", "atencion_ciudadana", "planificacion", "informacion_estrategica"].includes(
+    sesion.rol_cimba,
+  );
   const contacto = demanda.contacto && Object.keys(demanda.contacto).length > 0 ? demanda.contacto : null;
 
   return (
@@ -50,17 +54,20 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
               {demanda.lat != null ? `${demanda.lat.toFixed(6)}, ${demanda.lon?.toFixed(6)}` : "sin ubicación"}
             </dd>
           </dl>
-          {demanda.lat != null && demanda.lon != null && (
-            <div className="flex items-center gap-2">
-              <VerEnMapa lat={demanda.lat} lon={demanda.lon} etiqueta={demanda.direccion ?? `Demanda #${demanda.id}`} color="#8fa3bf" />
-              <Link
-                href={`/mapa?lat=${demanda.lat.toFixed(6)}&lon=${demanda.lon.toFixed(6)}&z=17`}
-                className="inline-block text-[13px] font-semibold text-celeste hover:underline"
-              >
-                Abrir en el mapa completo →
-              </Link>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {demanda.lat != null && demanda.lon != null && (
+              <>
+                <VerEnMapa lat={demanda.lat} lon={demanda.lon} etiqueta={demanda.direccion ?? `Demanda #${demanda.id}`} color="#8fa3bf" />
+                <Link
+                  href={`/mapa?lat=${demanda.lat.toFixed(6)}&lon=${demanda.lon.toFixed(6)}&z=17`}
+                  className="inline-block text-[13px] font-semibold text-celeste hover:underline"
+                >
+                  Abrir en el mapa completo →
+                </Link>
+              </>
+            )}
+          </div>
+          {puedeCorregir && <CorregirUbicacion demandaId={demanda.id} lat={demanda.lat} lon={demanda.lon} />}
         </Panel>
 
         <div className="space-y-4">

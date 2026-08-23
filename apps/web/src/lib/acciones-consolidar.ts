@@ -286,6 +286,57 @@ export async function importarArchivo(formData: FormData) {
   return { ok: true, formato: deteccion.descripcion, resultados };
 }
 
+/**
+ * Importa un GeoPackage del consolidado de QGIS parseado EN EL NAVEGADOR
+ * (sql.js): el server action recibe filas planas, nunca el binario, así el
+ * .gpkg funciona en la web sin SQLite nativo en Vercel.
+ */
+export async function importarConsolidadoWeb(entrada: { archivo: string; filas: unknown }) {
+  const sesion = await requerirRol("atencion_ciudadana", "planificacion", "informacion_estrategica");
+  const datos = z
+    .object({
+      archivo: z.string().min(1).max(200),
+      filas: z
+        .array(
+          z.object({
+            id: z.union([z.number(), z.string()]),
+            tipo: z.string().nullable(),
+            ubicacion: z.string().nullable(),
+            lat: z.number().nullable(),
+            lon: z.number().nullable(),
+            fuente: z.string(),
+          }),
+        )
+        .min(1)
+        // Con ~3 consultas secuenciales por fila, más que esto no entra en los
+        // 60 s de Vercel: para archivos más grandes está la CLI local.
+        .max(5000, "El GPKG tiene más de 5.000 filas: importalo con la CLI local (pnpm ingest:archivos)."),
+    })
+    .parse(entrada);
+
+  // Una fila sin ID o sin FUENTE no aborta el lote: se omite y se informa.
+  const validas = datos.filas.filter((f) => String(f.id).trim() !== "" && f.fuente.trim() !== "");
+  const omitidas = datos.filas.length - validas.length;
+  if (validas.length === 0) throw new Error("Ninguna fila tiene ID y FUENTE: no hay nada para importar.");
+
+  const { mapearFilasConsolidado, ingestarDemandas, registrarSyncRun } = await import("@cimba/integrations");
+  const demandas = mapearFilasConsolidado(validas, datos.archivo);
+  const r = await ingestarDemandas("consolidado", demandas);
+  await registrarSyncRun(r, null);
+
+  revalidatePath("/mapa");
+  revalidatePath("/demandas");
+  void sesion;
+  return {
+    ok: true,
+    formato: `GeoPackage consolidado (${datos.archivo})`,
+    resultados: [
+      `${r.leidos} demandas leídas: ${r.insertados} nuevas, ${r.actualizados} actualizadas, ${r.sinCambios} sin cambios, ${r.errores.length} errores`,
+      ...(omitidas > 0 ? [`${omitidas} filas omitidas por no tener ID o FUENTE`] : []),
+    ],
+  };
+}
+
 // ── Carga manual de una demanda ──────────────────────────────────────────────
 
 export async function crearDemandaManual(entrada: {

@@ -22,6 +22,7 @@
     "react-dom": "^19.0.0",
     "react-map-gl": "^8.0.0",
     "server-only": "^0.0.1",
+    "sql.js": "^1.14.2",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "zod": "^3.25.0"
@@ -32,6 +33,7 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/sql.js": "^1.4.11",
     "@types/web-push": "^3.6.4",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",

@@ -20,6 +20,52 @@ function mapearFuente(fuente: string): { fuente: FuenteDemanda; area: string } {
   return { fuente: "secretaria", area: fuente.trim() };
 }
 
+export interface FilaConsolidado {
+  id: number | string;
+  tipo: string | null;
+  ubicacion: string | null;
+  lat: number | null;
+  lon: number | null;
+  fuente: string;
+}
+
+/** Mapea filas ya leídas del consolidado (CLI o web) a demandas normalizadas. */
+export function mapearFilasConsolidado(
+  filas: FilaConsolidado[],
+  archivo = "CONSOLIDADO_PEDIDOS_RECLAMOS_SMT_POSGAR07.gpkg",
+): DemandaNormalizada[] {
+  return filas.map((f) => {
+    const { fuente, area } = mapearFuente(f.fuente ?? "");
+    const direccion = limpiarTexto(f.ubicacion);
+    return demandaNormalizadaSchema.parse({
+      sistema: "consolidado",
+      idRemoto: String(f.id),
+      fuente,
+      tipo: mapearTipo(f.tipo),
+      descripcion: limpiarTexto(f.tipo),
+      direccionTexto: direccion,
+      direccionNormalizada: direccion ? normalizarDireccion(direccion) : null,
+      punto: puntoValido(f.lat, f.lon),
+      // El consolidado no trae etiqueta de calidad: confianza desconocida.
+      // La regla de dedup impide auto-vincular sin confianza alta.
+      geocodConfianza: null,
+      distritoId: null,
+      solicitante: area,
+      prioridadInformada: null,
+      menciones: null,
+      urlOrigen: null,
+      contacto: {},
+      creadoEn: null,
+      metadata: {
+        area_origen: area,
+        fuente_original: f.fuente?.trim() ?? null,
+        archivo,
+        sin_fecha: true,
+      },
+    });
+  });
+}
+
 /** Lee el GeoPackage con better-sqlite3 (solo en CLI/Node, nunca en el bundle web). */
 export async function parsearConsolidado(rutaGpkg: string): Promise<DemandaNormalizada[]> {
   const { default: Database } = await import("better-sqlite3");
@@ -31,45 +77,8 @@ export async function parsearConsolidado(rutaGpkg: string): Promise<DemandaNorma
                 LATITUD as lat, LONGITUD as lon, FUENTE as fuente
          from CONSOLIDADO_PEDIDOS_Y_RECLAMOS`,
       )
-      .all() as Array<{
-      id: number;
-      tipo: string | null;
-      ubicacion: string | null;
-      lat: number | null;
-      lon: number | null;
-      fuente: string;
-    }>;
-
-    return filas.map((f) => {
-      const { fuente, area } = mapearFuente(f.fuente ?? "");
-      const direccion = limpiarTexto(f.ubicacion);
-      return demandaNormalizadaSchema.parse({
-        sistema: "consolidado",
-        idRemoto: String(f.id),
-        fuente,
-        tipo: mapearTipo(f.tipo),
-        descripcion: limpiarTexto(f.tipo),
-        direccionTexto: direccion,
-        direccionNormalizada: direccion ? normalizarDireccion(direccion) : null,
-        punto: puntoValido(f.lat, f.lon),
-        // El consolidado no trae etiqueta de calidad: confianza desconocida.
-        // La regla de dedup impide auto-vincular sin confianza alta.
-        geocodConfianza: null,
-        distritoId: null,
-        solicitante: area,
-        prioridadInformada: null,
-        menciones: null,
-        urlOrigen: null,
-        contacto: {},
-        creadoEn: null,
-        metadata: {
-          area_origen: area,
-          fuente_original: f.fuente?.trim() ?? null,
-          archivo: "CONSOLIDADO_PEDIDOS_RECLAMOS_SMT_POSGAR07.gpkg",
-          sin_fecha: true,
-        },
-      });
-    });
+      .all() as FilaConsolidado[];
+    return mapearFilasConsolidado(filas);
   } finally {
     db.close();
   }
