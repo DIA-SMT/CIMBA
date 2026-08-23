@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { Send, X } from "lucide-react";
+import { GripVertical, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { usePanelArrastrable } from "@/lib/arrastrable";
 
 interface Mensaje {
   rol: "usuario" | "migue";
@@ -35,6 +36,8 @@ const SUGERENCIAS = [
 
 /** Migue — el asistente municipal, especializado en bacheo — flotante en toda la app. */
 export function MigueChat() {
+  const arr = usePanelArrastrable("migue");
+  const arrBoton = usePanelArrastrable("migue-boton", { asaEsControl: true });
   const [abierto, setAbierto] = useState(false);
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [texto, setTexto] = useState("");
@@ -78,22 +81,37 @@ export function MigueChat() {
     <>
       {/* Botón flotante */}
       {!abierto && (
-        <button
-          onClick={() => setAbierto(true)}
-          className="fixed right-4 bottom-4 z-40 flex items-center gap-2 rounded-full border border-celeste/40 bg-panel-2 py-2 pr-4 pl-2 shadow-2xl transition hover:border-celeste hover:shadow-celeste/20"
-          title="Preguntale a Migue sobre los datos de bacheo"
-        >
-          <Image src="/marca/migue.png" alt="Migue" width={36} height={36} className="rounded-full" />
-          <span className="text-sm font-semibold">Migue</span>
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-resuelto" />
-        </button>
+        <div className="fixed right-4 bottom-4 z-40" style={arrBoton.estilo}>
+          <button
+            {...arrBoton.asaProps}
+            onClick={(e) => {
+              arrBoton.asaProps.onClick?.(e);
+              if (!e.defaultPrevented) setAbierto(true);
+            }}
+            style={{ ...arrBoton.asaProps.style, cursor: arrBoton.arrastrando ? "grabbing" : "pointer" }}
+            className="flex items-center gap-2 rounded-full border border-celeste/40 bg-panel-2 py-2 pr-4 pl-2 shadow-2xl transition select-none hover:border-celeste hover:shadow-celeste/20"
+            title="Preguntale a Migue sobre los datos de bacheo (arrastralo para moverlo)"
+          >
+            <Image src="/marca/migue.png" alt="Migue" width={36} height={36} className="rounded-full" />
+            <span className="text-sm font-semibold">Migue</span>
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-resuelto" />
+          </button>
+        </div>
       )}
 
       {/* Panel de chat */}
       {abierto && (
-        <div className="panel-vidrio fixed right-4 bottom-4 z-40 flex h-[540px] w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl">
-          <div className="flex items-center justify-between border-b border-borde bg-panel-2/60 px-4 py-3">
+        <div
+          className="panel-vidrio fixed right-4 bottom-4 z-40 flex h-[540px] w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl"
+          style={arr.estilo}
+        >
+          <div
+            {...arr.asaProps}
+            className="flex items-center justify-between border-b border-borde bg-panel-2/60 px-4 py-3 select-none"
+            title="Arrastrá de acá para mover a Migue"
+          >
             <div className="flex items-center gap-2.5">
+              <GripVertical size={13} className="shrink-0 text-texto-3" />
               <Image src="/marca/migue.png" alt="Migue" width={34} height={34} className="rounded-full" />
               <div className="leading-tight">
                 <div className="text-sm font-bold">Migue</div>

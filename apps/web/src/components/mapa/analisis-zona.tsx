@@ -1,9 +1,10 @@
 "use client";
 
-import { Radar, X } from "lucide-react";
+import { GripVertical, Radar, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import type { Feature, FeatureCollection, Point } from "geojson";
+import type { usePanelArrastrable } from "@/lib/arrastrable";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { distanciaM } from "./geo-cliente";
 
@@ -21,6 +22,7 @@ export function AnalisisZona({
   demandas,
   incidentes,
   alCerrar,
+  arr,
 }: {
   centro: { lon: number; lat: number };
   radio: number;
@@ -28,6 +30,7 @@ export function AnalisisZona({
   demandas: FC;
   incidentes: FC;
   alCerrar: () => void;
+  arr: ReturnType<typeof usePanelArrastrable>;
 }) {
   const stats = useMemo(() => {
     const dentro = <T extends Feature<Point, Record<string, unknown>>>(f: T) =>
@@ -67,9 +70,17 @@ export function AnalisisZona({
   }, [centro, radio, demandas, incidentes]);
 
   return (
-    <aside className="panel-vidrio absolute top-28 right-3 bottom-6 z-20 flex w-80 flex-col rounded-xl">
-      <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+    <aside
+      className="panel-vidrio absolute top-28 right-3 bottom-6 z-20 flex w-80 flex-col rounded-xl"
+      style={arr.estilo}
+    >
+      <div
+        {...arr.asaProps}
+        className="flex items-center justify-between border-b border-borde px-4 py-3 select-none"
+        title="Arrastrá de acá para mover el panel"
+      >
         <span className="flex items-center gap-2 text-sm font-bold">
+          <GripVertical size={13} className="text-texto-3" />
           <Radar size={15} className="text-amarillo" /> Análisis de zona
         </span>
         <button onClick={alCerrar} className="text-texto-3 hover:text-texto">

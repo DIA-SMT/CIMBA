@@ -2,7 +2,22 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Boxes, ChevronDown, Crosshair, Flame, History, Layers, Printer, Radar, Search, Sparkles, X } from "lucide-react";
+import {
+  Boxes,
+  ChevronDown,
+  Crosshair,
+  EyeOff,
+  Flame,
+  GripVertical,
+  History,
+  Layers,
+  Printer,
+  Radar,
+  RotateCcw,
+  Search,
+  Sparkles,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -23,6 +38,7 @@ import type { RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
+import { usePanelArrastrable } from "@/lib/arrastrable";
 import { AnalisisZona } from "./analisis-zona";
 import { BuscadorMapa } from "./buscador-mapa";
 import { abrirReporte } from "./reporte-mapa";
@@ -464,6 +480,17 @@ function MapaInterno({
     fc: FeatureCollection<Point, Record<string, unknown>>;
     frase: string;
   } | null>(null);
+  // Modo despejado: esconde de un golpe todo lo que flota sobre el mapa
+  const [despejado, setDespejado] = useState(false);
+  // Paneles reubicables: el usuario los arrastra de su cabecera y quedan ahí
+  const arrCapas = usePanelArrastrable("capas");
+  const arrZonas = usePanelArrastrable("zonas");
+  const arrInforme = usePanelArrastrable("informe");
+  const arrAnalisis = usePanelArrastrable("analisis");
+  const panelesMovidos = [arrCapas, arrZonas, arrInforme, arrAnalisis].some((p) => p.movido);
+  const reubicarTodos = () => {
+    for (const p of [arrCapas, arrZonas, arrInforme, arrAnalisis]) p.reubicar();
+  };
 
   const aplicarVista = (v: Vista) => {
     setVista(v);
@@ -1109,7 +1136,7 @@ function MapaInterno({
       </MapaGL>
 
       {/* Buscador en lenguaje natural que acciona sobre el mapa */}
-      <div className="absolute top-[52px] left-3 z-20 lg:top-3">
+      <div className={`absolute top-[52px] left-3 z-20 lg:top-3 ${despejado ? "hidden" : ""}`}>
         <BuscadorMapa
           alBuscar={buscarEnMapa}
           alLimpiar={() => setResaltado(null)}
@@ -1137,12 +1164,14 @@ function MapaInterno({
 
       {/* KPIs */}
       <div className="pointer-events-none absolute top-16 left-3 right-3 z-10 flex flex-wrap gap-2">
+        {!despejado && (<>
         <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
         <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" ayuda={AYUDA_KPI.sinVincular} />
         <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
         <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
         <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
         <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" ayuda={AYUDA_KPI.m2} />
+        </>)}
         <div className="pointer-events-auto ml-auto flex items-start gap-2">
           {iaHabilitada && (
             <button
@@ -1162,6 +1191,28 @@ function MapaInterno({
           >
             <Printer size={14} />
             Reporte
+          </button>
+          {panelesMovidos && (
+            <button
+              onClick={reubicarTodos}
+              className="panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-texto-2 transition hover:text-texto"
+              title="Volver los paneles a su lugar original"
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
+          <button
+            onClick={() => setDespejado((v) => !v)}
+            className={`panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition ${
+              despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
+            }`}
+            title={
+              despejado
+                ? "Volver a mostrar los paneles y datos sobre el mapa"
+                : "Despejar: esconder todos los paneles para ver el mapa limpio"
+            }
+          >
+            <EyeOff size={14} />
           </button>
           <button
             onClick={() => {
@@ -1229,6 +1280,7 @@ function MapaInterno({
             setZona(null);
             setModoAnalisis(false);
           }}
+          arr={arrAnalisis}
         />
       )}
 
@@ -1250,11 +1302,16 @@ function MapaInterno({
       )}
 
       {/* Zonas calientes */}
-      <div className="absolute bottom-6 left-72 z-10 hidden md:block">
+      <div className={`absolute bottom-6 left-72 z-10 hidden ${despejado ? "" : "md:block"}`} style={arrZonas.estilo}>
         {verZonas ? (
           <div className="panel-vidrio w-72 rounded-xl p-4">
-            <div className="mb-2 flex items-center justify-between">
+            <div
+              {...arrZonas.asaProps}
+              className="mb-2 flex items-center justify-between select-none"
+              title="Arrastrá de acá para mover el panel"
+            >
               <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
+                <GripVertical size={13} className="text-texto-3" />
                 <Flame size={14} className="text-encurso" /> Zonas calientes
               </span>
               <button onClick={() => setVerZonas(false)} className="text-texto-3 hover:text-texto">
@@ -1294,9 +1351,17 @@ function MapaInterno({
 
       {/* Informe IA */}
       {(informe || errorInforme) && (
-        <div className="panel-vidrio absolute top-28 right-3 z-20 w-96 max-w-[calc(100vw-24px)] rounded-xl">
-          <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+        <div
+          className="panel-vidrio absolute top-28 right-3 z-20 w-96 max-w-[calc(100vw-24px)] rounded-xl"
+          style={arrInforme.estilo}
+        >
+          <div
+            {...arrInforme.asaProps}
+            className="flex items-center justify-between border-b border-borde px-4 py-3 select-none"
+            title="Arrastrá de acá para mover el panel"
+          >
             <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
+              <GripVertical size={13} className="text-texto-3" />
               <Sparkles size={14} className="text-celeste" /> Informe IA
             </span>
             <button onClick={() => { setInforme(null); setErrorInforme(null); }} className="text-texto-3 hover:text-texto">
@@ -1374,11 +1439,16 @@ function MapaInterno({
       )}
 
       {/* Panel de capas */}
-      <div className="absolute bottom-6 left-3 z-10">
+      <div className={`absolute bottom-6 left-3 z-10 ${despejado ? "hidden" : ""}`} style={arrCapas.estilo}>
         {panelCapas ? (
           <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-64 overflow-y-auto rounded-xl p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div
+              {...arrCapas.asaProps}
+              className="mb-3 flex items-center justify-between select-none"
+              title="Arrastrá de acá para mover el panel"
+            >
               <span className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase">
+                <GripVertical size={13} className="text-texto-3" />
                 <Layers size={14} className="text-celeste" /> Capas
               </span>
               <button onClick={() => setPanelCapas(false)} className="text-texto-3 hover:text-texto">
