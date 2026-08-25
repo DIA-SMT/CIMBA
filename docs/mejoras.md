@@ -22,20 +22,22 @@ Para su flujo diario (marcar puntos, geocodificar planillas, consolidar, informa
 
 Específicas del mapa comando, ordenadas por (impacto × esfuerzo × finalidad brecha):
 
-- [ ] **M1. Hilos de cotejo desde el mapa** *(brecha · medio)* — En vista Brecha, clic en un pedido "sin atención" → se dibujan líneas a las reparaciones candidatas a ≤40 m con botón "Vincular" ahí mismo. El cotejo manual donde la cercanía se VE, sin ir a la bandeja. Ataca directo el 71 %.
-- [ ] **M2. Cinta métrica con m² reales** *(precisión · bajo)* — Dibujar un tramo/polígono sobre el mapa (reusa el gesto del círculo) → distancia y superficie en vivo → "Usar estos m²" precarga la superficie real de la intervención. Deja de depender de los m² declarados: los mide.
-- [ ] **M3. La deuda envejece** *(impacto · bajo)* — En vista Brecha, sub-modo "Antigüedad": cada pedido pendiente coloreado por días de espera (amarillo <90d → rojo >1 año). La zona con deuda VIEJA salta a la vista; las 1.631 sin fecha en gris honesto.
-- [ ] **M4. Balance de brecha del encuadre** *(brecha · bajo)* — Tarjetita viva que recalcula al mover el mapa: "En lo que estás viendo: N pedidos, X % sin respuesta, N m²". Responde "¿cómo está esta zona?" con el gesto que todos ya hacen: navegar.
-- [ ] **M5. Alta de pedido con clic derecho** *(precisión · medio)* — Menú contextual: "Cargar pedido acá" → georreversa + mini-formulario → nace con coordenada exacta y confianza 1.0, sin pasar por el geocodificador. El mapa como herramienta de carga.
-- [ ] **M6. Copiar esta vista** *(brecha · bajo)* — Botón que serializa TODO el estado del mapa (vista, filtros, capas, círculo, búsqueda) en un link para mandar por WhatsApp: el que lo abre ve exactamente lo mismo.
-- [ ] **M7. Top 20 urgentes numerados** *(impacto · bajo)* — Los 20 incidentes de mayor score con su número (1-20) sobre el territorio: el mapa pasa de "dónde está todo" a "qué hacemos primero".
-- [ ] **M8. Cifras de deuda flotantes al alejar** *(impacto · bajo)* — Con zoom de ciudad completa, números grandes de pedidos sin atención por zona en vez de nube de puntitos.
-- [ ] **M9. Cortina Pedido | Hecho** *(brecha · medio)* — Dos mapas sincronizados con cortina deslizable: izquierda lo pedido, derecha lo hecho. La brecha convertida en imagen que se recorre con la mano.
+- [x] **M1. Hilos de cotejo desde el mapa** *(brecha · medio)* — En vista Brecha, clic en un pedido "sin atención" → se dibujan líneas a las reparaciones candidatas a ≤60 m con botón "Vincular" ahí mismo. El cotejo manual donde la cercanía se VE, sin ir a la bandeja. Ataca directo el 71 %.
+- [✗] **M2. Cinta métrica con m² reales** — descartada por el usuario (difícil precisarlo desde el mapa).
+- [x] **M3. La deuda envejece** *(impacto · bajo)* — En vista Brecha, sub-modo "Antigüedad": cada pedido pendiente coloreado por días de espera (amarillo <90d → rojo >1 año). Las sin fecha en gris honesto.
+- [x] **M4. Balance de brecha del encuadre** *(brecha · bajo)* — Pastilla viva que recalcula al mover el mapa: "En pantalla: N pedidos, X % sin respuesta, N m²". Sus números también alimentan los rótulos de la cortina Comparar.
+- [x] **M5. Alta de pedido con clic derecho** *(precisión · medio)* — Menú contextual → alta rápida con coordenada exacta, sin pasar por el geocodificador. Incluye Street View del punto.
+- [x] **M6. Copiar esta vista** *(brecha · bajo)* — Exportar → "Copiar link de esta vista" + envío directo por WhatsApp a contactos configurados (`CONTACTOS_WHATSAPP`). Serializa cámara, vista, filtros, calor, zona.
+- [x] **M7. Top 20 urgentes numerados** *(impacto · bajo)* — Checkbox "Top 20 urgentes" en Capas: los 20 de mayor score numerados sobre el territorio.
+- [x] **M8. Cifras de deuda flotantes al alejar** *(impacto · bajo)* — Con zoom de ciudad, números grandes "N sin respuesta" por zona.
+- [x] **M9. Cortina Pedido | Hecho** *(brecha · medio)* — Botón Comparar: dos mapas sincronizados con cortina arrastrable, números en vivo por lado (pedidos pendientes / m² hechos) y botón Capturar que descarga la comparación como imagen.
 - [ ] **M10. Cortina de épocas** *(impacto · medio)* — "Así estaba en marzo | así está hoy": comparador temporal del territorio con slider, complementa la línea de tiempo.
 - [ ] **M11. Capa de reincidencias con hilos obra→reclamo** *(impacto · medio)* — El mapa de la obra que no duró: cada reparación con reclamo posterior a <40 m, con línea que las conecta. Munición para reclamar a contratistas en garantía.
 - [ ] **M12. Trabajo huérfano visible** *(brecha · bajo)* — La vista Brecha hoy muestra los pedidos sin respuesta pero esconde el otro lado: el 58 % de trabajo sin pedido. Capa propia para verlo.
-- [ ] **M13. Snapping a esquinas** *(precisión · medio)* — Imán a "calle y calle" al cargar o corregir puntos (las planillas reales viven en esquinas): dos operadores cargan el mismo bache en el mismo punto exacto.
-- [ ] **M14. Comparador de zonas A/B** *(precisión · medio)* — Fijar el círculo actual como Zona A, dibujar Zona B → tabla comparativa con deltas y densidades por hectárea, exportable al reporte PDF. "¿La zona sur está peor que el centro?" con números.
+- [ ] **M13. Snapping a esquinas** *(precisión · medio · no priorizada por el usuario)* — Imán a "calle y calle" al cargar o corregir puntos.
+- [x] **M14. Comparador de zonas A/B** *(precisión · medio)* — Zona A fijable + Zona B con tabla comparativa de deltas.
+
+También completados fuera de esta lista (23/08): buscador del mapa en lenguaje natural con voz · barra de herramientas unificada y arrastrable · mobile rediseñado (menú Acciones etiquetado, KPIs deslizables, Capas colapsado) · recorrido guiado "?" (17 pasos, fuente única `guia-funciones.ts`) · Migue conoce el mapa y lo acciona (`accionar_mapa` → mismo camino que el buscador, deep-link `/mapa?buscar=`) · login simple admin (reemplaza selector de rol abierto) · capas de Territorio: distritos + circuitos electorales + barrios.
 
 ---
 
@@ -43,7 +45,7 @@ Específicas del mapa comando, ordenadas por (impacto × esfuerzo × finalidad b
 
 - [ ] **1. Evidencia antes/después visible** *(visual · bajo)* — Las fotos con GPS y hora que las cuadrillas están obligadas a sacar viven en Storage y ninguna pantalla las muestra (solo "📷 3"). Galería en la historia del incidente con comparador deslizable antes/después, sello de fecha+coordenadas, miniaturas en Campo y fotos dentro del reporte PDF. **La mejor relación impacto/esfuerzo de todo el sistema**: la prueba irrefutable del trabajo hecho, para prensa, Concejo y auditoría.
 
-- [ ] **2. Distritos reales + métricas por distrito** *(datos+gestión · bajo)* — La tabla `distritos`, índices GiST y trigger espacial ya existen **vacíos** esperando `distritosNuevo.json` (20 features; ojo: no existe el ID 15). Cargar + backfill espacial de las ~4.700 geometrías + reemplazar el select provisorio de Funcionarios + agregación por distrito en Brecha/KPIs/mapa (coropletas). Responde LA pregunta del Intendente: "¿cómo estamos en el distrito 7?". *(Las propuestas 14 y 20 de la auditoría son este mismo trabajo visto desde datos y desde gestión: se hacen juntas.)*
+- [~] **2. Distritos reales + métricas por distrito** *(datos+gestión · bajo)* — HECHO (23/08): los 20 distritos oficiales cargados en la tabla (migración 0004, desde "DISTRITOS PP GEO CORREGIDA") + backfill espacial: 2.781/2.820 demandas y 1.792/1.824 incidentes con `distrito_id` + capa visual en el mapa. **FALTA la mitad valiosa**: agregación por distrito en Brecha/KPIs (coropletas de deuda por distrito, ranking clickeable), reemplazar el select provisorio de Funcionarios, y que Migue responda "¿cómo estamos en el distrito 7?" (nueva herramienta por_distrito). Responde LA pregunta del Intendente.
 
 - [ ] **3. SLA medido: cuánto tardamos** *(operativo · bajo)* — Mediana y p90 de días pedido→vinculación→programación→reparación, por fuente, tipo y distrito, con semáforo contra umbrales. Todas las fechas ya están en la base; es puro SQL. "Tardamos 23 días: 9 en el centro, 41 en la zona sur" es la frase que mueve presupuesto. Excluir explícitamente las 1.631 sin fecha (patrón de conteo honesto).
 
@@ -95,9 +97,8 @@ Específicas del mapa comando, ordenadas por (impacto × esfuerzo × finalidad b
 
 ---
 
-### Orden sugerido de ejecución
+### Orden sugerido de ejecución (actualizado 23/08 — QGIS y mapa nivel 2 completos, distritos cargados)
 
-**Semana 1:** 1 (fotos) + 3 (SLA) + Q1/Q2/Q3/Q4 (QGIS) — mientras se consiguen `distritosNuevo.json` y el GPKG.
-**Semana 2:** 2 (distritos) + 5 (ciclo nocturno) + 4 (tablero TV).
-**Después:** devoluciones (6+7), alertas (8), verificación (9), y el resto según prioridad política del momento.
-**Antes de declararlo oficial:** 20 (salida de beta) sí o sí.
+**Ahora:** 2-bis (coropletas y métricas por distrito — recién destrabado por la carga de distritos) + 1 (fotos antes/después, sigue siendo la mejor relación impacto/esfuerzo) + 3 (SLA, ahora puede segmentar por distrito).
+**Después:** 5 (ciclo nocturno) + 6/7 (devoluciones — atacan el 71 % directamente) + 4 (tablero TV).
+**Antes de declararlo oficial:** 20 (salida de beta) sí o sí — el login simple actual es un parche temporal, no reemplaza FORCE RLS + SSO.
