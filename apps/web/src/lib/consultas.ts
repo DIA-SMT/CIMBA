@@ -831,6 +831,115 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
   });
 }
 
+// ── La brecha, distrito por distrito ────────────────────────────────────────
+
+export interface BrechaDistrito {
+  /** null = la fila honesta de lo que cayó fuera de los 20 polígonos. */
+  id: number | null;
+  nombre: string;
+  abiertas: number;
+  brechaReal: number;
+  enCola: number;
+  yaResueltasProbable: number;
+  reincidencias: number;
+  reparados: number;
+  m2: number;
+  km2: number;
+}
+
+/**
+ * La misma clasificación de `estadisticasBrecha` (radio 40 m) pero agrupada por
+ * distrito, más lo hecho de cada uno. Responde "¿cómo estamos en el distrito 7?".
+ *
+ * Agrupa por `distrito_id` (columna indexada, poblada por el trigger espacial y
+ * el backfill de la migración 0004): el cruce de 40 m es el mismo que ya se hace
+ * para el total, no se multiplica por distrito.
+ *
+ * Incluye SIEMPRE los 20 distritos, también los que no tienen ni un pedido, y
+ * agrega al final la fila de lo que quedó fuera de todo polígono — mismo criterio
+ * de conteo honesto que el resto del sistema.
+ */
+export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[]> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      with d as (
+        select d.id, d.geom, d.creado_en, d.distrito_id,
+               (d.metadata->>'sin_fecha' is null) as fecha_confiable
+        from demandas d
+        where d.estado in ('recibida','en_validacion') and d.geom is not null
+      ), cruce as (
+        select d.distrito_id,
+          exists (select 1 from incidentes i
+                  where i.estado in ('reparado','verificado')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)) as hay_reparacion,
+          exists (select 1 from incidentes i
+                  where i.estado in ('reparado','verificado')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                    and (not d.fecha_confiable or i.cerrado_en >= d.creado_en)) as reparacion_posterior,
+          exists (select 1 from incidentes i
+                  where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)) as incidente_abierto
+        from d
+      ), pedido as (
+        select distrito_id,
+          count(*)::int as abiertas,
+          count(*) filter (where reparacion_posterior)::int as ya_resueltas,
+          count(*) filter (where hay_reparacion and not reparacion_posterior)::int as reincidencias,
+          count(*) filter (where not hay_reparacion and incidente_abierto)::int as en_cola,
+          count(*) filter (where not hay_reparacion and not incidente_abierto)::int as brecha_real
+        from cruce group by 1
+      ), m2_por_incidente as (
+        select incidente_id, sum(superficie_m2) as m2
+        from intervenciones where estado = 'finalizada' group by 1
+      ), hecho as (
+        -- El join agregado (en vez de una subconsulta correlacionada por
+        -- distrito) es lo que hace que los m2 de incidentes SIN distrito no se
+        -- pierdan: comparar distrito_id = null nunca da true y los dejaba en cero.
+        select i.distrito_id,
+          count(*) filter (where i.estado in ('reparado','verificado'))::int as reparados,
+          round(coalesce(sum(mi.m2), 0))::int as m2
+        from incidentes i
+        left join m2_por_incidente mi on mi.incidente_id = i.id
+        group by i.distrito_id
+      )
+      select ds.id, ds.nombre,
+             coalesce(p.abiertas, 0)::int as abiertas,
+             coalesce(p.brecha_real, 0)::int as brecha_real,
+             coalesce(p.en_cola, 0)::int as en_cola,
+             coalesce(p.ya_resueltas, 0)::int as ya_resueltas,
+             coalesce(p.reincidencias, 0)::int as reincidencias,
+             coalesce(h.reparados, 0)::int as reparados,
+             coalesce(h.m2, 0)::int as m2,
+             round((st_area(ds.geom::geography) / 1000000.0)::numeric, 2) as km2
+      from distritos ds
+      left join pedido p on p.distrito_id = ds.id
+      left join hecho h on h.distrito_id = ds.id
+      union all
+      select null, 'Fuera de los distritos',
+             coalesce(p.abiertas, 0)::int, coalesce(p.brecha_real, 0)::int,
+             coalesce(p.en_cola, 0)::int, coalesce(p.ya_resueltas, 0)::int,
+             coalesce(p.reincidencias, 0)::int,
+             coalesce(h.reparados, 0)::int, coalesce(h.m2, 0)::int, 0
+      from (select * from pedido where distrito_id is null) p
+      full outer join (select * from hecho where distrito_id is null) h on true
+      order by brecha_real desc
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    return filas.map((f) => ({
+      id: f.id != null ? Number(f.id) : null,
+      nombre: String(f.nombre),
+      abiertas: Number(f.abiertas ?? 0),
+      brechaReal: Number(f.brecha_real ?? 0),
+      enCola: Number(f.en_cola ?? 0),
+      yaResueltasProbable: Number(f.ya_resueltas ?? 0),
+      reincidencias: Number(f.reincidencias ?? 0),
+      reparados: Number(f.reparados ?? 0),
+      m2: Number(f.m2 ?? 0),
+      km2: Number(f.km2 ?? 0),
+    }));
+  });
+}
+
 // ── GeoJSON para el mapa único ──────────────────────────────────────────────
 
 type Feature = { type: "Feature"; geometry: { type: "Point"; coordinates: [number, number] }; properties: Record<string, unknown> };
@@ -841,13 +950,13 @@ export async function geodata(sesion: Sesion) {
     const incidentes = (await tx.execute(sql`
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
              i.detectado_en, i.cerrado_en, st_x(i.geom) as lon, st_y(i.geom) as lat,
-             i.metadata->>'origen' as origen,
+             i.metadata->>'origen' as origen, i.distrito_id,
              (select count(*) from demanda_incidente di where di.incidente_id = i.id) as demandas
       from incidentes i
     `)) as unknown as Array<Record<string, unknown>>;
 
     const demandas = (await tx.execute(sql`
-      select d.id, d.fuente, d.tipo, d.estado, d.geocod_confianza,
+      select d.id, d.fuente, d.tipo, d.estado, d.geocod_confianza, d.distrito_id,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, (d.metadata->>'sin_fecha' = 'true') as sin_fecha,
              st_x(d.geom) as lon, st_y(d.geom) as lat,
@@ -892,6 +1001,7 @@ export async function geodata(sesion: Sesion) {
             m2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
             demandas: Number(f.demandas ?? 0),
             origen: (f.origen as string) ?? "cimba",
+            distrito: f.distrito_id != null ? Number(f.distrito_id) : null,
             detectado_en: String(f.detectado_en),
             cerrado_en: f.cerrado_en != null ? String(f.cerrado_en) : null,
           },
@@ -909,6 +1019,7 @@ export async function geodata(sesion: Sesion) {
             confianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,
             direccion: (f.direccion as string) ?? null,
             brecha: String(f.brecha),
+            distrito: f.distrito_id != null ? Number(f.distrito_id) : null,
             sin_fecha: Boolean(f.sin_fecha),
             creado_en: String(f.creado_en),
           },

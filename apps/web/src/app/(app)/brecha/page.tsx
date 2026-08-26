@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
-import { estadisticasBrecha } from "@/lib/consultas";
+import { brechaPorDistrito, estadisticasBrecha } from "@/lib/consultas";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import type { FuenteDemanda, TipoProblema } from "@cimba/domain";
 import { Panel, TituloPagina } from "@/components/ui";
@@ -15,7 +15,10 @@ const C = { pedido: "#3987e5", hecho: "#199e70", alerta: "#d95926" } as const;
 
 export default async function PaginaBrecha() {
   const sesion = (await leerSesion())!;
-  const b = await estadisticasBrecha(sesion);
+  const [b, porDistrito] = await Promise.all([
+    estadisticasBrecha(sesion),
+    brechaPorDistrito(sesion),
+  ]);
   const puedeCotejar = ["admin", "atencion_ciudadana", "planificacion", "supervision"].includes(
     sesion.rol_cimba,
   );
@@ -167,6 +170,73 @@ export default async function PaginaBrecha() {
           </div>
         </Panel>
       </div>
+
+      {/* La brecha distrito por distrito — responde "¿cómo estamos en el distrito 7?" */}
+      <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">
+        La brecha por distrito{" "}
+        <span className="font-normal text-texto-3">— ordenada por deuda sin tocar; clic para verla en el mapa</span>
+      </h2>
+      <Panel className="divide-y divide-borde/60">
+        <div className="flex items-center gap-3 px-4 py-2 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+          <span className="w-24 shrink-0">Distrito</span>
+          <span className="flex-1">Deuda sin tocar sobre lo pedido</span>
+          <span className="num w-16 shrink-0 text-right">Reparados</span>
+          <span className="num w-20 shrink-0 text-right">m² hechos</span>
+        </div>
+        {porDistrito.map((d) => {
+          const pct = d.abiertas > 0 ? Math.round((100 * d.brechaReal) / d.abiertas) : 0;
+          const fila = (
+            <>
+              <span className="w-24 shrink-0 truncate text-[13px] font-semibold" title={d.nombre}>
+                {d.nombre}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex items-baseline justify-between text-[11px]">
+                  <span className="num text-texto-2">
+                    {numero(d.brechaReal)} / {numero(d.abiertas)} pedidos
+                    {d.km2 > 0 && (
+                      <span className="text-texto-3"> · {(d.abiertas / d.km2).toFixed(0)} por km²</span>
+                    )}
+                  </span>
+                  <b className="num" style={{ color: pct >= 85 ? C.alerta : "inherit" }}>{pct}%</b>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-panel-3">
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.alerta }} />
+                </div>
+              </div>
+              <span className="num w-16 shrink-0 text-right text-[13px]" style={{ color: C.hecho }}>
+                {numero(d.reparados)}
+              </span>
+              <span
+                className="num w-20 shrink-0 text-right text-[13px]"
+                style={{ color: d.m2 > 0 ? C.hecho : "var(--color-texto-3, #6b7280)" }}
+                title={d.m2 === 0 ? "Sin un solo m² ejecutado en este distrito" : undefined}
+              >
+                {d.m2 > 0 ? numero(d.m2) : "—"}
+              </span>
+            </>
+          );
+          // La fila "Fuera de los distritos" no es un lugar: no se puede abrir en el mapa.
+          return d.id == null ? (
+            <div key="sin-distrito" className="flex items-center gap-3 px-4 py-2.5" title="Pedidos y trabajos que caen fuera de los 20 polígonos oficiales">
+              {fila}
+            </div>
+          ) : (
+            <Link
+              key={d.id}
+              href={`/mapa?vista=brecha&brecha=sin_atencion&distrito=${d.id}`}
+              className="flex items-center gap-3 px-4 py-2.5 transition hover:bg-panel-2"
+              title={`Ver la deuda del ${d.nombre} en el mapa`}
+            >
+              {fila}
+            </Link>
+          );
+        })}
+      </Panel>
+      <p className="mt-2 text-[11px] text-texto-3">
+        El distrito sale del cruce espacial con los 20 polígonos oficiales. “Fuera de los distritos” son los
+        puntos que caen en los bordes o fuera del ejido — se muestran para que las sumas cierren.
+      </p>
 
       {/* Top deuda */}
       <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">

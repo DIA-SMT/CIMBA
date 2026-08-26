@@ -220,18 +220,53 @@ const capaDistritosLinea: LayerProps = {
     "line-dasharray": [4, 2],
   },
 };
+/**
+ * Coropleta de la deuda: cada distrito teñido según qué proporción de sus
+ * pedidos abiertos no tiene nada cerca. Verde = atendido, rojo = abandonado;
+ * los que no tienen pedidos (pct -1) quedan sin pintar, no en verde: no es
+ * "cero deuda", es "nada que medir".
+ */
+const capaDistritosRelleno: LayerProps = {
+  id: "distritos-relleno",
+  type: "fill",
+  source: "distritos",
+  paint: {
+    "fill-color": [
+      "case",
+      ["<", ["get", "pct_brecha"], 0], "rgba(0,0,0,0)",
+      ["interpolate", ["linear"], ["get", "pct_brecha"],
+        0, "#199e70", 50, "#f4dc00", 75, "#d95926", 100, "#ff3b30"],
+    ],
+    "fill-opacity": ["case", ["<", ["get", "pct_brecha"], 0], 0, 0.22],
+  },
+};
+
 const capaDistritosNombre: LayerProps = {
   id: "distritos-nombre",
   type: "symbol",
   source: "distritos",
   minzoom: 12,
   layout: {
-    "text-field": ["get", "nombre"],
+    // Con datos: "Distrito 7 · 89%". Sin pedidos abiertos: solo el nombre.
+    "text-field": [
+      "case",
+      ["<", ["get", "pct_brecha"], 0], ["get", "nombre"],
+      ["concat", ["get", "nombre"], " · ", ["to-string", ["get", "pct_brecha"]], "%"],
+    ],
     "text-font": ["Open Sans Bold"],
     "text-size": 12,
   },
   paint: { "text-color": "#a78bfa", "text-halo-color": "#070a10", "text-halo-width": 1.6 },
 };
+
+/** Contorno grueso del distrito aislado con ?distrito= (el filtro es runtime). */
+const capaDistritoFoco = (id: number): LayerProps => ({
+  id: "distrito-foco",
+  type: "line",
+  source: "distritos",
+  filter: ["==", ["get", "id"], id],
+  paint: { "line-color": "#f4dc00", "line-width": 3, "line-opacity": 0.9 },
+});
 
 const capaCircuitosLinea: LayerProps = {
   id: "circuitos-linea",
@@ -514,6 +549,8 @@ export interface InicialMapa {
   /** Frase para el buscador inteligente apenas carguen los datos — así Migue
    *  (u otro link) puede mandar al mapa una acción en lenguaje natural. */
   buscar?: string;
+  /** Aislar un distrito: se filtran los puntos y se encuadra su polígono. */
+  distrito?: number;
 }
 
 interface CandidatoCotejo {
@@ -658,7 +695,11 @@ function MapaInterno({
   // Límites territoriales (distritos, circuitos electorales, barrios): capas de
   // referencia livianas, servidas como GeoJSON estático y cargadas solo si se
   // prenden — nadie quiere pagar el fetch de 327 barrios sin pedirlo.
-  const [verDistritos, setVerDistritos] = useState(false);
+  // Un link con ?distrito= entra aislando ese distrito: prende su capa, filtra
+  // los puntos y encuadra el polígono.
+  const [distritoFoco, setDistritoFoco] = useState<number | null>(inicial?.distrito ?? null);
+  const [verDistritos, setVerDistritos] = useState(inicial?.distrito != null);
+  const [verCoropleta, setVerCoropleta] = useState(true);
   const [verCircuitos, setVerCircuitos] = useState(false);
   const [verBarrios, setVerBarrios] = useState(false);
   const [distritosGeo, setDistritosGeo] = useState<FCPoligono | null>(null);
@@ -676,6 +717,32 @@ function MapaInterno({
     if (!verBarrios || barriosGeo) return;
     fetch("/data/barrios.json").then((r) => r.json()).then(setBarriosGeo).catch(() => {});
   }, [verBarrios, barriosGeo]);
+
+  // Al entrar con ?distrito=, encuadrar su polígono apenas esté cargado.
+  const encuadreDistritoRef = useRef(false);
+  useEffect(() => {
+    if (distritoFoco == null || encuadreDistritoRef.current || !distritosGeo) return;
+    const f = distritosGeo.features.find((x) => Number(x.properties.id) === distritoFoco);
+    if (!f) return;
+    encuadreDistritoRef.current = true;
+    let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+    const recorrer = (c: unknown): void => {
+      if (Array.isArray(c) && typeof c[0] === "number") {
+        const [lon, lat] = c as [number, number];
+        minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
+        minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+        return;
+      }
+      if (Array.isArray(c)) for (const x of c) recorrer(x);
+    };
+    recorrer(f.geometry.coordinates);
+    if (Number.isFinite(minLon)) {
+      mapRef.current?.getMap()?.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
+        padding: 70,
+        duration: 1200,
+      });
+    }
+  }, [distritoFoco, distritosGeo]);
   // Si el estilo no trae la capa de nombres, el raster satelital va sin ancla.
   const [hayAnclaEtiquetas, setHayAnclaEtiquetas] = useState(true);
   // ── Recursos de precisión y brecha ──────────────────────────────────────
@@ -907,6 +974,7 @@ function MapaInterno({
 
   const incidentesFiltrados = useMemo<FC>(() => {
     const features = (data?.incidentes.features ?? []).filter((f) => {
+      if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (finMesCursor !== null) {
         // Modo película: solo reparaciones ya concretadas a esa fecha
         if (f.properties.macro !== "resuelto") return false;
@@ -919,11 +987,12 @@ function MapaInterno({
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, verMacro, tipos, corte, finMesCursor]);
+  }, [data, verMacro, tipos, corte, finMesCursor, distritoFoco]);
 
   const demandasFiltradas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
       const fuente = String(f.properties.fuente);
+      if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (fuentes[fuente] === false) return false;
       if (tipos[String(f.properties.tipo)] === false) return false;
       if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
@@ -952,7 +1021,7 @@ function MapaInterno({
       return { ...f, properties: { ...f.properties, edad_dias: edadDias } };
     });
     return { type: "FeatureCollection", features: conEdad };
-  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor]);
+  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor, distritoFoco]);
 
   // Memoizados: sin esto, cada render (uno por frame al panear con Comparar
   // activo) recalcula el polígono del círculo entero para nada.
@@ -970,22 +1039,62 @@ function MapaInterno({
    */
   const incidentesParaMetricas = useMemo<FC>(() => {
     const features = (data?.incidentes.features ?? []).filter((f) => {
+      if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (tipos[String(f.properties.tipo)] === false) return false;
       if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, tipos, corte]);
+  }, [data, tipos, corte, distritoFoco]);
 
   const demandasParaMetricas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
+      if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (fuentes[String(f.properties.fuente)] === false) return false;
       if (tipos[String(f.properties.tipo)] === false) return false;
       if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, tipos, corte]);
+  }, [data, fuentes, tipos, corte, distritoFoco]);
+
+  /**
+   * Coropletas: pinta cada distrito según qué proporción de sus pedidos
+   * abiertos no tiene nada cerca. El cálculo va en el cliente sobre los mismos
+   * datos que ya bajó el mapa, así el color respeta los filtros activos
+   * (tipo, fuente, período) en vez de mostrar un total que no coincide con lo
+   * que se está viendo.
+   */
+  const distritosConBrecha = useMemo<FCPoligono | null>(() => {
+    if (!distritosGeo) return null;
+    const abiertas = new Map<number, number>();
+    const sinAtencion = new Map<number, number>();
+    for (const f of demandasParaMetricas.features) {
+      const d = f.properties.distrito;
+      if (typeof d !== "number") continue;
+      if (!["recibida", "en_validacion"].includes(String(f.properties.estado))) continue;
+      abiertas.set(d, (abiertas.get(d) ?? 0) + 1);
+      if (f.properties.brecha === "sin_atencion") sinAtencion.set(d, (sinAtencion.get(d) ?? 0) + 1);
+    }
+    return {
+      type: "FeatureCollection",
+      features: distritosGeo.features.map((f) => {
+        const id = Number(f.properties.id);
+        const tot = abiertas.get(id) ?? 0;
+        const sin = sinAtencion.get(id) ?? 0;
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            abiertas: tot,
+            sin_atencion: sin,
+            // -1 = sin pedidos abiertos: no es 0 % de deuda, es "nada que medir".
+            pct_brecha: tot > 0 ? Math.round((100 * sin) / tot) : -1,
+          },
+        };
+      }),
+    };
+  }, [distritosGeo, demandasParaMetricas]);
 
   /**
    * Reporte imprimible del estado actual: captura el lienzo del mapa (via un
@@ -1103,6 +1212,7 @@ function MapaInterno({
     if (verHex) p.set("hex", "1");
     if (verSatelite) p.set("sat", "1");
     if (verTop20) p.set("top", "1");
+    if (distritoFoco != null) p.set("distrito", String(distritoFoco));
     if (zona) {
       p.set("zlat", zona.lat.toFixed(6));
       p.set("zlon", zona.lon.toFixed(6));
@@ -1742,9 +1852,11 @@ function MapaInterno({
             <Layer {...capaCircuitosNombre} />
           </Source>
         )}
-        {verDistritos && distritosGeo && (
-          <Source id="distritos" type="geojson" data={distritosGeo}>
+        {verDistritos && distritosConBrecha && (
+          <Source id="distritos" type="geojson" data={distritosConBrecha}>
+            {verCoropleta && <Layer {...capaDistritosRelleno} />}
             <Layer {...capaDistritosLinea} />
+            {distritoFoco != null && <Layer {...capaDistritoFoco(distritoFoco)} />}
             <Layer {...capaDistritosNombre} />
           </Source>
         )}
@@ -1944,6 +2056,20 @@ function MapaInterno({
               alLimpiar={() => setResaltado(null)}
               hayResaltado={resaltado != null && resaltado.fc.features.length > 0}
             />
+          </div>
+        )}
+
+        {/* Aislamiento por distrito (llegó desde el ranking de /brecha) */}
+        {distritoFoco != null && (
+          <div className="panel-vidrio flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-amarillo ring-1 ring-amarillo/50">
+            Solo Distrito {distritoFoco}
+            <button
+              onClick={() => setDistritoFoco(null)}
+              className="text-texto-3 transition hover:text-texto"
+              title="Ver toda la ciudad de nuevo"
+            >
+              <X size={13} />
+            </button>
           </div>
         )}
 
@@ -2784,6 +2910,24 @@ function MapaInterno({
               <span className="inline-block h-0.5 w-4 rounded" style={{ background: "#a78bfa", borderTop: "1px dashed #a78bfa" }} />
               Distritos
             </label>
+            {verDistritos && (
+              <label
+                className="mb-2 ml-5 flex cursor-pointer items-center gap-2 text-[13px]"
+                title="Tiñe cada distrito según qué porcentaje de sus pedidos abiertos no tiene ninguna reparación cerca: verde atendido, rojo abandonado"
+              >
+                <input
+                  type="checkbox"
+                  checked={verCoropleta}
+                  onChange={(e) => setVerCoropleta(e.target.checked)}
+                  className="accent-[#0066ff]"
+                />
+                <span
+                  className="inline-block h-2.5 w-4 rounded-sm"
+                  style={{ background: "linear-gradient(90deg,#199e70,#f4dc00,#ff3b30)" }}
+                />
+                Pintar por deuda
+              </label>
+            )}
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Circuitos electorales de San Miguel de Tucumán (INDEC) — se etiquetan al acercar el zoom"

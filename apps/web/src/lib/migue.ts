@@ -122,6 +122,20 @@ export const HERRAMIENTAS_MIGUE = [
   {
     type: "function",
     function: {
+      name: "brecha_por_distrito",
+      description:
+        "La brecha (lo pedido vs. lo hecho) desglosada por cada uno de los 20 distritos oficiales: pedidos abiertos, cuántos no tiene nadie tocando, reparaciones y m² ejecutados. Usala para '¿cómo estamos en el distrito 7?', '¿cuál es el distrito más abandonado?', 'ranking de distritos'.",
+      parameters: {
+        type: "object",
+        properties: {
+          distrito: { type: "number", description: "Número de distrito (1-20). Omitilo para el ranking completo." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "accionar_mapa",
       description:
         "Ejecuta una acción VISUAL en el mapa comando: marca con anillo los puntos que coinciden con la frase, vuela a la zona y ajusta las capas — lo mismo que el buscador inteligente del mapa. Usala cuando el usuario pida VER algo ('mostrame', 'marcá', 'llevame a', 'dónde están'). Si el usuario no está en el mapa, la app lo lleva sola.",
@@ -315,6 +329,28 @@ export async function ejecutarHerramientaMigue(
         ) t
         group by mes order by mes
       `);
+
+    case "brecha_por_distrito": {
+      const { brechaPorDistrito } = await import("./consultas");
+      const filas = await brechaPorDistrito(sesion);
+      const pedido = Number(args.distrito);
+      const conPct = filas.map((f) => ({
+        distrito: f.nombre,
+        pedidos_abiertos: f.abiertas,
+        sin_que_nadie_lo_toque: f.brechaReal,
+        pct_sin_atencion: f.abiertas > 0 ? Math.round((100 * f.brechaReal) / f.abiertas) : null,
+        en_cola: f.enCola,
+        reparaciones: f.reparados,
+        m2_ejecutados: f.m2,
+        km2: f.km2,
+      }));
+      if (Number.isInteger(pedido)) {
+        const uno = filas.findIndex((f) => f.id === pedido);
+        if (uno < 0) return { error: `no existe el distrito ${pedido} (van del 1 al 20)` };
+        return { distrito: conPct[uno], puesto_en_deuda: `${uno + 1} de ${filas.length}` };
+      }
+      return { ranking_por_deuda_sin_tocar: conPct, nota: "ordenado de mayor a menor deuda sin atender" };
+    }
 
     case "accionar_mapa": {
       // La ejecución real ocurre en el navegador (el mapa marca y vuela);

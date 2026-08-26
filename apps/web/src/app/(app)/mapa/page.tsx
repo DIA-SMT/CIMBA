@@ -14,7 +14,7 @@ export default async function PaginaMapa({
     vista?: string; brecha?: string; modoBrecha?: string; fuente?: string; tipo?: string;
     dias?: string; calor?: string; hex?: string; sat?: string; top?: string;
     zlat?: string; zlon?: string; zr?: string;
-    buscar?: string;
+    buscar?: string; distrito?: string;
   }>;
 }) {
   const sesion = (await leerSesion())!;
@@ -59,6 +59,12 @@ export default async function PaginaMapa({
     // Migue (u otro link) puede mandar una acción en lenguaje natural:
     // /mapa?buscar=baches sin atender en Belgrano
     buscar: sp.buscar?.trim().slice(0, 200) || undefined,
+    // Aislar un distrito (desde el ranking de /brecha). Los IDs reales son
+    // 1..20 pero se valida el rango, no la lista, para no romper si cambian.
+    distrito:
+      Number.isInteger(Number(sp.distrito)) && Number(sp.distrito) > 0 && Number(sp.distrito) <= 99
+        ? Number(sp.distrito)
+        : undefined,
     zona:
       sp.zlat && sp.zlon && sp.zr && Number.isFinite(Number(sp.zlat)) && Number.isFinite(Number(sp.zlon))
         ? {
