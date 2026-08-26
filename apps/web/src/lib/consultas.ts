@@ -486,6 +486,17 @@ export interface HistoriaIncidente {
     superficieM2: number | null;
     fotos: number;
   }>;
+  /** Las fotos en sí, no solo el conteo: la evidencia del trabajo hecho. */
+  galeria: Array<{
+    id: number;
+    intervencionId: number;
+    momento: "antes" | "durante" | "despues";
+    storagePath: string | null;
+    urlExterna: string | null;
+    tomadaEn: string | null;
+    lat: number | null;
+    lon: number | null;
+  }>;
 }
 
 export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Promise<HistoriaIncidente | null> {
@@ -521,6 +532,17 @@ export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Prom
       order by coalesce(iv.iniciada_en, iv.finalizada_en, iv.creado_en) asc
     `)) as unknown as Array<Record<string, unknown>>;
 
+    const fotos = (await tx.execute(sql`
+      select fo.id, fo.intervencion_id, fo.momento, fo.storage_path, fo.url_externa,
+             fo.tomada_en, st_y(fo.geom) as lat, st_x(fo.geom) as lon
+      from fotografias fo
+      join intervenciones iv on iv.id = fo.intervencion_id
+      where iv.incidente_id = ${id}
+      order by case fo.momento when 'antes' then 0 when 'durante' then 1 else 2 end,
+               fo.tomada_en nulls last
+      limit 40
+    `)) as unknown as Array<Record<string, unknown>>;
+
     return {
       id: Number(f.id),
       tipo: f.tipo as TipoProblema,
@@ -553,6 +575,16 @@ export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Prom
         finalizadaEn: v.finalizada_en != null ? String(v.finalizada_en) : null,
         superficieM2: v.superficie_m2 != null ? Number(v.superficie_m2) : null,
         fotos: Number(v.fotos ?? 0),
+      })),
+      galeria: fotos.map((fo) => ({
+        id: Number(fo.id),
+        intervencionId: Number(fo.intervencion_id),
+        momento: String(fo.momento) as "antes" | "durante" | "despues",
+        storagePath: fo.storage_path != null ? String(fo.storage_path) : null,
+        urlExterna: fo.url_externa != null ? String(fo.url_externa) : null,
+        tomadaEn: fo.tomada_en != null ? String(fo.tomada_en) : null,
+        lat: fo.lat != null ? Number(fo.lat) : null,
+        lon: fo.lon != null ? Number(fo.lon) : null,
       })),
     };
   });

@@ -4,8 +4,10 @@ import { ArrowLeft, Camera, HardHat, Inbox, Wrench } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarCuadrillas, obtenerHistoriaIncidente } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, fechaCorta, macroDeEstado, numero } from "@/lib/formato";
+import { urlFoto } from "@/lib/fotos";
 import { BadgeEstadoIncidente, BadgeFuente, BadgeTipo, Panel } from "@/components/ui";
 import { MapaPunto } from "@/components/mapa/mapa-punto";
+import { StreetView } from "@/components/mapa/street-view";
 import { AccionesIncidente } from "../acciones-incidente";
 
 export const dynamic = "force-dynamic";
@@ -267,9 +269,91 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
           superficie.
         </Panel>
       )}
+
+      {/* La evidencia: las fotos de la cuadrilla contra cómo se ve la calle */}
+      <h2 className="mt-8 mb-3 flex items-center gap-2 text-sm font-bold tracking-wide uppercase">
+        <Camera size={15} className="text-amarillo" /> La evidencia
+        <span className="font-normal text-texto-3 normal-case">
+          — las fotos de obra, contrastadas con la vista de calle
+        </span>
+      </h2>
+      <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
+        <Panel className="p-4">
+          {h.galeria.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {h.galeria.map((fo) => {
+                const url = urlFoto(fo);
+                if (!url) return null;
+                return (
+                  <a
+                    key={fo.id}
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group relative block overflow-hidden rounded-lg border border-borde"
+                    title="Abrir en tamaño completo"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- imagen de Storage, sin optimizador */}
+                    <img
+                      src={url}
+                      alt={`Obra ${ETIQUETA_MOMENTO[fo.momento]} en ${h.direccion ?? "el lugar"}`}
+                      className="h-32 w-full object-cover transition group-hover:brightness-110"
+                      loading="lazy"
+                    />
+                    <span
+                      className="absolute top-1.5 left-1.5 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase"
+                      style={{
+                        background: "rgba(7,10,16,0.8)",
+                        color: fo.momento === "despues" ? C.hecho : fo.momento === "antes" ? C.pedido : C.curso,
+                      }}
+                    >
+                      {ETIQUETA_MOMENTO[fo.momento]}
+                    </span>
+                    {/* El sello que vuelve la foto auditable: cuándo y dónde se tomó */}
+                    <span className="absolute inset-x-0 bottom-0 bg-fondo/85 px-1.5 py-1 text-[9px] leading-tight text-texto-2">
+                      {fo.tomadaEn ? fechaCorta(fo.tomadaEn) : "sin fecha"}
+                      {fo.lat != null && fo.lon != null && (
+                        <span className="num block text-texto-3">
+                          {fo.lat.toFixed(5)}, {fo.lon.toFixed(5)}
+                        </span>
+                      )}
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="py-6 text-center text-sm leading-relaxed text-texto-2">
+              <Camera size={22} className="mx-auto mb-2 text-texto-3" />
+              <b>Sin fotos todavía.</b>
+              <p className="mt-1 text-[13px] text-texto-3">
+                Las cuadrillas las cargan desde{" "}
+                <Link href="/campo" className="text-celeste hover:underline">Campo</Link> mientras trabajan
+                (antes y después, con GPS y hora). Son obligatorias para poder finalizar un trabajo, así que
+                van a aparecer acá solas.
+              </p>
+            </div>
+          )}
+        </Panel>
+        {h.lat != null && h.lon != null && (
+          <div>
+            <StreetView lat={h.lat} lon={h.lon} alto={200} etiqueta="La calle hoy" />
+            <p className="mt-1.5 text-[11px] leading-snug text-texto-3">
+              Vista de calle del punto exacto. Sirve de referencia para contrastar con las fotos de obra —
+              tocala para recorrerla.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+const ETIQUETA_MOMENTO: Record<string, string> = {
+  antes: "Antes",
+  durante: "Durante",
+  despues: "Después",
+};
 
 function Cadena({
   n,

@@ -51,6 +51,7 @@ import { vincularDemanda } from "@/lib/acciones";
 import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
 import { AnalisisZona } from "./analisis-zona";
+import { ComparadorObra } from "./comparador-obra";
 import { CortinaComparar } from "./cortina-comparar";
 import { GuiaMapa } from "./guia-mapa";
 import { BuscadorMapa } from "./buscador-mapa";
@@ -3249,14 +3250,13 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
         <div className="num pt-1 text-[10px] text-texto-3">
           {seleccion.lngLat[1].toFixed(6)}, {seleccion.lngLat[0].toFixed(6)}
         </div>
-        <a
-          href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${seleccion.lngLat[1]},${seleccion.lngLat[0]}`}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-block text-[12px] font-semibold text-celeste hover:underline"
-        >
-          Ver en Street View ↗
-        </a>
+
+        {/* La foto de la obra contra cómo se ve la calle, sin salir del mapa */}
+        <ComparadorObra
+          incidenteId={esIncidente ? Number(p.id) : null}
+          lat={seleccion.lngLat[1]}
+          lon={seleccion.lngLat[0]}
+        />
       </div>
 
       <div className="border-t border-borde p-3">
