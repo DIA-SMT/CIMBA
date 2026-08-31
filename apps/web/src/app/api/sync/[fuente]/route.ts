@@ -21,7 +21,24 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ fuente: str
     return NextResponse.json({ error: `fuente desconocida: ${fuente}` }, { status: 404 });
   }
 
-  const modo = process.env.CIMBA_FUENTE_AC ?? "mock";
+  /**
+   * El mock EXIGE opt-in explícito. Antes el default lo elegía solo, y el cron
+   * diario terminó inyectando ~6 demandas inventadas por día en la base real:
+   * 66 en total antes de detectarlo, contaminando la brecha y las métricas por
+   * distrito. Sin fuente configurada ahora no pasa nada — no se fabrican datos.
+   */
+  const modo = process.env.CIMBA_FUENTE_AC ?? "";
+  if (modo !== "atencion-ciudadana" && modo !== "mock") {
+    return NextResponse.json(
+      {
+        error:
+          "La fuente de Atención Ciudadana no está configurada (CIMBA_FUENTE_AC). " +
+          "No se ingesta nada: preferimos quedarnos sin datos nuevos antes que inventarlos.",
+        modo: modo || "(sin definir)",
+      },
+      { status: 503 },
+    );
+  }
   const adaptador =
     modo === "atencion-ciudadana"
       ? crearAdaptadorAtencionCiudadana(process.env.CIMBA_API_ATENCION_CIUDADANA ?? "")
