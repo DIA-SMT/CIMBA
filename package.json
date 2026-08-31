@@ -16,7 +16,8 @@
     "db:seed": "node scripts/db.mjs seed",
     "db:estado": "node scripts/db.mjs estado",
     "ingest:archivos": "pnpm --filter @cimba/integrations ingest:archivos",
-    "ingest:mock": "pnpm --filter @cimba/integrations ingest:mock"
+    "ingest:mock": "pnpm --filter @cimba/integrations ingest:mock",
+    "ingest:ac": "pnpm --filter @cimba/integrations ingest:ac"
   },
   "devDependencies": {
     "postgres": "^3.4.5",

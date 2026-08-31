@@ -237,14 +237,50 @@ export async function ingestarIntervenciones(
   return r;
 }
 
-export async function registrarSyncRun(r: ResultadoIngesta, desde: Date | null): Promise<void> {
+export async function registrarSyncRun(
+  r: ResultadoIngesta,
+  desde: Date | null,
+  /** Datos propios de la fuente (p. ej. hasta qué id llegó el barrido). */
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   const db = getDb();
   await db.execute(sql`
     insert into sync_runs (sistema, desde, hasta, leidos, insertados, actualizados, errores, detalle, finalizado_en)
     values (
       ${r.sistema}, ${fechaParam(desde)}::timestamptz, now(), ${r.leidos}, ${r.insertados}, ${r.actualizados},
-      ${r.errores.length}, ${JSON.stringify({ sinCambios: r.sinCambios, errores: r.errores.slice(0, 50) })}::jsonb,
+      ${r.errores.length},
+      ${JSON.stringify({ sinCambios: r.sinCambios, errores: r.errores.slice(0, 50), ...extra })}::jsonb,
       now()
     )
   `);
+}
+
+/**
+ * Cursor del barrido de Atención Ciudadana: el mayor id_reclamo ya importado.
+ * Sale de external_ref, que el pipeline llena por cada demanda promovida, así
+ * que no hay estado extra que mantener sincronizado.
+ *
+ * Las demandas que entraron por archivo también dejaron su id_reclamo acá, así
+ * que el barrido arranca donde terminó el export del Director (113362) en vez
+ * de repetir histórico. `respaldo` solo se usa si external_ref está vacío.
+ */
+export async function cursorAtencionCiudadana(respaldo: number): Promise<number> {
+  const filas = (await getDb().execute(sql`
+    select
+      (select max(case when id_remoto ~ '^[0-9]+$' then id_remoto::bigint end)
+         from external_ref
+        where sistema = 'atencion_ciudadana' and entidad_local = 'demanda') as importado,
+      (select max(case when detalle->>'hastaId' ~ '^[0-9]+$'
+                       then (detalle->>'hastaId')::bigint end)
+         from sync_runs
+        where sistema = 'atencion_ciudadana') as barrido
+  `)) as unknown as Array<{ importado: string | number | null; barrido: string | number | null }>;
+  const f = filas[0];
+  // El máximo de los dos: un tramo entero puede no tener ni un reclamo de
+  // pavimento, y mirando solo lo importado el cursor se quedaría clavado ahí,
+  // repitiendo esos mismos ids en cada corrida del cron.
+  return Math.max(
+    f?.importado != null ? Number(f.importado) : respaldo,
+    f?.barrido != null ? Number(f.barrido) : respaldo,
+  );
 }
