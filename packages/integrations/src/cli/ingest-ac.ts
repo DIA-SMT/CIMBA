@@ -34,7 +34,13 @@ async function main() {
     const ac = crearAdaptadorAtencionCiudadana(baseUrl, { desdeId: cursor, lote, concurrencia: 8 });
     const demandas = await ac.traerDemandas(null);
     const r = await ingestarDemandas(ac.sistema, demandas);
-    await registrarSyncRun(r, new Date(), { hastaId: ac.ultimoIdVisto, descartados: ac.descartados });
+    // Igual que el cron: hastaId solo si el tramo tenía ids reales, para no
+    // empujar el cursor más allá del final de la secuencia.
+    await registrarSyncRun(r, new Date(), {
+      ...(ac.existentes > 0 ? { hastaId: ac.ultimoIdVisto } : {}),
+      idsExistentes: ac.existentes,
+      descartados: ac.descartados,
+    });
 
     barridos += ac.ultimoIdVisto - cursor;
     totales = {
