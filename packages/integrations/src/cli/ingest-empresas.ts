@@ -17,6 +17,8 @@ import {
   traerPuntosGas,
 } from "../fuentes/bacheo-empresas";
 import {
+  filtrarFotosNuevas,
+  filtrarNovedades,
   guardarFotosExternas,
   ingestarDemandas,
   ingestarIntervenciones,
@@ -86,23 +88,41 @@ async function main() {
     process.exit(0);
   }
 
-  console.log("\nIngestando…");
-  const ri = await ingestarIntervenciones(SISTEMA_EMPRESAS, lote.intervenciones);
+  /**
+   * Se descarta primero lo que no cambió, con tres consultas en total. El
+   * pipeline consulta la base una vez por fila, así que sin este filtro una
+   * corrida sin novedades tardaría los mismos ~8 minutos que la primera.
+   */
+  const nIv = await filtrarNovedades(SISTEMA_EMPRESAS, "intervencion", lote.intervenciones);
+  const nDe = await filtrarNovedades(SISTEMA_EMPRESAS, "demanda", lote.demandas);
+  const nFo = await filtrarFotosNuevas(lote.fotos);
+
+  if (nIv.novedades.length === 0 && nDe.novedades.length === 0 && nFo.nuevas.length === 0) {
+    console.log("\nSin novedades: nada cambió desde la última sincronización.");
+    process.exit(0);
+  }
   console.log(
-    `  trabajos    → nuevos ${ri.insertados} | actualizados ${ri.actualizados} | sin cambios ${ri.sinCambios} | errores ${ri.errores.length}`,
+    `\nNovedades: ${nIv.novedades.length} trabajos, ${nDe.novedades.length} detecciones, ${nFo.nuevas.length} fotos` +
+      ` (sin cambios: ${nIv.sinCambios + nDe.sinCambios} filas, ${nFo.yaEstaban} fotos)`,
+  );
+
+  console.log("Ingestando…");
+  const ri = await ingestarIntervenciones(SISTEMA_EMPRESAS, nIv.novedades);
+  console.log(
+    `  trabajos    → nuevos ${ri.insertados} | actualizados ${ri.actualizados} | errores ${ri.errores.length}`,
   );
   if (ri.errores.length > 0) console.log(`    primer error: ${ri.errores[0]?.error}`);
 
-  const rd = await ingestarDemandas(SISTEMA_EMPRESAS, lote.demandas);
+  const rd = await ingestarDemandas(SISTEMA_EMPRESAS, nDe.novedades);
   console.log(
-    `  detecciones → nuevas ${rd.insertados} | actualizadas ${rd.actualizados} | sin cambios ${rd.sinCambios} | errores ${rd.errores.length}`,
+    `  detecciones → nuevas ${rd.insertados} | actualizadas ${rd.actualizados} | errores ${rd.errores.length}`,
   );
   if (rd.errores.length > 0) console.log(`    primer error: ${rd.errores[0]?.error}`);
 
-  // Las fotos van después: necesitan que la intervención ya exista para colgarse.
-  const rf = await guardarFotosExternas(SISTEMA_EMPRESAS, lote.fotos);
+  // Las fotos van después: necesitan que la fila ya exista para colgarse de ella.
+  const rf = await guardarFotosExternas(SISTEMA_EMPRESAS, nFo.nuevas);
   console.log(
-    `  fotos       → nuevas ${rf.insertadas} | ya estaban ${rf.yaEstaban} | sin intervención ${rf.sinIntervencion}`,
+    `  fotos       → nuevas ${rf.insertadas} | ya estaban ${rf.yaEstaban} | sin destino ${rf.sinIntervencion}`,
   );
 
   await registrarSyncRun(
@@ -111,7 +131,7 @@ async function main() {
       leidos: ri.leidos + rd.leidos,
       insertados: ri.insertados + rd.insertados,
       actualizados: ri.actualizados + rd.actualizados,
-      sinCambios: ri.sinCambios + rd.sinCambios,
+      sinCambios: nIv.sinCambios + nDe.sinCambios,
       errores: [...ri.errores, ...rd.errores],
     },
     null,

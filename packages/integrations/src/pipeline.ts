@@ -355,3 +355,46 @@ export async function guardarFotosExternas(
   }
   return r;
 }
+
+/**
+ * Descarta de un lote lo que ya está guardado sin cambios, comparando el hash
+ * del payload contra external_ref en UNA sola consulta.
+ *
+ * Sin esto, una sincronización periódica de la planilla de empresas hace 1.038
+ * viajes a la base solo para descubrir que no cambió nada: ~8 minutos por
+ * corrida. Filtrando antes, una corrida sin novedades no escribe ni consulta
+ * fila por fila, y el intervalo de 15 minutos deja de ser apretado.
+ *
+ * El hash tiene que calcularse igual que en la ingesta o todo parecería nuevo.
+ */
+export async function filtrarNovedades<T extends { idRemoto: string }>(
+  sistema: string,
+  entidad: "demanda" | "intervencion",
+  items: T[],
+): Promise<{ novedades: T[]; sinCambios: number }> {
+  if (items.length === 0) return { novedades: [], sinCambios: 0 };
+  const filas = (await getDb().execute(sql`
+    select id_remoto, payload_hash from external_ref
+    where sistema = ${sistema} and entidad_local = ${entidad}
+  `)) as unknown as Array<{ id_remoto: string; payload_hash: string | null }>;
+
+  const conocidos = new Map(filas.map((f) => [f.id_remoto, f.payload_hash]));
+  const novedades = items.filter((i) => conocidos.get(i.idRemoto) !== hashPayload(i));
+  return { novedades, sinCambios: items.length - novedades.length };
+}
+
+/**
+ * Igual que arriba pero para las fotos externas, que no pasan por external_ref:
+ * se comparan por URL, que es única por archivo de Drive.
+ */
+export async function filtrarFotosNuevas<T extends { urlExterna: string }>(
+  fotos: T[],
+): Promise<{ nuevas: T[]; yaEstaban: number }> {
+  if (fotos.length === 0) return { nuevas: [], yaEstaban: 0 };
+  const filas = (await getDb().execute(sql`
+    select url_externa from fotografias where url_externa is not null
+  `)) as unknown as Array<{ url_externa: string }>;
+  const conocidas = new Set(filas.map((f) => f.url_externa));
+  const nuevas = fotos.filter((f) => !conocidas.has(f.urlExterna));
+  return { nuevas, yaEstaban: fotos.length - nuevas.length };
+}

@@ -18,7 +18,8 @@
     "ingest:archivos": "pnpm --filter @cimba/integrations ingest:archivos",
     "ingest:mock": "pnpm --filter @cimba/integrations ingest:mock",
     "ingest:ac": "pnpm --filter @cimba/integrations ingest:ac",
-    "ingest:empresas": "pnpm --filter @cimba/integrations ingest:empresas"
+    "ingest:empresas": "pnpm --filter @cimba/integrations ingest:empresas",
+    "runner": "pnpm --filter @cimba/integrations runner"
   },
   "devDependencies": {
     "mysql2": "^3.24.2",

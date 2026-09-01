@@ -23,3 +23,5 @@ export {
   SISTEMA_EMPRESAS,
 } from "./fuentes/bacheo-empresas";
 export type { LoteEmpresas, FotoEmpresa, PuntoGas } from "./fuentes/bacheo-empresas";
+export { sincronizarEmpresas, DEPLOY_CARGA_POR_DEFECTO } from "./fuentes/sincronizar-empresas";
+export type { ResumenSincronizacion } from "./fuentes/sincronizar-empresas";

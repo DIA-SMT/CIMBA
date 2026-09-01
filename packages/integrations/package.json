@@ -13,6 +13,7 @@
     "ingest:mock": "tsx src/cli/ingest-mock.ts",
     "ingest:ac": "tsx src/cli/ingest-ac.ts",
     "ingest:empresas": "tsx src/cli/ingest-empresas.ts",
+    "runner": "tsx src/cli/runner.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
