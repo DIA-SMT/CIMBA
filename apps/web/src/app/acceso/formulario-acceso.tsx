@@ -23,7 +23,10 @@ export function FormularioAcceso() {
         body: JSON.stringify({ usuario: usuario.trim(), clave }),
       });
       if (res.ok) {
-        router.push("/mapa");
+        // El destino depende de quién entró: el personal va al mapa,
+        // las empresas contratistas a su portal de órdenes.
+        const cuerpo = (await res.json().catch(() => null)) as { destino?: string } | null;
+        router.push(cuerpo?.destino ?? "/mapa");
         return;
       }
       const cuerpo = (await res.json().catch(() => null)) as { error?: string } | null;

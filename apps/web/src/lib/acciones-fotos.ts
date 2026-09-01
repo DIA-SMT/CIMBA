@@ -22,7 +22,7 @@ export async function fotosDeIncidente(incidenteId: number): Promise<FotoObra[]>
   const sesion = await requerirSesion();
   if (!Number.isInteger(incidenteId)) return [];
   return conRls(
-    { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona },
+    { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona, id_empresa: sesion.id_empresa },
     async (tx) => {
       const filas = (await tx.execute(sql`
         select f.id, f.momento, f.storage_path, f.url_externa, f.tomada_en,

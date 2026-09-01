@@ -6,7 +6,7 @@ import { conRls, sql } from "@cimba/db";
 import { tipoProblemaSchema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
 
-const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
+const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 export interface ResultadoConsolidacion {
   vinculadasAExistentes: number;

@@ -33,7 +33,7 @@ async function analizarDemandaConIAInterno(entrada: { demandaId: number }): Prom
   const { demandaId } = z.object({ demandaId: z.number().int() }).parse(entrada);
   if (!iaDisponible()) throw new Error("La integración de IA no está configurada (OPENROUTER_API_KEY)");
 
-  const claims = { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona };
+  const claims = { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona, id_empresa: sesion.id_empresa };
 
   const demanda = await conRls(claims, async (tx) => {
     const filas = (await tx.execute(sql`

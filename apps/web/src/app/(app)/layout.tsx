@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
+  CheckCheck,
   ClipboardList,
+  FileSignature,
   GitCompareArrows,
   HardHat,
   Inbox,
@@ -21,9 +23,11 @@ import { BotonPush } from "@/components/boton-push";
 const NAV = [
   { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
   { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
+  { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
   { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
   { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
   { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
+  { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
   { href: "/calidad", etiqueta: "Calidad", icono: ShieldCheck },
   { href: "/cargar", etiqueta: "Cargar", icono: Upload },
   { href: "/hcd/nuevo", etiqueta: "HCD", icono: Landmark },
@@ -34,6 +38,9 @@ const NAV = [
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const sesion = await leerSesion();
   if (!sesion) redirect("/acceso");
+  // La empresa contratista tiene su propio portal: nada del chrome del
+  // personal le sirve, y las RLS igual no le dejarían ver casi nada.
+  if (sesion.rol_cimba === "empresa") redirect("/empresa");
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">

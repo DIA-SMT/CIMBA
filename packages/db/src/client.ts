@@ -35,6 +35,8 @@ export interface ClaimsCimba {
   sub: string; // perfil.id
   rol_cimba: RolUsuario;
   id_persona: number;
+  /** Solo para el rol empresa: las políticas RLS lo leen vía cimba_empresa(). */
+  id_empresa?: number;
 }
 
 /**

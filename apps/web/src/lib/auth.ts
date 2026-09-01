@@ -13,6 +13,8 @@ const sesionSchema = z.object({
   // postgres.js devuelve bigint como string: coercionar siempre
   id_persona: z.coerce.number(),
   nombre: z.string(),
+  /** Solo cuando rol_cimba = 'empresa': a qué contratista pertenece. */
+  id_empresa: z.coerce.number().optional(),
 });
 export type Sesion = z.infer<typeof sesionSchema>;
 

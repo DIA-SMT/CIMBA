@@ -10,7 +10,7 @@ import { guiaParaPrompt } from "./guia-funciones";
  * parametrizadas (nunca SQL libre, nunca datos de contacto de vecinos).
  */
 
-const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
+const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 type Filas = Array<Record<string, unknown>>;
 
@@ -130,6 +130,53 @@ export const HERRAMIENTAS_MIGUE = [
         properties: {
           distrito: { type: "number", description: "Número de distrito (1-20). Omitilo para el ranking completo." },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ordenes_trabajo",
+      description:
+        "Órdenes de trabajo emitidas a las empresas contratistas: estado, progreso (items hechos/pendientes), m² reportados, empresa, circuito y vencimiento. Usala para '¿cómo viene la orden de UOCRA?', '¿qué órdenes hay activas?', '¿cuánto reportó Ingeco?'.",
+      parameters: {
+        type: "object",
+        properties: {
+          estado: { type: "string", enum: ["borrador", "emitida", "en_ejecucion", "completada", "anulada"] },
+          empresa: { type: "string", description: "Nombre o parte del nombre de la empresa" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "circuitos_operativos",
+      description:
+        "Los 47 circuitos de la ciudad como unidad de planificación: pendientes, reclamos abiertos, reparados, prioridad vial (primaria/secundaria/terciaria), qué empresa lo trabaja y órdenes activas. Usala para '¿qué circuito está peor?', '¿quién trabaja el 15B?', 'ranking de circuitos'.",
+      parameters: {
+        type: "object",
+        properties: {
+          codigo: { type: "string", description: "Código de circuito (ej: '15B'). Omitilo para el ranking." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "proyeccion_capacidad",
+      description:
+        "Proyecta cuánto cuesta un lote de trabajo con la regla del Director (10 baches por turno por cuadrilla, 2 turnos/día, 4 t de mezcla por turno, ~14 baches chicos o 4 carpetas por turno): devuelve turnos, toneladas y días. Usala para '¿cuánto tardamos en hacer 200 baches con 3 cuadrillas?', '¿cuántas toneladas hacen falta para el circuito 11A?'.",
+      parameters: {
+        type: "object",
+        properties: {
+          baches: { type: "number", description: "Cantidad de baches puntuales" },
+          carpetas: { type: "number", description: "Cantidad de carpetas (paños completos)" },
+          cuadrillas: { type: "number", description: "Cuadrillas disponibles (default 1)" },
+          turnos_por_dia: { type: "number", description: "Turnos por día (default 2: mañana y tarde)" },
+        },
+        required: ["baches"],
       },
     },
   },
@@ -354,6 +401,67 @@ export async function ejecutarHerramientaMigue(
       return { ranking_por_deuda_sin_tocar: conPct, nota: "ordenado de mayor a menor deuda sin atender" };
     }
 
+    case "ordenes_trabajo": {
+      const { listarOrdenes } = await import("./ordenes");
+      const estado = typeof args.estado === "string" ? args.estado : undefined;
+      const filas = await listarOrdenes(sesion, { estado });
+      const empresa = typeof args.empresa === "string" ? args.empresa.toLowerCase() : null;
+      const filtradas = empresa
+        ? filas.filter((o) => o.empresaNombre.toLowerCase().includes(empresa))
+        : filas;
+      return {
+        ordenes: filtradas.slice(0, 20).map((o) => ({
+          numero: o.numero,
+          estado: o.estado,
+          prioridad: o.prioridad,
+          empresa: o.empresaNombre,
+          circuito: o.circuitoCodigo,
+          progreso: `${o.hechos}/${o.items} items`,
+          m2_reportados: o.m2Reportados,
+          vence: o.venceEn,
+        })),
+        total: filtradas.length,
+      };
+    }
+
+    case "circuitos_operativos": {
+      const { resumenCircuitos } = await import("./ordenes");
+      const filas = await resumenCircuitos(sesion);
+      const codigo = typeof args.codigo === "string" ? args.codigo.trim().toUpperCase() : null;
+      const mapear = (c: (typeof filas)[number]) => ({
+        circuito: c.codigo,
+        pendientes: c.pendientes,
+        reclamos_abiertos: c.demandasAbiertas,
+        reparados: c.reparados,
+        prioridad: c.prioridad ?? "sin asignar",
+        empresa_que_lo_trabaja: c.empresaNombre ?? "sin asignar",
+        ordenes_activas: c.ordenesActivas,
+      });
+      if (codigo) {
+        const uno = filas.find((c) => c.codigo.toUpperCase() === codigo);
+        if (!uno) return { error: `no existe el circuito ${codigo}` };
+        return { circuito: mapear(uno) };
+      }
+      return { ranking_por_pendientes: filas.slice(0, 15).map(mapear), total_circuitos: filas.length };
+    }
+
+    case "proyeccion_capacidad": {
+      const { obtenerCapacidad } = await import("./ordenes");
+      const { proyectar } = await import("./capacidad");
+      const p = await obtenerCapacidad(sesion);
+      const baches = Math.max(0, Number(args.baches) || 0);
+      const carpetas = Math.max(0, Number(args.carpetas) || 0);
+      const cuadrillas = Math.max(1, Number(args.cuadrillas) || 1);
+      const turnosPorDia = Number(args.turnos_por_dia) || undefined;
+      const r = proyectar({ baches, carpetas }, { cuadrillas, turnosPorDia }, p);
+      return {
+        trabajo: { baches, carpetas },
+        dotacion: { cuadrillas, turnos_por_dia: turnosPorDia ?? p.turnosPorDia },
+        resultado: { turnos: r.turnos, toneladas_de_mezcla: r.toneladas, dias_habiles: r.dias },
+        regla: `${p.bachesPorTurno} baches por turno por cuadrilla; ${p.toneladasPorTurno} t por turno; ${p.carpetasPorTurno} carpetas por turno`,
+      };
+    }
+
     case "accionar_mapa": {
       // La ejecución real ocurre en el navegador (el mapa marca y vuela);
       // acá solo se confirma para que Migue redacte su respuesta.
@@ -382,6 +490,10 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - LAS DOS ESCALAS DE M²: un bache de cuadrilla son ~4 m²; un paño de hormigón de una obra contratada de SIGOV son ~196 m², casi 50 veces más. Por eso los metros van SEPARADOS en "m² de bacheo" y "m² de obra contratada", y NUNCA los sumás en un solo número: sumados, las 356 obras de SIGOV se llevan el 93% del total y parece que no se bachea. Si te preguntan "cuántos m² se hicieron", dás los dos y decís cuál es cuál.
 - REINCIDENCIA: una demanda nueva sobre un lugar que ya se había reparado — señal de falla estructural.
 - SCORE DE PRIORIDAD (0-100): combina cuántas demandas acumula, antigüedad, gravedad del tipo, reincidencia y si es una avenida.
+- ORDEN DE TRABAJO (OT): el papel con el que el Director de Bacheo manda trabajo a una empresa contratista. Nace en borrador, se EMITE (le llega a la empresa en su portal), pasa a en ejecución cuando la empresa carga el primer bache hecho, y se completa sola cuando no quedan items pendientes. Cada item hecho crea la INTERVENCIÓN real con medidas (ancho × largo × espesor) y foto.
+- CIRCUITO: la unidad de planificación territorial (47 en la ciudad, códigos tipo "15B"). Cada circuito puede tener PRIORIDAD VIAL (primaria/secundaria/terciaria) y una EMPRESA asignada que lo trabaja. Las "zonas" concesionadas de Ingeco y Calleri son conjuntos de circuitos asignados.
+- CAPACIDAD (la regla del Director): una cuadrilla hace ~10 baches por turno, con turnos mañana y tarde; de 4 toneladas de mezcla salen ~14 baches chicos o 4 carpetas por turno. Con eso se proyecta cuánto cuesta cualquier lote de trabajo (herramienta proyeccion_capacidad).
+- CIERRE DE RECLAMOS: cuando el problema de un reclamo ya está reparado, Atención Ciudadana le responde al vecino y cierra el ticket desde /cierres. Un reclamo cerrado sale de la brecha.
 
 Sos también EL GUÍA EXPERTO DEL MAPA COMANDO (/mapa). Estas son todas sus funciones — cuando pregunten "¿para qué sirve X?" o "¿cómo hago Y en el mapa?", explicalas con esto, corto y práctico:
 ${guiaParaPrompt()}

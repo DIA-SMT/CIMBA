@@ -114,9 +114,15 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
     tour: "balance",
   },
   {
+    id: "circuitos-operativos",
+    titulo: "Circuitos operativos",
+    desc: "Con la capa de circuitos prendida, cada circuito se pinta según la empresa que lo trabaja y su borde marca la prioridad vial (naranja = primaria, amarillo = secundaria). Tocá un circuito para ver su ficha: pendientes, reclamos, empresa asignada y órdenes activas. La asignación se maneja desde Órdenes.",
+    como: "Prendé «Circuitos» en el panel de Capas y hacé click sobre cualquier circuito.",
+  },
+  {
     id: "migue",
     titulo: "Migue, tu asistente",
-    desc: "Preguntale lo que quieras sobre los datos en lenguaje natural: consulta la base real y contesta con números exactos. También sabe usar el mapa: pedile «mostrame los baches sin atender en Belgrano» y te lleva y los marca. Y conoce esta guía completa: preguntale para qué sirve cualquier botón.",
+    desc: "Preguntale lo que quieras sobre los datos en lenguaje natural: consulta la base real y contesta con números exactos. También sabe usar el mapa: pedile «mostrame los baches sin atender en Belgrano» y te lleva y los marca. Y conoce esta guía completa: preguntale para qué sirve cualquier botón. También conoce las órdenes de trabajo, los circuitos y la proyección de capacidad.",
     tour: "migue",
   },
 ];

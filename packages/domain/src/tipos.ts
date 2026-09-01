@@ -34,6 +34,8 @@ export const ESTADOS_DEMANDA = [
   "vinculada",
   "descartada",
   "fuera_de_alcance",
+  // cerrada = respondida al vecino con la reparación hecha (cierre desde AC)
+  "cerrada",
 ] as const;
 export const estadoDemandaSchema = z.enum(ESTADOS_DEMANDA);
 export type EstadoDemanda = z.infer<typeof estadoDemandaSchema>;
@@ -65,9 +67,31 @@ export const ROLES_USUARIO = [
   "lectura",
   // al final: el índice define el id_persona ficticio del acceso dev (90000+i)
   "funcionario",
+  // empresa contratista: usuario externo, solo ve sus órdenes de trabajo
+  "empresa",
 ] as const;
 export const rolUsuarioSchema = z.enum(ROLES_USUARIO);
 export type RolUsuario = z.infer<typeof rolUsuarioSchema>;
+
+// ── Órdenes de trabajo ──────────────────────────────────────────────────────
+
+export const PRIORIDADES_VIALES = ["primaria", "secundaria", "terciaria"] as const;
+export const prioridadVialSchema = z.enum(PRIORIDADES_VIALES);
+export type PrioridadVial = z.infer<typeof prioridadVialSchema>;
+
+export const ESTADOS_ORDEN = [
+  "borrador",
+  "emitida",
+  "en_ejecucion",
+  "completada",
+  "anulada",
+] as const;
+export const estadoOrdenSchema = z.enum(ESTADOS_ORDEN);
+export type EstadoOrden = z.infer<typeof estadoOrdenSchema>;
+
+export const ESTADOS_ITEM_ORDEN = ["pendiente", "hecho", "no_encontrado"] as const;
+export const estadoItemOrdenSchema = z.enum(ESTADOS_ITEM_ORDEN);
+export type EstadoItemOrden = z.infer<typeof estadoItemOrdenSchema>;
 
 // ── Geometría ───────────────────────────────────────────────────────────────
 

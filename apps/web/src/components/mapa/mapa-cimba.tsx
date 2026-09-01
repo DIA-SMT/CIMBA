@@ -44,6 +44,7 @@ import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
 import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
+import type { CircuitoResumen } from "@/lib/ordenes";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
@@ -206,19 +207,33 @@ const capaAvenidasNombre: LayerProps = {
 };
 
 // ── Límites territoriales de referencia ──────────────────────────────────────
-// Tres capas de contexto administrativo (no accionan nada, no tienen datos
-// propios): distritos (violeta, la más "oficial" — alimenta distrito_id),
-// circuitos electorales (verde), barrios (rosa, la más fina — 327 polígonos,
+// Tres capas de contexto administrativo: distritos (violeta, la más "oficial"
+// — alimenta distrito_id), circuitos (verde — desde el módulo de órdenes de
+// trabajo dejaron de ser solo referencia: cargan empresa asignada y prioridad,
+// ver "Capa OPERATIVA" abajo), barrios (rosa, la más fina — 327 polígonos,
 // solo con etiqueta a partir de zoom 14 para no saturar la pantalla).
+// Pedido literal del Director: "quiero que los circuitos y distritos estén
+// mucho más marcados" — línea sólida firme + un halo tenue debajo, para que
+// el límite se lea incluso con el satélite prendido sin tapar los datos.
+const capaDistritosHalo: LayerProps = {
+  id: "distritos-halo",
+  type: "line",
+  source: "distritos",
+  paint: {
+    "line-color": "#a78bfa",
+    "line-opacity": 0.22,
+    "line-blur": 3,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 5, 14, 8, 17, 12],
+  },
+};
 const capaDistritosLinea: LayerProps = {
   id: "distritos-linea",
   type: "line",
   source: "distritos",
   paint: {
     "line-color": "#a78bfa",
-    "line-opacity": 0.75,
-    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1, 14, 2, 17, 3],
-    "line-dasharray": [4, 2],
+    "line-opacity": 0.8,
+    "line-width": 2.5,
   },
 };
 /**
@@ -246,7 +261,7 @@ const capaDistritosNombre: LayerProps = {
   id: "distritos-nombre",
   type: "symbol",
   source: "distritos",
-  minzoom: 12,
+  minzoom: 11,
   layout: {
     // Con datos: "Distrito 7 · 89%". Sin pedidos abiertos: solo el nombre.
     "text-field": [
@@ -255,9 +270,9 @@ const capaDistritosNombre: LayerProps = {
       ["concat", ["get", "nombre"], " · ", ["to-string", ["get", "pct_brecha"]], "%"],
     ],
     "text-font": ["Open Sans Bold"],
-    "text-size": 12,
+    "text-size": 12.5,
   },
-  paint: { "text-color": "#a78bfa", "text-halo-color": "#070a10", "text-halo-width": 1.6 },
+  paint: { "text-color": "#a78bfa", "text-halo-color": "#070a10", "text-halo-width": 2.2 },
 };
 
 /** Contorno grueso del distrito aislado con ?distrito= (el filtro es runtime). */
@@ -275,22 +290,77 @@ const capaCircuitosLinea: LayerProps = {
   source: "circuitos",
   paint: {
     "line-color": "#34d399",
-    "line-opacity": 0.65,
-    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.8, 14, 1.4, 17, 2.2],
-    "line-dasharray": [1, 1.6],
+    "line-opacity": 0.85,
+    "line-width": 2,
   },
 };
 const capaCircuitosNombre: LayerProps = {
   id: "circuitos-nombre",
   type: "symbol",
   source: "circuitos",
-  minzoom: 13,
+  minzoom: 12.5,
   layout: {
-    "text-field": ["concat", "Circuito ", ["get", "circuito"]],
-    "text-font": ["Open Sans Regular"],
-    "text-size": 10.5,
+    // El código pelado ("15B") es como lo nombra el Director al armar la
+    // orden: la palabra "Circuito" solo agregaba ruido a 47 etiquetas.
+    "text-field": ["get", "circuito"],
+    "text-font": ["Open Sans Bold"],
+    "text-size": 11.5,
+    "text-letter-spacing": 0.05,
   },
-  paint: { "text-color": "#34d399", "text-halo-color": "#070a10", "text-halo-width": 1.4 },
+  paint: { "text-color": "#34d399", "text-halo-color": "#070a10", "text-halo-width": 2 },
+};
+
+// ── Capa OPERATIVA de circuitos ──────────────────────────────────────────────
+// Con el toggle de circuitos prendido, el mapa pide /api/circuitos-operativos
+// y junta por código contra el geojson estático: relleno suave por EMPRESA
+// asignada, borde reforzado por PRIORIDAD. Si el fetch falla, los circuitos
+// se ven igual que siempre (los datos operativos son opcionales).
+
+/** 12 colores categóricos distinguibles entre sí sobre el fondo oscuro. */
+const PALETA_EMPRESAS = [
+  "#4f9cf9", "#f2a33c", "#3ec9a7", "#e06fae", "#b18cff", "#f4dc00",
+  "#6fd1e8", "#ef7d54", "#9ecf4a", "#ff8fa3", "#c9b458", "#8f9bff",
+] as const;
+
+/** Color estable por hash del nombre: la misma empresa se pinta igual en
+ *  cualquier sesión y pantalla, sin coordinar nada con el servidor. */
+function colorDeEmpresa(nombre: string): string {
+  let h = 5381;
+  for (let i = 0; i < nombre.length; i++) h = ((h << 5) + h + nombre.charCodeAt(i)) | 0;
+  return PALETA_EMPRESAS[Math.abs(h) % PALETA_EMPRESAS.length] ?? "#4f9cf9";
+}
+
+const ETIQUETA_PRIORIDAD: Record<string, string> = {
+  primaria: "Primaria",
+  secundaria: "Secundaria",
+  terciaria: "Terciaria",
+};
+const COLOR_PRIORIDAD: Record<string, string> = { primaria: "#d95926", secundaria: "#f4dc00" };
+
+const capaCircuitosEmpresa: LayerProps = {
+  id: "circuitos-empresa-relleno",
+  type: "fill",
+  source: "circuitos",
+  paint: {
+    "fill-color": ["coalesce", ["get", "color_empresa"], "rgba(0,0,0,0)"],
+    // Sin empresa asignada no hay tinte, pero la capa sigue siendo clickeable
+    // (la opacidad 0 no saca el polígono de queryRenderedFeatures).
+    "fill-opacity": ["case", ["has", "color_empresa"], 0.12, 0],
+  },
+};
+
+/** Refuerzo del borde según prioridad; la terciaria no se refuerza a propósito
+ *  (que lo urgente resalte exige que lo demás no compita). */
+const capaCircuitosPrioridad: LayerProps = {
+  id: "circuitos-prioridad-borde",
+  type: "line",
+  source: "circuitos",
+  filter: ["match", ["get", "prioridad"], ["primaria", "secundaria"], true, false],
+  paint: {
+    "line-color": ["match", ["get", "prioridad"], "primaria", "#d95926", "secundaria", "#f4dc00", "rgba(0,0,0,0)"],
+    "line-opacity": 0.9,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 3, 17, 4.5],
+  },
 };
 
 const capaBarriosRelleno: LayerProps = {
@@ -714,6 +784,54 @@ function MapaInterno({
     if (!verCircuitos || circuitosGeo) return;
     fetch("/data/circuitos.json").then((r) => r.json()).then(setCircuitosGeo).catch(() => {});
   }, [verCircuitos, circuitosGeo]);
+  // Datos operativos por circuito (empresa/prioridad/pendientes): se piden
+  // junto con el toggle y son OPCIONALES — si fallan, los circuitos se ven
+  // como siempre, solo sin tinte de empresa ni popup con números.
+  const [circuitosOp, setCircuitosOp] = useState<CircuitoResumen[] | null>(null);
+  useEffect(() => {
+    if (!verCircuitos || circuitosOp) return;
+    fetch("/api/circuitos-operativos")
+      .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
+      .then((datos) => {
+        if (Array.isArray(datos)) setCircuitosOp(datos as CircuitoResumen[]);
+      })
+      .catch(() => {});
+  }, [verCircuitos, circuitosOp]);
+  // Popup del circuito clickeado (código, empresa, prioridad, carga pendiente)
+  const [circuitoSel, setCircuitoSel] = useState<Record<string, unknown> | null>(null);
+
+  /**
+   * Join client-side por código: el polígono viene del geojson estático (ya
+   * cacheado por el navegador) y lo vivo del endpoint. Un circuito sin match
+   * queda tal cual — el render nunca depende de que lo operativo exista.
+   */
+  const circuitosConOperativa = useMemo<FCPoligono | null>(() => {
+    if (!circuitosGeo) return null;
+    if (!circuitosOp || circuitosOp.length === 0) return circuitosGeo;
+    const porCodigo = new Map(circuitosOp.map((c) => [c.codigo, c]));
+    return {
+      type: "FeatureCollection",
+      features: circuitosGeo.features.map((f) => {
+        const op = porCodigo.get(String(f.properties.circuito ?? ""));
+        if (!op) return f;
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            op: true,
+            empresa: op.empresaNombre,
+            // color_empresa solo si hay empresa: la capa de relleno usa
+            // ["has","color_empresa"] para dejar transparente lo sin asignar.
+            ...(op.empresaNombre ? { color_empresa: colorDeEmpresa(op.empresaNombre) } : {}),
+            prioridad: op.prioridad,
+            pendientes: op.pendientes,
+            demandas_abiertas: op.demandasAbiertas,
+            ordenes_activas: op.ordenesActivas,
+          },
+        };
+      }),
+    };
+  }, [circuitosGeo, circuitosOp]);
   useEffect(() => {
     if (!verBarrios || barriosGeo) return;
     fetch("/data/barrios.json").then((r) => r.json()).then(setBarriosGeo).catch(() => {});
@@ -1626,6 +1744,16 @@ function MapaInterno({
     if (!feature) {
       setSeleccion(null);
       setCotejo(null);
+      setCircuitoSel(null);
+      return;
+    }
+    // El relleno del circuito cubre todo el polígono, pero los puntos se
+    // dibujan encima y llegan primero en e.features: este branch solo entra
+    // clickeando "campo abierto" adentro de un circuito.
+    if (feature.layer.id === "circuitos-empresa-relleno") {
+      setSeleccion(null);
+      setCotejo(null);
+      setCircuitoSel(feature.properties ?? {});
       return;
     }
     if (feature.layer.id === "clusters") {
@@ -1641,6 +1769,7 @@ function MapaInterno({
     const geom = feature.geometry as { type: string; coordinates?: [number, number] };
     const lngLat: [number, number] =
       geom.type === "Point" && geom.coordinates ? [geom.coordinates[0], geom.coordinates[1]] : [e.lngLat.lng, e.lngLat.lat];
+    setCircuitoSel(null);
     if (feature.layer.id === "incidentes-punto") {
       setSeleccion({ capa: "incidente", props: feature.properties ?? {}, lngLat });
     } else if (feature.layer.id === "demandas-punto") {
@@ -1701,7 +1830,13 @@ function MapaInterno({
         }}
         mapStyle={ESTILO_MAPA}
         maxZoom={19.5}
-        interactiveLayerIds={["clusters", "incidentes-punto", "demandas-punto"]}
+        interactiveLayerIds={
+          // El relleno de circuitos entra solo cuando su capa está montada:
+          // consultar una capa inexistente haría fallar el query de features.
+          verCircuitos && circuitosConOperativa
+            ? ["clusters", "incidentes-punto", "demandas-punto", "circuitos-empresa-relleno"]
+            : ["clusters", "incidentes-punto", "demandas-punto"]
+        }
         onClick={alClick}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1797,6 +1932,14 @@ function MapaInterno({
                 " · " + String(p.estado).replaceAll("_", " ") +
                 (p.score != null ? " · score " + Number(p.score).toFixed(0) : ""),
             ];
+          } else if (f.layer.id === "circuitos-empresa-relleno") {
+            lineas = [
+              "Circuito " + String(p.circuito ?? ""),
+              p.op
+                ? (p.empresa ? String(p.empresa) : "sin asignar") +
+                  " · " + numero(Number(p.pendientes ?? 0)) + " pendientes · clic para el detalle"
+                : "clic para el detalle",
+            ];
           } else {
             lineas = [
               String(p.direccion ?? "Pedido #" + String(p.id)),
@@ -1847,15 +1990,18 @@ function MapaInterno({
             <Layer {...capaBarriosNombre} />
           </Source>
         )}
-        {verCircuitos && circuitosGeo && (
-          <Source id="circuitos" type="geojson" data={circuitosGeo}>
+        {verCircuitos && circuitosConOperativa && (
+          <Source id="circuitos" type="geojson" data={circuitosConOperativa}>
+            <Layer {...capaCircuitosEmpresa} />
             <Layer {...capaCircuitosLinea} />
+            <Layer {...capaCircuitosPrioridad} />
             <Layer {...capaCircuitosNombre} />
           </Source>
         )}
         {verDistritos && distritosConBrecha && (
           <Source id="distritos" type="geojson" data={distritosConBrecha}>
             {verCoropleta && <Layer {...capaDistritosRelleno} />}
+            <Layer {...capaDistritosHalo} />
             <Layer {...capaDistritosLinea} />
             {distritoFoco != null && <Layer {...capaDistritoFoco(distritoFoco)} />}
             <Layer {...capaDistritosNombre} />
@@ -2536,6 +2682,85 @@ function MapaInterno({
         </aside>
       )}
 
+      {/* Detalle operativo del circuito clickeado */}
+      {circuitoSel && !comparar && (
+        <aside className="panel-vidrio absolute top-28 right-3 z-20 w-72 max-w-[calc(100vw-24px)] rounded-xl">
+          <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+            <span className="flex items-center gap-2 text-sm font-bold">
+              <span
+                className="inline-block h-3 w-3 rounded-sm"
+                style={{
+                  background: circuitoSel.color_empresa ? String(circuitoSel.color_empresa) : "#34d399",
+                  opacity: circuitoSel.color_empresa ? 1 : 0.5,
+                }}
+              />
+              Circuito {String(circuitoSel.circuito ?? "")}
+            </span>
+            <button onClick={() => setCircuitoSel(null)} className="text-texto-3 hover:text-texto">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="space-y-3 px-4 py-4 text-[13px]">
+            {circuitoSel.op ? (
+              <>
+                <Dato
+                  etiqueta="Empresa asignada"
+                  valor={
+                    circuitoSel.empresa ? (
+                      <span className="flex items-center gap-2 font-semibold">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ background: String(circuitoSel.color_empresa ?? "#8b94a3") }}
+                        />
+                        {String(circuitoSel.empresa)}
+                      </span>
+                    ) : (
+                      <span className="text-texto-3">sin asignar</span>
+                    )
+                  }
+                />
+                <Dato
+                  etiqueta="Prioridad"
+                  valor={
+                    circuitoSel.prioridad ? (
+                      <span
+                        className="font-semibold"
+                        style={{ color: COLOR_PRIORIDAD[String(circuitoSel.prioridad)] ?? "#8fa3bf" }}
+                      >
+                        {ETIQUETA_PRIORIDAD[String(circuitoSel.prioridad)] ?? String(circuitoSel.prioridad)}
+                      </span>
+                    ) : (
+                      <span className="text-texto-3">sin definir</span>
+                    )
+                  }
+                />
+                <div className="grid grid-cols-3 gap-2 border-t border-borde pt-3 text-center">
+                  {(
+                    [
+                      ["pendientes", "Pendientes", "#3987e5"],
+                      ["demandas_abiertas", "Reclamos", "#d95926"],
+                      ["ordenes_activas", "OTs activas", "#f4dc00"],
+                    ] as const
+                  ).map(([clave, etiqueta, color]) => (
+                    <div key={clave}>
+                      <div className="num text-lg font-extrabold" style={{ color }}>
+                        {numero(Number(circuitoSel[clave] ?? 0))}
+                      </div>
+                      <div className="text-[9px] font-medium tracking-wider text-texto-3 uppercase">{etiqueta}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-texto-3">
+                Sin datos operativos ahora mismo (el mapa muestra solo los límites). Reintentá recargando la
+                página; el trazado del circuito no depende de esto.
+              </p>
+            )}
+          </div>
+        </aside>
+      )}
+
       {/* Menú contextual del clic derecho */}
       {menuCtx && (
         <>
@@ -2931,7 +3156,7 @@ function MapaInterno({
             )}
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Circuitos electorales de San Miguel de Tucumán (INDEC) — se etiquetan al acercar el zoom"
+              title="Los 47 circuitos de trabajo del bacheo (trazado electoral INDEC). Con órdenes de trabajo cargadas se tiñen por empresa asignada y el borde marca la prioridad: naranja primaria, amarillo secundaria. Clic en un circuito para su detalle."
             >
               <input
                 type="checkbox"
@@ -2940,8 +3165,17 @@ function MapaInterno({
                 className="accent-[#0066ff]"
               />
               <span className="inline-block h-0.5 w-4 rounded bg-[#34d399]" />
-              Circuitos electorales
+              Circuitos de trabajo
             </label>
+            {verCircuitos && circuitosOp && (
+              <p className="mb-2 ml-5 flex items-center gap-1.5 text-[10px] text-texto-3">
+                <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(79,156,249,0.45)" }} />
+                relleno = empresa ·
+                <span className="inline-block h-0.5 w-3 rounded" style={{ background: "#d95926" }} />
+                <span className="inline-block h-0.5 w-3 rounded" style={{ background: "#f4dc00" }} />
+                borde = prioridad
+              </p>
+            )}
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="327 barrios — los que tienen problemas reportados se marcan con un tinte rojo tenue. Etiquetas solo de cerca."

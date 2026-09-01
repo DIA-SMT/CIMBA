@@ -5,7 +5,7 @@ import { conRls, sql } from "@cimba/db";
 import { requerirSesion, type Sesion } from "./auth";
 import { notificarPerfil } from "./push";
 
-const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
+const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 const suscripcionSchema = z.object({
   endpoint: z.string().url().max(1000),

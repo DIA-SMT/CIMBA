@@ -7,7 +7,7 @@ import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba
 import { requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
 
-const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
+const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 // ── Score de prioridad (recalculado en cada evento relevante) ───────────────
 

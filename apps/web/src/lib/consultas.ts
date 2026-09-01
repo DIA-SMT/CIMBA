@@ -3,7 +3,7 @@ import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 
-const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona });
+const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 /**
  * Los <select> de los formularios GET mandan "" al elegir "Todos". Un "" que
