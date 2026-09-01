@@ -134,6 +134,24 @@ export async function ingestarDemandas(
 }
 
 /**
+ * En qué estado deja al incidente cada estado de su intervención. Una obra
+ * anulada tiene que salir del pendiente: si queda como programada, el sistema
+ * promete un arreglo que ya nadie va a hacer.
+ */
+function incidenteSegun(estado: IntervencionNormalizada["estado"]): string {
+  switch (estado) {
+    case "finalizada":
+      return "reparado";
+    case "en_curso":
+      return "en_ejecucion";
+    case "anulada":
+      return "desestimado";
+    default:
+      return "programado";
+  }
+}
+
+/**
  * Las intervenciones históricas (planillas de bacheo, obras SIGOV) llegan sin
  * incidente: se les crea uno con el estado coherente (reparado si la
  * intervención terminó) para conservar el modelo demanda→incidente→intervención.
@@ -186,14 +204,31 @@ export async function ingestarIntervenciones(
             metadata = ${JSON.stringify(iv.metadata)}::jsonb
           where id = ${existente[0].id_local}
         `);
+        /**
+         * El incidente tiene que seguir a su intervención. Sin esto una obra
+         * que pasa de programada a terminada actualiza la intervención pero
+         * deja el incidente en el estado viejo, y el mapa y las métricas por
+         * distrito la siguen contando como pendiente. No se notaba mientras las
+         * fuentes se importaban una sola vez desde un archivo; con
+         * sincronización continua es el caso normal, no el raro.
+         */
+        await db.execute(sql`
+          update incidentes set
+            estado = ${incidenteSegun(iv.estado)},
+            superficie_m2 = coalesce(${iv.superficieM2}, superficie_m2),
+            cerrado_en = ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz
+          where id = (
+            select id_local from external_ref
+            where sistema = ${sistema} and entidad_local = 'incidente' and id_remoto = ${iv.idRemoto}
+          )
+        `);
         await db.execute(sql`
           update external_ref set payload_hash = ${hash}, sincronizado_en = now()
           where sistema = ${sistema} and entidad_local = 'intervencion' and id_remoto = ${iv.idRemoto}
         `);
         r.actualizados++;
       } else {
-        const estadoIncidente =
-          iv.estado === "finalizada" ? "reparado" : iv.estado === "en_curso" ? "en_ejecucion" : "programado";
+        const estadoIncidente = incidenteSegun(iv.estado);
         const incidente = (await db.execute(sql`
           insert into incidentes (tipo, estado, geom, direccion, superficie_m2, detectado_en, cerrado_en, metadata)
           values (
@@ -286,14 +321,20 @@ export async function cursorAtencionCiudadana(respaldo: number): Promise<number>
 }
 
 /**
- * Fotos que viven en un sistema externo (hoy: Google Drive, de la app de las
- * empresas). No se descargan: se referencia la URL, que es pública y además
- * sirve miniaturas. Bajar 1.900 fotos para volver a subirlas a Storage costaría
- * varios GB sin ganar nada mientras la app de Google siga siendo la de carga.
+ * Fotos que viven en un sistema externo: Google Drive (app de las empresas) o
+ * el backend de SIGOV. No se descargan: se referencia la URL, que es pública.
+ * Bajar miles de fotos para volver a subirlas a Storage costaría varios GB sin
+ * ganar nada mientras las apps de origen sigan siendo las de carga.
  *
- * Idempotente por (intervencion_id, momento, url_externa): re-sincronizar no
- * duplica. La tabla no tiene índice único sobre eso, así que se comprueba antes
- * de insertar en vez de apoyarse en un ON CONFLICT que no existe.
+ * Idempotente por url_externa: re-sincronizar no duplica. La tabla no tiene
+ * índice único sobre eso, así que se comprueba antes de insertar en vez de
+ * apoyarse en un ON CONFLICT que no existe.
+ *
+ * Va por lotes a propósito. La versión fila por fila hacía tres viajes a la
+ * base por foto, y con las 2.567 de SIGOV eso son casi 7.700 consultas
+ * seguidas: el pooler de Supabase corta la conexión a mitad de camino
+ * (ECONNRESET) y se pierde la corrida entera. Así son dos consultas de lectura
+ * y un insert cada 200 fotos.
  */
 export async function guardarFotosExternas(
   sistema: string,
@@ -306,52 +347,73 @@ export async function guardarFotosExternas(
     tomadaEn: Date | null;
   }>,
 ): Promise<{ insertadas: number; yaEstaban: number; sinIntervencion: number }> {
-  const db = getDb();
   const r = { insertadas: 0, yaEstaban: 0, sinIntervencion: 0 };
+  if (fotos.length === 0) return r;
+  const db = getDb();
 
+  /**
+   * La misma fila de origen pudo entrar como intervención (hubo obra) o como
+   * demanda (fue una detección). La tabla admite las dos: colgar la foto de la
+   * demanda es lo que evita perder la evidencia de las pérdidas de agua y las
+   * tapas rotas, que es justamente donde la foto más prueba. Si existen las
+   * dos, gana la intervención.
+   */
+  const refs = (await db.execute(sql`
+    select id_remoto, entidad_local, id_local from external_ref
+    where sistema = ${sistema} and entidad_local in ('intervencion', 'demanda')
+  `)) as unknown as Array<{ id_remoto: string; entidad_local: string; id_local: number }>;
+
+  const destinos = new Map<string, { esIv: boolean; id: number }>();
+  for (const ref of refs) {
+    const esIv = ref.entidad_local === "intervencion";
+    const previo = destinos.get(ref.id_remoto);
+    if (!previo || (esIv && !previo.esIv)) {
+      destinos.set(ref.id_remoto, { esIv, id: Number(ref.id_local) });
+    }
+  }
+
+  const guardadas = (await db.execute(sql`
+    select url_externa from fotografias where url_externa is not null
+  `)) as unknown as Array<{ url_externa: string }>;
+  const conocidas = new Set(guardadas.map((f) => f.url_externa));
+
+  const pendientes: Array<{ f: (typeof fotos)[number]; d: { esIv: boolean; id: number } }> = [];
   for (const f of fotos) {
-    /**
-     * La misma fila de origen pudo entrar como intervención (hubo obra) o como
-     * demanda (fue una detección). La tabla admite las dos: colgar la foto de
-     * la demanda es lo que evita perder la evidencia de las pérdidas de agua y
-     * las tapas rotas, que es justamente donde la foto más prueba.
-     */
-    const ref = (await db.execute(sql`
-      select entidad_local, id_local from external_ref
-      where sistema = ${sistema} and id_remoto = ${f.idRemotoIntervencion}
-        and entidad_local in ('intervencion', 'demanda')
-      order by case entidad_local when 'intervencion' then 0 else 1 end
-      limit 1
-    `)) as unknown as Array<{ entidad_local: string; id_local: number }>;
-    const destino = ref[0];
-    if (!destino) {
+    const d = destinos.get(f.idRemotoIntervencion);
+    if (!d) {
       r.sinIntervencion++;
       continue;
     }
-    const esIv = destino.entidad_local === "intervencion";
-
-    const previa = (await db.execute(sql`
-      select id from fotografias
-      where url_externa = ${f.urlExterna}
-        and ${esIv ? sql`intervencion_id = ${destino.id_local}` : sql`demanda_id = ${destino.id_local}`}
-    `)) as unknown as Array<{ id: number }>;
-    if (previa.length > 0) {
+    // El add corta también los repetidos dentro del propio lote, que antes
+    // se filtraban solos porque cada insert se comprobaba contra la base.
+    if (conocidas.has(f.urlExterna)) {
       r.yaEstaban++;
       continue;
     }
+    conocidas.add(f.urlExterna);
+    pendientes.push({ f, d });
+  }
 
+  const TAM_LOTE = 200;
+  for (let i = 0; i < pendientes.length; i += TAM_LOTE) {
+    const trozo = pendientes.slice(i, i + TAM_LOTE);
+    const filas = trozo.map(
+      ({ f, d }) => sql`(
+        ${d.esIv ? d.id : null}, ${d.esIv ? null : d.id},
+        ${f.momento}, ${f.urlExterna},
+        ${
+          f.lat != null && f.lon != null
+            ? sql`st_setsrid(st_makepoint(${f.lon}, ${f.lat}), 4326)`
+            : sql`null`
+        },
+        ${fechaParam(f.tomadaEn)}::timestamptz
+      )`,
+    );
     await db.execute(sql`
       insert into fotografias (intervencion_id, demanda_id, momento, url_externa, geom, tomada_en)
-      values (
-        ${esIv ? destino.id_local : null}, ${esIv ? null : destino.id_local},
-        ${f.momento}, ${f.urlExterna},
-        ${f.lat != null && f.lon != null
-          ? sql`st_setsrid(st_makepoint(${f.lon}, ${f.lat}), 4326)`
-          : sql`null`},
-        ${fechaParam(f.tomadaEn)}::timestamptz
-      )
+      values ${sql.join(filas, sql`, `)}
     `);
-    r.insertadas++;
+    r.insertadas += trozo.length;
   }
   return r;
 }

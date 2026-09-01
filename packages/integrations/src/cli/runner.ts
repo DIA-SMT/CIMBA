@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { sincronizarEmpresas } from "../fuentes/sincronizar-empresas";
+import { sincronizarSigov } from "../fuentes/sincronizar-sigov";
 
 function cargarEnv() {
   const candidatos = [
@@ -68,6 +69,26 @@ const TAREAS: Tarea[] = [
       return (
         `${r.trabajosNuevos} trabajos nuevos, ${r.trabajosActualizados} actualizados, ` +
         `${r.deteccionesNuevas} detecciones, ${r.fotosNuevas} fotos` +
+        (r.errores > 0 ? ` — ${r.errores} errores` : "")
+      );
+    },
+  },
+  {
+    // 20 y no 15 a propósito: con períodos distintos las dos tareas se
+    // desfasan solas en vez de pegarle a la base al mismo tiempo cada vez.
+    nombre: "SIGOV obras viales",
+    cadaMinutos: Number(process.env.CIMBA_RUNNER_MIN_SIGOV ?? 20),
+    correr: async () => {
+      const r = await sincronizarSigov();
+      if (r.sospechosos.length > 0) {
+        log(
+          `  ⚠ ${r.sospechosos.length} superficies no creíbles sin computar ` +
+            `(la mayor: ${Math.round(Math.max(...r.sospechosos.map((s) => s.m2)))} m²)`,
+        );
+      }
+      if (!r.huboNovedades) return `sin novedades (${r.obras} obras)`;
+      return (
+        `${r.nuevas} obras nuevas, ${r.actualizadas} actualizadas, ${r.fotosNuevas} fotos` +
         (r.errores > 0 ? ` — ${r.errores} errores` : "")
       );
     },

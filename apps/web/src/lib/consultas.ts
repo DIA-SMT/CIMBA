@@ -691,7 +691,9 @@ export interface EstadisticasBrecha {
   cotejablesAmpliado: number;
   trabajoTotal: number;
   trabajoSinPedido: number;
-  m2Total: number;
+  m2Bacheo: number;
+  m2Obra: number;
+  obras: number;
   yaVinculadas: number;
   porFuente: Array<{ fuente: string; abiertas: number; atendidas: number }>;
   porTipo: Array<{ tipo: string; abiertas: number; sinNadaCerca: number }>;
@@ -765,8 +767,18 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
         (select count(*)::int from incidentes i where i.estado in ('reparado','verificado')
           and not exists (select 1 from demandas d where d.geom is not null
             and st_dwithin(d.geom::geography, i.geom::geography, 40))) as trabajo_sin_pedido,
+        /**
+         * Los m² van partidos en dos porque miden cosas distintas: un bache
+         * son 4 m² y un paño de hormigón de SIGOV son 196. Sumados en un solo
+         * número, SIGOV se lleva el 93% del total y el bacheo parece no
+         * existir. La marca la pone el adaptador de cada fuente.
+         */
         (select round(coalesce(sum(superficie_m2), 0))::int from intervenciones
-          where estado = 'finalizada') as m2
+          where estado = 'finalizada' and coalesce(metadata->>'escala','bache') <> 'obra') as m2_bacheo,
+        (select round(coalesce(sum(superficie_m2), 0))::int from intervenciones
+          where estado = 'finalizada' and metadata->>'escala' = 'obra') as m2_obra,
+        (select count(*)::int from intervenciones
+          where estado = 'finalizada' and metadata->>'escala' = 'obra') as obras
     `)) as unknown as Array<Record<string, number | string>>;
     const g = globales[0] ?? {};
 
@@ -835,7 +847,9 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
       yaVinculadas: Number(g.vinculadas ?? 0),
       trabajoTotal: Number(g.trabajo_total ?? 0),
       trabajoSinPedido: Number(g.trabajo_sin_pedido ?? 0),
-      m2Total: Number(g.m2 ?? 0),
+      m2Bacheo: Number(g.m2_bacheo ?? 0),
+      m2Obra: Number(g.m2_obra ?? 0),
+      obras: Number(g.obras ?? 0),
       porFuente: porFuente.map((f) => ({
         fuente: f.fuente,
         abiertas: Number(f.abiertas),
@@ -875,7 +889,11 @@ export interface BrechaDistrito {
   yaResueltasProbable: number;
   reincidencias: number;
   reparados: number;
-  m2: number;
+  /** Bacheo propiamente dicho: ~4 m² por reparación. */
+  m2Bacheo: number;
+  /** Obra contratada de SIGOV: ~196 m² por paño. Separado para que no tape al bacheo. */
+  m2Obra: number;
+  obras: number;
   km2: number;
 }
 
@@ -921,7 +939,12 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
           count(*) filter (where not hay_reparacion and not incidente_abierto)::int as brecha_real
         from cruce group by 1
       ), m2_por_incidente as (
-        select incidente_id, sum(superficie_m2) as m2
+        -- Separados por escala: un distrito con 33 paños de hormigón no hizo
+        -- más trabajo que uno con 763 baches, aunque sume más metros.
+        select incidente_id,
+          sum(superficie_m2) filter (where coalesce(metadata->>'escala','bache') <> 'obra') as m2_bacheo,
+          sum(superficie_m2) filter (where metadata->>'escala' = 'obra') as m2_obra,
+          count(*) filter (where metadata->>'escala' = 'obra')::int as obras
         from intervenciones where estado = 'finalizada' group by 1
       ), hecho as (
         -- El join agregado (en vez de una subconsulta correlacionada por
@@ -929,7 +952,9 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
         -- pierdan: comparar distrito_id = null nunca da true y los dejaba en cero.
         select i.distrito_id,
           count(*) filter (where i.estado in ('reparado','verificado'))::int as reparados,
-          round(coalesce(sum(mi.m2), 0))::int as m2
+          round(coalesce(sum(mi.m2_bacheo), 0))::int as m2_bacheo,
+          round(coalesce(sum(mi.m2_obra), 0))::int as m2_obra,
+          coalesce(sum(mi.obras), 0)::int as obras
         from incidentes i
         left join m2_por_incidente mi on mi.incidente_id = i.id
         group by i.distrito_id
@@ -941,7 +966,9 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
              coalesce(p.ya_resueltas, 0)::int as ya_resueltas,
              coalesce(p.reincidencias, 0)::int as reincidencias,
              coalesce(h.reparados, 0)::int as reparados,
-             coalesce(h.m2, 0)::int as m2,
+             coalesce(h.m2_bacheo, 0)::int as m2_bacheo,
+             coalesce(h.m2_obra, 0)::int as m2_obra,
+             coalesce(h.obras, 0)::int as obras,
              round((st_area(ds.geom::geography) / 1000000.0)::numeric, 2) as km2
       from distritos ds
       left join pedido p on p.distrito_id = ds.id
@@ -951,7 +978,8 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
              coalesce(p.abiertas, 0)::int, coalesce(p.brecha_real, 0)::int,
              coalesce(p.en_cola, 0)::int, coalesce(p.ya_resueltas, 0)::int,
              coalesce(p.reincidencias, 0)::int,
-             coalesce(h.reparados, 0)::int, coalesce(h.m2, 0)::int, 0
+             coalesce(h.reparados, 0)::int, coalesce(h.m2_bacheo, 0)::int,
+             coalesce(h.m2_obra, 0)::int, coalesce(h.obras, 0)::int, 0
       from (select * from pedido where distrito_id is null) p
       full outer join (select * from hecho where distrito_id is null) h on true
       order by brecha_real desc
@@ -966,7 +994,9 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
       yaResueltasProbable: Number(f.ya_resueltas ?? 0),
       reincidencias: Number(f.reincidencias ?? 0),
       reparados: Number(f.reparados ?? 0),
-      m2: Number(f.m2 ?? 0),
+      m2Bacheo: Number(f.m2_bacheo ?? 0),
+      m2Obra: Number(f.m2_obra ?? 0),
+      obras: Number(f.obras ?? 0),
       km2: Number(f.km2 ?? 0),
     }));
   });

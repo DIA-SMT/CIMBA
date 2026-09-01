@@ -341,7 +341,9 @@ export async function ejecutarHerramientaMigue(
         pct_sin_atencion: f.abiertas > 0 ? Math.round((100 * f.brechaReal) / f.abiertas) : null,
         en_cola: f.enCola,
         reparaciones: f.reparados,
-        m2_ejecutados: f.m2,
+        m2_bacheo: f.m2Bacheo,
+        m2_obra_contratada: f.m2Obra,
+        obras_contratadas: f.obras,
         km2: f.km2,
       }));
       if (Number.isInteger(pedido)) {
@@ -377,6 +379,7 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - INCIDENTE: el problema físico real en la calle (el pozo concreto en una esquina). Varias demandas pueden apuntar al mismo incidente.
 - VINCULAR: conectar una demanda con su incidente. "SIN VINCULAR" = demandas que todavía nadie cotejó contra el territorio: no sabemos si son un problema nuevo, un duplicado de otro pedido, o algo ya reparado. Es la cola de trabajo de consolidación.
 - INTERVENCIÓN: el trabajo ejecutado (cuadrilla municipal u obra contratada SIGOV), con foto antes/después.
+- LAS DOS ESCALAS DE M²: un bache de cuadrilla son ~4 m²; un paño de hormigón de una obra contratada de SIGOV son ~196 m², casi 50 veces más. Por eso los metros van SEPARADOS en "m² de bacheo" y "m² de obra contratada", y NUNCA los sumás en un solo número: sumados, las 356 obras de SIGOV se llevan el 93% del total y parece que no se bachea. Si te preguntan "cuántos m² se hicieron", dás los dos y decís cuál es cuál.
 - REINCIDENCIA: una demanda nueva sobre un lugar que ya se había reparado — señal de falla estructural.
 - SCORE DE PRIORIDAD (0-100): combina cuántas demandas acumula, antigüedad, gravedad del tipo, reincidencia y si es una avenida.
 

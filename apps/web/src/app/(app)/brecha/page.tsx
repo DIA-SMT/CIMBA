@@ -11,7 +11,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /** Paleta funcional validada sobre superficie oscura (misma del mapa). */
-const C = { pedido: "#3987e5", hecho: "#199e70", alerta: "#d95926" } as const;
+// `obra` es un verde más apagado que `hecho`: es trabajo hecho, pero de otra
+// escala, y no tiene que competir visualmente con el bacheo.
+const C = { pedido: "#3987e5", hecho: "#199e70", obra: "#5c8a76", alerta: "#d95926" } as const;
 
 export default async function PaginaBrecha() {
   const sesion = (await leerSesion())!;
@@ -92,8 +94,9 @@ export default async function PaginaBrecha() {
           <p className="mt-1 text-sm font-bold">de lo hecho no responde a ningún pedido registrado</p>
           <p className="mt-1 text-xs leading-relaxed text-texto-2">
             {numero(b.trabajoSinPedido)} de {numero(b.trabajoTotal)} reparaciones sin pedido a menos de 40 m.
-            Se trabaja mucho ({numero(b.m2Total)} m²), pero no siempre donde está la demanda: la brecha es de
-            dirección, no solo de volumen. <span className="text-celeste">Ver las intervenciones →</span>
+            Se trabaja mucho ({numero(b.m2Bacheo)} m² de bacheo y {numero(b.m2Obra)} m² en {numero(b.obras)}{" "}
+            obras contratadas), pero no siempre donde está la demanda: la brecha es de dirección, no solo de
+            volumen. <span className="text-celeste">Ver las intervenciones →</span>
           </p>
         </Panel>
         </Link>
@@ -181,7 +184,15 @@ export default async function PaginaBrecha() {
           <span className="w-24 shrink-0">Distrito</span>
           <span className="flex-1">Deuda sin tocar sobre lo pedido</span>
           <span className="num w-16 shrink-0 text-right">Reparados</span>
-          <span className="num w-20 shrink-0 text-right">m² hechos</span>
+          <span className="num w-20 shrink-0 text-right" title="Bacheo: ~4 m² por reparación">
+            m² bacheo
+          </span>
+          <span
+            className="num w-24 shrink-0 text-right"
+            title="Obra contratada de SIGOV: paños de hormigón y tramos de asfalto, ~196 m² cada uno. Va aparte porque si no tapa al bacheo."
+          >
+            m² obra
+          </span>
         </div>
         {porDistrito.map((d) => {
           const pct = d.abiertas > 0 ? Math.round((100 * d.brechaReal) / d.abiertas) : 0;
@@ -209,10 +220,21 @@ export default async function PaginaBrecha() {
               </span>
               <span
                 className="num w-20 shrink-0 text-right text-[13px]"
-                style={{ color: d.m2 > 0 ? C.hecho : "var(--color-texto-3, #6b7280)" }}
-                title={d.m2 === 0 ? "Sin un solo m² ejecutado en este distrito" : undefined}
+                style={{ color: d.m2Bacheo > 0 ? C.hecho : "var(--color-texto-3, #6b7280)" }}
+                title={d.m2Bacheo === 0 ? "Sin un solo m² de bacheo en este distrito" : undefined}
               >
-                {d.m2 > 0 ? numero(d.m2) : "—"}
+                {d.m2Bacheo > 0 ? numero(d.m2Bacheo) : "—"}
+              </span>
+              <span
+                className="num w-24 shrink-0 text-right text-[13px]"
+                style={{ color: d.m2Obra > 0 ? C.obra : "var(--color-texto-3, #6b7280)" }}
+                title={
+                  d.m2Obra > 0
+                    ? `${numero(d.obras)} obras contratadas terminadas`
+                    : "Sin obra contratada terminada en este distrito"
+                }
+              >
+                {d.m2Obra > 0 ? numero(d.m2Obra) : "—"}
               </span>
             </>
           );
