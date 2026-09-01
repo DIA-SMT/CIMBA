@@ -14,3 +14,12 @@ export { detectarYParsear } from "./archivos/importar";
 export type { ResultadoDeteccion } from "./archivos/importar";
 export { mapearFilasConsolidado } from "./archivos/consolidado";
 export type { FilaConsolidado } from "./archivos/consolidado";
+export {
+  mapearLoteEmpresas,
+  traerPuntosGas,
+  normalizarEmpresa,
+  urlFotoDrive,
+  idDriveDesdeUrl,
+  SISTEMA_EMPRESAS,
+} from "./fuentes/bacheo-empresas";
+export type { LoteEmpresas, FotoEmpresa, PuntoGas } from "./fuentes/bacheo-empresas";

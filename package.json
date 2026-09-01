@@ -17,9 +17,11 @@
     "db:estado": "node scripts/db.mjs estado",
     "ingest:archivos": "pnpm --filter @cimba/integrations ingest:archivos",
     "ingest:mock": "pnpm --filter @cimba/integrations ingest:mock",
-    "ingest:ac": "pnpm --filter @cimba/integrations ingest:ac"
+    "ingest:ac": "pnpm --filter @cimba/integrations ingest:ac",
+    "ingest:empresas": "pnpm --filter @cimba/integrations ingest:empresas"
   },
   "devDependencies": {
+    "mysql2": "^3.24.2",
     "postgres": "^3.4.5",
     "turbo": "^2.5.0",
     "typescript": "^5.7.3"

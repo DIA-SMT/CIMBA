@@ -284,3 +284,74 @@ export async function cursorAtencionCiudadana(respaldo: number): Promise<number>
     f?.barrido != null ? Number(f.barrido) : respaldo,
   );
 }
+
+/**
+ * Fotos que viven en un sistema externo (hoy: Google Drive, de la app de las
+ * empresas). No se descargan: se referencia la URL, que es pública y además
+ * sirve miniaturas. Bajar 1.900 fotos para volver a subirlas a Storage costaría
+ * varios GB sin ganar nada mientras la app de Google siga siendo la de carga.
+ *
+ * Idempotente por (intervencion_id, momento, url_externa): re-sincronizar no
+ * duplica. La tabla no tiene índice único sobre eso, así que se comprueba antes
+ * de insertar en vez de apoyarse en un ON CONFLICT que no existe.
+ */
+export async function guardarFotosExternas(
+  sistema: string,
+  fotos: Array<{
+    idRemotoIntervencion: string;
+    momento: "antes" | "durante" | "despues";
+    urlExterna: string;
+    lat: number | null;
+    lon: number | null;
+    tomadaEn: Date | null;
+  }>,
+): Promise<{ insertadas: number; yaEstaban: number; sinIntervencion: number }> {
+  const db = getDb();
+  const r = { insertadas: 0, yaEstaban: 0, sinIntervencion: 0 };
+
+  for (const f of fotos) {
+    /**
+     * La misma fila de origen pudo entrar como intervención (hubo obra) o como
+     * demanda (fue una detección). La tabla admite las dos: colgar la foto de
+     * la demanda es lo que evita perder la evidencia de las pérdidas de agua y
+     * las tapas rotas, que es justamente donde la foto más prueba.
+     */
+    const ref = (await db.execute(sql`
+      select entidad_local, id_local from external_ref
+      where sistema = ${sistema} and id_remoto = ${f.idRemotoIntervencion}
+        and entidad_local in ('intervencion', 'demanda')
+      order by case entidad_local when 'intervencion' then 0 else 1 end
+      limit 1
+    `)) as unknown as Array<{ entidad_local: string; id_local: number }>;
+    const destino = ref[0];
+    if (!destino) {
+      r.sinIntervencion++;
+      continue;
+    }
+    const esIv = destino.entidad_local === "intervencion";
+
+    const previa = (await db.execute(sql`
+      select id from fotografias
+      where url_externa = ${f.urlExterna}
+        and ${esIv ? sql`intervencion_id = ${destino.id_local}` : sql`demanda_id = ${destino.id_local}`}
+    `)) as unknown as Array<{ id: number }>;
+    if (previa.length > 0) {
+      r.yaEstaban++;
+      continue;
+    }
+
+    await db.execute(sql`
+      insert into fotografias (intervencion_id, demanda_id, momento, url_externa, geom, tomada_en)
+      values (
+        ${esIv ? destino.id_local : null}, ${esIv ? null : destino.id_local},
+        ${f.momento}, ${f.urlExterna},
+        ${f.lat != null && f.lon != null
+          ? sql`st_setsrid(st_makepoint(${f.lon}, ${f.lat}), 4326)`
+          : sql`null`},
+        ${fechaParam(f.tomadaEn)}::timestamptz
+      )
+    `);
+    r.insertadas++;
+  }
+  return r;
+}
