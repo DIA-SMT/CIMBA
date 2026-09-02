@@ -13,7 +13,8 @@ import { AccionesIncidente } from "../acciones-incidente";
 export const dynamic = "force-dynamic";
 
 /** Paleta funcional del relato (la misma del mapa): pedido / en curso / hecho. */
-const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70", hito: "#f4dc00" } as const;
+// hito en token: el amarillo pleno desaparece como texto en tema claro.
+const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70", hito: "var(--color-amarillo)" } as const;
 
 const ETIQUETA_IV: Record<string, string> = {
   asignada: "Asignada",

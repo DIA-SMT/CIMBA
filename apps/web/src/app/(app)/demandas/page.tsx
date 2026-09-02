@@ -57,7 +57,7 @@ export default async function PaginaDemandas({
         {(
           [
             ["recibida", "#3987e5", "Llegaron y nadie las revisó todavía: acá está el trabajo pendiente"],
-            ["en_validacion", "#f4dc00", "Alguien las está revisando o esperan un dato"],
+            ["en_validacion", "var(--color-amarillo)", "Alguien las está revisando o esperan un dato"],
             ["vinculada", "#199e70", "Ya cotejadas: apuntan a un problema real del territorio"],
             ["cerrada", "#199e70", "Circuito completo: el problema se reparó y se le respondió al vecino"],
             ["descartada", "#6b7280", "Revisadas y descartadas con motivo"],

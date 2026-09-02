@@ -26,6 +26,15 @@ export default async function PaginaEmpresas() {
         sub="Quién trabaja, con cuánta dotación, y el acceso de cada una a su portal."
       />
 
+      <Panel className="mb-4 p-4 text-sm leading-relaxed text-texto-2">
+        <b className="text-texto">El circuito de acceso:</b> acá generás la clave de cada empresa (se
+        muestra una sola vez) y se la pasás a su referente por el canal que prefieras. La empresa entra
+        por la pantalla de acceso de siempre (<code className="rounded bg-panel-3 px-1 text-xs">/acceso</code>)
+        con el <b>usuario</b> que ves en la tabla y esa clave, y cae directo en su portal, donde ve las
+        órdenes emitidas y carga cada bache con medidas y foto. Con <b>ver su portal</b> lo mirás
+        exactamente como lo ve la empresa.
+      </Panel>
+
       <Panel className="mb-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -39,6 +48,7 @@ export default async function PaginaEmpresas() {
                 Carga actual
               </th>
               <th className="px-4 py-3">Clave</th>
+              <th className="px-4 py-3">Portal</th>
               {puedePlanificar && <th className="px-4 py-3" />}
             </tr>
           </thead>
@@ -72,6 +82,15 @@ export default async function PaginaEmpresas() {
                     <span className="text-amarillo">sin clave</span>
                   )}
                 </td>
+                <td className="px-4 py-2.5">
+                  <Link
+                    href={`/empresa?empresa=${e.id}`}
+                    title="Vista espejo: ver el portal exactamente como lo ve esta empresa"
+                    className="text-xs font-semibold whitespace-nowrap text-celeste hover:underline"
+                  >
+                    ver su portal →
+                  </Link>
+                </td>
                 {puedePlanificar && (
                   <td className="px-4 py-2.5">
                     <BotonClave empresaId={e.id} tieneClave={e.tieneClave} />
@@ -81,20 +100,13 @@ export default async function PaginaEmpresas() {
             ))}
             {empresas.length === 0 && (
               <tr>
-                <td colSpan={puedePlanificar ? 8 : 7} className="px-4 py-10 text-center text-texto-3">
+                <td colSpan={puedePlanificar ? 9 : 8} className="px-4 py-10 text-center text-texto-3">
                   No hay empresas cargadas todavía.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </Panel>
-
-      <Panel className="p-4 text-sm leading-relaxed text-texto-2">
-        <b className="text-texto">Cómo entra la empresa:</b> con su usuario y la clave, en la misma pantalla
-        de acceso de siempre. Al entrar cae directo en su portal, donde ve sus órdenes emitidas y carga cada
-        bache con medidas y foto. La clave se muestra una sola vez al generarla: pasásela al referente por el
-        canal que prefieras.
       </Panel>
     </div>
   );

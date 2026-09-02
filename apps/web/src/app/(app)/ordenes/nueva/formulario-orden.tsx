@@ -10,6 +10,7 @@ import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 // Solo tipos: se borran al compilar, así que no arrastran @cimba/db al cliente.
 import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
+import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
 import { ETIQUETA_PRIORIDAD } from "../etiquetas";
 
 interface CircuitoOpcion {
@@ -285,16 +286,29 @@ export function FormularioOrden({
                             />
                           </td>
                           <td className="max-w-56 px-3 py-2">
-                            <span className="block truncate" title={p.direccion ?? undefined}>
-                              {p.direccion ?? `Incidente #${p.incidenteId}`}
-                            </span>
-                            {p.enOrden && <span className="text-[10px] text-texto-3">ya está en otra orden activa</span>}
+                            <div className="flex items-center gap-1.5">
+                              {/* Verificar el punto ANTES de incluirlo en la orden
+                                  (el chip frena la propagación: no alterna la fila) */}
+                              <ChipMiniMapa
+                                lat={p.lat}
+                                lon={p.lon}
+                                etiqueta={p.direccion ?? `Incidente #${p.incidenteId}`}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate" title={p.direccion ?? undefined}>
+                                  {p.direccion ?? `Incidente #${p.incidenteId}`}
+                                </span>
+                                {p.enOrden && (
+                                  <span className="text-[10px] text-texto-3">ya está en otra orden activa</span>
+                                )}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-xs text-texto-2">{ETIQUETA_TIPO[p.tipo]}</td>
                           <td className="num px-3 py-2 text-right text-xs text-texto-2">
                             {p.score != null ? p.score.toFixed(1) : "—"}
                           </td>
-                          <td className="num px-3 py-2 text-right text-base font-extrabold" style={{ color: p.reclamos > 0 ? "#f4dc00" : "#5c6b84" }}>
+                          <td className="num px-3 py-2 text-right text-base font-extrabold" style={{ color: p.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
                             {numero(p.reclamos)}
                           </td>
                           <td className="num px-3 py-2 text-right text-xs text-texto-2">
@@ -352,10 +366,24 @@ export function FormularioOrden({
                 >
                   <X size={14} />
                 </button>
-                {t.lat != null && (
-                  <span className="w-full text-[11px] text-texto-3" style={{ color: "#199e70" }}>
-                    ✓ {t.resuelta ?? "ubicado"}
-                  </span>
+                {t.lat != null && t.lon != null && (
+                  <div className="w-full">
+                    <span className="text-[11px]" style={{ color: "#199e70" }}>
+                      ✓ {t.resuelta ?? "ubicado"}
+                    </span>
+                    {/* El geocodificador le pifia media cuadra seguido: el pin se
+                        afina a mano y ese lat/lon ajustado es el que viaja en
+                        crearOrden (actualizarTramo pisa t.lat/t.lon). */}
+                    <div className="mt-1.5">
+                      <MiniMapa
+                        lat={t.lat}
+                        lon={t.lon}
+                        etiqueta={t.resuelta ?? t.direccion}
+                        alto={220}
+                        alMover={({ lat, lon }) => actualizarTramo(i, { lat, lon })}
+                      />
+                    </div>
+                  </div>
                 )}
                 {t.sinResultado && (
                   <span className="w-full text-[11px] text-amarillo">

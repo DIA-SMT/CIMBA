@@ -5,6 +5,7 @@ import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
+import { resolverVistaPortal } from "../../vista";
 import { TarjetaItem } from "./tarjeta-item";
 
 export const dynamic = "force-dynamic";
@@ -20,17 +21,42 @@ const m2 = (v: number | null) =>
   v != null ? new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 }).format(v) : "—";
 
 /** El trabajo del día: lo pendiente arriba y grande, lo hecho abajo como confirmación. */
-export default async function PaginaOrdenEmpresa({ params }: { params: Promise<{ id: string }> }) {
+export default async function PaginaOrdenEmpresa({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ empresa?: string }>;
+}) {
   const { id } = await params;
   const idOrden = Number(id);
   if (!Number.isInteger(idOrden) || idOrden <= 0) notFound();
 
   const sesion = (await leerSesion())!;
+  const resuelta = resolverVistaPortal(sesion, await searchParams);
   // obtenerOrden filtra por empresa cuando el rol es 'empresa' (y excluye
   // borradores): si el id es de otra empresa, vuelve null y esto es un 404, no
   // una fuga. El filtro vive en la consulta porque la RLS hoy no se aplica.
   const orden = await obtenerOrden(sesion, idOrden);
   if (!orden) notFound();
+  /**
+   * El staff en el portal está SIEMPRE en vista espejo, venga o no ?empresa en
+   * la URL: sin esto, entrar directo a /empresa/orden/N mostraba el portal
+   * vivo sin el banner de advertencia. Sin ?empresa, la empresa espejada es la
+   * dueña de la orden.
+   */
+  const vista =
+    sesion.rol_cimba === "empresa"
+      ? resuelta
+      : { empresaId: resuelta.empresaId ?? orden.empresaId, esVistaEspejo: true };
+  // Coherencia de la vista espejo: si el staff está mirando el portal de la
+  // empresa N, una orden de otra empresa no existe "en ese portal".
+  if (vista.esVistaEspejo && orden.empresaId !== vista.empresaId) notFound();
+  // El portal muestra lo que ve la empresa, y la empresa nunca ve borradores:
+  // el staff los revisa en /ordenes/[id], no acá.
+  if (orden.estado === "borrador") notFound();
+  // En vista espejo los links internos arrastran ?empresa=N para no perderse.
+  const sufijoEspejo = vista.esVistaEspejo ? `?empresa=${vista.empresaId}` : "";
 
   const prioridad = PRIORIDAD[orden.prioridad] ?? TERCIARIA;
   const activa = orden.estado === "emitida" || orden.estado === "en_ejecucion";
@@ -41,8 +67,19 @@ export default async function PaginaOrdenEmpresa({ params }: { params: Promise<{
 
   return (
     <div className="mx-auto max-w-xl p-4 pb-16">
+      {vista.esVistaEspejo && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amarillo/50 bg-amarillo/10 px-4 py-3 text-sm">
+          <p className="min-w-0 flex-1">
+            <b className="text-amarillo">Vista espejo:</b> estás viendo el portal como{" "}
+            <b>{orden.empresaNombre}</b>. Lo que cargues acá vale de verdad.
+          </p>
+          <Link href="/ordenes/empresas" className="shrink-0 font-semibold text-celeste hover:underline">
+            volver a Órdenes
+          </Link>
+        </div>
+      )}
       <Link
-        href="/empresa"
+        href={`/empresa${sufijoEspejo}`}
         className="inline-flex min-h-12 items-center text-sm font-medium text-texto-2 hover:text-texto"
       >
         ← Mis órdenes

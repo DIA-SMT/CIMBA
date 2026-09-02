@@ -3,10 +3,12 @@
 import { Camera, Check, LocateFixed, MapPin, Mic, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
+import { dentroDeSMT } from "@cimba/domain";
 import { reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
+import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
 
 const ETIQUETA_TRABAJO: Record<string, string> = {
   bache: "Bache",
@@ -29,6 +31,25 @@ interface Ubicacion {
   origen: "orden" | "geocoder" | "gps";
   detalle: string;
   precisionM?: number;
+}
+
+/**
+ * Punto candidato (geocodificado o GPS) todavía sin confirmar: se muestra en
+ * el mini-mapa con el pin arrastrable para que el capataz lo afine ANTES de
+ * aceptarlo — el punto final ajustado es el que viaja en el FormData.
+ */
+interface Candidato {
+  lat: number;
+  lon: number;
+  origen: "geocoder" | "gps";
+  /** Geocoder: lo que devolvió, para confirmar que es SU esquina. */
+  resuelta?: string;
+  /** Geocoder: lo que dictó/escribió él, que es lo que se guarda. */
+  texto?: string;
+  confianza?: number;
+  precisionM?: number;
+  /** Movió el pin a mano: el punto ya es del capataz, no del geocoder/GPS. */
+  ajustado?: boolean;
 }
 
 /**
@@ -67,15 +88,7 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const [buscando, setBuscando] = useState(false);
   const [buscandoGps, setBuscandoGps] = useState(false);
   const [errorGeo, setErrorGeo] = useState<string | null>(null);
-  const [resultadoGeo, setResultadoGeo] = useState<{
-    lat: number;
-    lon: number;
-    confianza: number;
-    /** Lo que devolvió el geocoder, para que el capataz confirme que es SU esquina. */
-    resuelta: string;
-    /** Lo que dictó/escribió él, que es lo que se guarda. */
-    texto: string;
-  } | null>(null);
+  const [candidato, setCandidato] = useState<Candidato | null>(null);
 
   const buscarDireccion = async (texto: string) => {
     const q = texto.trim();
@@ -85,7 +98,7 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
     }
     setBuscando(true);
     setErrorGeo(null);
-    setResultadoGeo(null);
+    setCandidato(null);
     try {
       const res = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}`);
       const data = (await res.json()) as {
@@ -99,9 +112,10 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
         setErrorGeo("No se encontró esa dirección: probá con calle y altura, sin barrio.");
         return;
       }
-      setResultadoGeo({
+      setCandidato({
         lat: data.resultado.punto.lat,
         lon: data.resultado.punto.lon,
+        origen: "geocoder",
         confianza: data.resultado.confianza,
         resuelta: data.resultado.direccionResuelta ?? q,
         texto: q,
@@ -133,15 +147,14 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
           setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
           return;
         }
-        setUbicacion({
+        // No se acepta directo: queda como candidato en el mini-mapa para
+        // que el capataz lo afine (el GPS urbano suele pifiar unos metros).
+        setCandidato({
           lat: latitude,
           lon: longitude,
           origen: "gps",
-          detalle: `Tu GPS (±${Math.round(accuracy)} m)`,
           precisionM: Math.round(accuracy),
         });
-        setCorrigiendo(false);
-        setResultadoGeo(null);
       },
       () => {
         setBuscandoGps(false);
@@ -242,6 +255,17 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
           <span className="rounded bg-amarillo/15 px-2 py-1 text-[11px] font-bold text-amarillo">
             {item.reclamos === 1 ? "1 reclamo detrás" : `${item.reclamos} reclamos detrás`}
           </span>
+        )}
+        {ubicacion && (
+          /* Que el capataz verifique a qué esquina ir antes de salir.
+             Sin "Mapa completo": el rol empresa no entra a /mapa. */
+          <ChipMiniMapa
+            lat={ubicacion.lat}
+            lon={ubicacion.lon}
+            etiqueta={item.direccion ?? "Ubicación del trabajo"}
+            texto="Ver en el mapa"
+            conMapaCompleto={false}
+          />
         )}
       </div>
 
@@ -414,7 +438,7 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
                   <button
                     onClick={() => {
                       setCorrigiendo(false);
-                      setResultadoGeo(null);
+                      setCandidato(null);
                       setErrorGeo(null);
                       dictado.limpiarError();
                     }}
@@ -476,22 +500,61 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
                 <p className="text-xs leading-relaxed text-peligro">{errorGeo ?? dictado.error}</p>
               )}
 
-              {resultadoGeo && (
+              {candidato && (
                 <div className="rounded-lg border border-borde-2 bg-panel-2 p-3">
-                  <p className="text-sm leading-snug">{resultadoGeo.resuelta}</p>
+                  <p className="text-sm leading-snug">
+                    {candidato.origen === "gps"
+                      ? `Tu GPS (±${candidato.precisionM ?? "?"} m)`
+                      : candidato.resuelta}
+                  </p>
+                  {/* El pin se afina a mano ANTES de confirmar: el geocoder le
+                      pifia media cuadra seguido y el GPS urbano rebota entre
+                      edificios. El punto ajustado es el que va al FormData. */}
+                  <div className="mt-2">
+                    <MiniMapa
+                      lat={candidato.lat}
+                      lon={candidato.lon}
+                      etiqueta={candidato.resuelta ?? item.direccion}
+                      alto={200}
+                      alMover={({ lat, lon }) =>
+                        setCandidato((c) => (c ? { ...c, lat, lon, ajustado: true } : c))
+                      }
+                    />
+                  </div>
                   <div className="mt-2 flex items-center justify-between gap-2">
-                    <BarraConfianza valor={resultadoGeo.confianza} />
+                    {candidato.origen === "geocoder" && candidato.confianza != null ? (
+                      <BarraConfianza valor={candidato.confianza} />
+                    ) : (
+                      <span />
+                    )}
                     <button
                       onClick={() => {
+                        const c = candidato;
+                        // El pin arrastrado puede terminar en cualquier lado:
+                        // la frontera operativa real (la misma del server) se
+                        // chequea acá, con mensaje claro en vez de un error al
+                        // final del formulario.
+                        if (!dentroDeSMT({ lat: c.lat, lon: c.lon })) {
+                          setErrorGeo("El pin quedó fuera de San Miguel de Tucumán: acercalo al bache");
+                          return;
+                        }
+                        setErrorGeo(null);
                         setUbicacion({
-                          lat: resultadoGeo.lat,
-                          lon: resultadoGeo.lon,
-                          direccion: resultadoGeo.texto,
-                          origen: "geocoder",
-                          detalle: resultadoGeo.texto,
+                          lat: c.lat,
+                          lon: c.lon,
+                          direccion: c.texto,
+                          origen: c.origen,
+                          detalle: c.ajustado
+                            ? `${c.texto ?? "Pin"} — ajustado en el mapa`
+                            : c.origen === "gps"
+                              ? `Tu GPS (±${c.precisionM ?? "?"} m)`
+                              : (c.texto ?? "Dirección geocodificada"),
+                          // Si movió el pin a mano, la precisión del GPS ya no
+                          // describe el punto: no corresponde la advertencia.
+                          precisionM: c.ajustado ? undefined : c.precisionM,
                         });
                         setCorrigiendo(false);
-                        setResultadoGeo(null);
+                        setCandidato(null);
                         setErrorGeo(null);
                       }}
                       className="rounded-lg bg-azul px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"

@@ -4,10 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { Map as MapaGL, Marker, NavigationControl } from "react-map-gl/maplibre";
-
-const ESTILO =
-  process.env.NEXT_PUBLIC_MAP_STYLE_DARK ??
-  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+import { estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /**
  * Mini-mapa embebido y siempre visible para páginas de detalle: muestra el
@@ -27,12 +24,13 @@ export function MapaPunto({
   alto?: number;
   zoom?: number;
 }) {
+  const tema = usarTemaMapa();
   return (
     <div className="relative overflow-hidden rounded-xl border border-borde">
       <div style={{ height: alto }}>
         <MapaGL
           initialViewState={{ longitude: lon, latitude: lat, zoom }}
-          mapStyle={ESTILO}
+          mapStyle={estiloMapa(tema)}
           attributionControl={false}
         >
           <NavigationControl position="bottom-right" showCompass={false} />

@@ -6,10 +6,7 @@ import { Layer, Map as MapaGL, Source } from "react-map-gl/maplibre";
 import type { FeatureCollection, Point } from "geojson";
 import type { MapRef, ViewState } from "react-map-gl/maplibre";
 import { numero } from "@/lib/formato";
-
-const ESTILO =
-  process.env.NEXT_PUBLIC_MAP_STYLE_DARK ??
-  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+import { estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 type FC = FeatureCollection<Point, Record<string, unknown>>;
 
@@ -38,6 +35,9 @@ export function CortinaComparar({
   const [corte, setCorte] = useState(50);
   const arrastrando = useRef(false);
   const contRef = useRef<HTMLDivElement>(null);
+  // El espejo tiene que usar el MISMO estilo base que el mapa principal:
+  // una cortina mitad clara y mitad oscura no compara nada.
+  const tema = usarTemaMapa();
 
   const mover = useCallback(
     (clientX: number) => {
@@ -80,7 +80,7 @@ export function CortinaComparar({
         <MapaGL
           ref={espejoRef}
           {...vistaMapa}
-          mapStyle={ESTILO}
+          mapStyle={estiloMapa(tema)}
           interactive={false}
           attributionControl={false}
           style={{ width: "100%", height: "100%" }}
@@ -97,7 +97,7 @@ export function CortinaComparar({
               paint={{
                 "circle-radius": 3.5,
                 "circle-color": "#3987e5",
-                "circle-stroke-color": "#0B0F16",
+                "circle-stroke-color": tema === "oscuro" ? "#0B0F16" : "#ffffff",
                 "circle-stroke-width": 1,
               }}
             />
@@ -128,7 +128,7 @@ export function CortinaComparar({
           Lo pedido
         </span>
         <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
-          <p className="num text-2xl font-black text-[#6fadf5]">{numero(balance?.pend ?? 0)}</p>
+          <p className="num text-2xl font-black" style={{ color: tema === "oscuro" ? "#6fadf5" : "#2f6fd0" }}>{numero(balance?.pend ?? 0)}</p>
           <p className="text-[10px] leading-snug text-texto-2">pedidos pendientes en pantalla</p>
         </div>
       </div>
@@ -137,7 +137,7 @@ export function CortinaComparar({
           Lo hecho
         </span>
         <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
-          <p className="num text-2xl font-black text-[#3ecb92]">{numero(balance?.m2 ?? 0)} m²</p>
+          <p className="num text-2xl font-black" style={{ color: tema === "oscuro" ? "#3ecb92" : "#0e7f57" }}>{numero(balance?.m2 ?? 0)} m²</p>
           <p className="text-[10px] leading-snug text-texto-2">reparados o en obra, en pantalla</p>
         </div>
       </div>

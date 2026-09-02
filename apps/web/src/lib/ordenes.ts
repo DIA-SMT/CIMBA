@@ -356,10 +356,20 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
   });
 }
 
-/** Las órdenes de la empresa logueada (portal /empresa). RLS ya filtra. */
-export async function ordenesDeEmpresa(sesion: Sesion): Promise<OrdenResumen[]> {
-  if (sesion.rol_cimba !== "empresa" || !sesion.id_empresa) return [];
-  return listarOrdenes(sesion, { empresaId: sesion.id_empresa });
+/**
+ * Las órdenes de la empresa del portal /empresa. El staff (vista espejo)
+ * puede pasar cualquier `empresaId`; para el rol empresa el parámetro se
+ * IGNORA y siempre manda sesion.id_empresa — la RLS está escrita pero no
+ * se aplica, así que esta línea es el único filtro real entre contratistas.
+ */
+export async function ordenesDeEmpresa(sesion: Sesion, empresaId?: number): Promise<OrdenResumen[]> {
+  const efectiva = sesion.rol_cimba === "empresa" ? sesion.id_empresa : empresaId;
+  if (!efectiva) return [];
+  const ordenes = await listarOrdenes(sesion, { empresaId: efectiva });
+  // El borrador es planificación interna: el formulario promete "la empresa no
+  // la ve hasta que la emitas", y la vista espejo muestra lo mismo que ve la
+  // empresa. obtenerOrden ya lo excluía; sin esta línea el listado lo filtraba.
+  return ordenes.filter((o) => o.estado !== "borrador");
 }
 
 // ── Parámetros de capacidad ──────────────────────────────────────────────────
@@ -385,6 +395,9 @@ export interface DemandaParaCerrar {
   cerradoEn: string | null;
   m2: number | null;
   fotosDespues: number;
+  /** Punto del incidente reparado, para verificar la dirección en el mini-mapa antes de responder. */
+  lat: number | null;
+  lon: number | null;
 }
 
 /**
@@ -398,6 +411,7 @@ export async function demandasParaCerrar(sesion: Sesion): Promise<DemandaParaCer
       select d.id as demanda_id, d.fuente, d.tipo,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, i.id as incidente_id, i.cerrado_en,
+             st_y(i.geom) as lat, st_x(i.geom) as lon,
              (select round(sum(v.superficie_m2))::int from intervenciones v
                 where v.incidente_id = i.id and v.estado = 'finalizada') as m2,
              (select count(*) from fotografias fo
@@ -422,6 +436,8 @@ export async function demandasParaCerrar(sesion: Sesion): Promise<DemandaParaCer
       cerradoEn: f.cerrado_en != null ? String(f.cerrado_en) : null,
       m2: f.m2 != null ? Number(f.m2) : null,
       fotosDespues: Number(f.fotos_despues ?? 0),
+      lat: f.lat != null ? Number(f.lat) : null,
+      lon: f.lon != null ? Number(f.lon) : null,
     }));
   });
 }

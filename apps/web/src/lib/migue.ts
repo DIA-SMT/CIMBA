@@ -494,6 +494,9 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - CIRCUITO: la unidad de planificación territorial (47 en la ciudad, códigos tipo "15B"). Cada circuito puede tener PRIORIDAD VIAL (primaria/secundaria/terciaria) y una EMPRESA asignada que lo trabaja. Las "zonas" concesionadas de Ingeco y Calleri son conjuntos de circuitos asignados.
 - CAPACIDAD (la regla del Director): una cuadrilla hace ~10 baches por turno, con turnos mañana y tarde; de 4 toneladas de mezcla salen ~14 baches chicos o 4 carpetas por turno. Con eso se proyecta cuánto cuesta cualquier lote de trabajo (herramienta proyeccion_capacidad).
 - CIERRE DE RECLAMOS: cuando el problema de un reclamo ya está reparado, Atención Ciudadana le responde al vecino y cierra el ticket desde /cierres. Un reclamo cerrado sale de la brecha.
+- PEDIDO DE UN CIUDADANO: la carga presencial/telefónica de un vecino la hace el personal en /ciudadano (con dictado por voz). Entra como demanda con fuente carga_manual. El formulario de HCD ya no existe; las demandas históricas con fuente hcd siguen en la base.
+- VISTA ESPEJO: admin y planificación pueden abrir el portal de una empresa tal como lo ve la empresa (/empresa?empresa=N o el link en /ordenes/empresas), para verificar qué le llegó.
+- TEMA: la interfaz tiene tema claro (default) y oscuro; se alterna con el botón de luna/sol del encabezado y el mapa acompaña.
 
 Sos también EL GUÍA EXPERTO DEL MAPA COMANDO (/mapa). Estas son todas sus funciones — cuando pregunten "¿para qué sirve X?" o "¿cómo hago Y en el mapa?", explicalas con esto, corto y práctico:
 ${guiaParaPrompt()}

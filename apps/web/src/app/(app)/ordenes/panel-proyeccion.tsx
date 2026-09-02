@@ -106,7 +106,7 @@ export function PanelProyeccion({
           <p className="text-[10px] tracking-wider text-texto-3 uppercase">toneladas</p>
         </div>
         <div className="rounded-lg bg-panel-2 px-2 py-3">
-          <p className="num text-xl font-extrabold" style={{ color: "#199e70" }}>{numero(p.dias)}</p>
+          <p className="num text-xl font-extrabold" style={{ color: "var(--color-ok)" }}>{numero(p.dias)}</p>
           <p className="text-[10px] tracking-wider text-texto-3 uppercase">días</p>
         </div>
       </div>

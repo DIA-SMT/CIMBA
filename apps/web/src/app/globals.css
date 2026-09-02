@@ -46,6 +46,55 @@
   color-scheme: dark;
 }
 
+/*
+ * Tema CLARO — el default para el trabajo de oficina de todos los días.
+ * El oscuro queda a un toggle de distancia (pantalla de comando, guardias
+ * nocturnas). Las utilidades de Tailwind compilan a var(--color-*), así que
+ * redefinir los tokens acá re-tematiza toda la app sin tocar componentes.
+ * La paleta funcional se oscurece un punto: los colores validados sobre
+ * #0B0F16 pierden contraste sobre blanco (el amarillo #F4DC00 directamente
+ * desaparece — como texto pasa a ocre; como relleno de marca sigue siendo el
+ * oficial).
+ */
+html[data-tema="claro"] {
+  color-scheme: light;
+
+  --color-fondo: #eef2f7;
+  --color-panel: #ffffff;
+  --color-panel-2: #f4f7fb;
+  --color-panel-3: #e8edf5;
+  --color-borde: #d8e0eb;
+  --color-borde-2: #b9c6d9;
+
+  --color-texto: #16202e;
+  --color-texto-2: #4a5a72;
+  /* Un punto más oscuro que el espejo del tema oscuro: #7b89a0 daba ~3.1:1
+   * sobre el fondo claro en labels chicos, justo abajo de AA. */
+  --color-texto-3: #66758d;
+
+  --color-celeste: #0b7fd1;
+  --color-amarillo: #9c8600;
+
+  --color-abierto: #2f6fd0;
+  --color-encurso: #c74a1d;
+  --color-resuelto: #0e7f57;
+  --color-inactivo: #6b7280;
+
+  --color-peligro: #c93b3b;
+  --color-ok: #0e7f57;
+}
+
+html[data-tema="claro"] .fondo-grilla {
+  background-image:
+    linear-gradient(rgba(0, 102, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 102, 255, 0.05) 1px, transparent 1px);
+}
+
+html[data-tema="claro"] .panel-vidrio {
+  background: color-mix(in srgb, #ffffff 86%, transparent);
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.14);
+}
+
 html,
 body {
   height: 100%;
@@ -117,8 +166,10 @@ body {
   font-size: 18px;
   padding: 4px 8px;
 }
+/* La pastilla de atribución sigue al tema: sobre positron una pastilla negra
+ * parece un bug, y color-mix con el token del panel la tematiza sola. */
 .maplibregl-ctrl-attrib {
-  background: rgba(7, 10, 16, 0.7) !important;
+  background: color-mix(in srgb, var(--color-panel) 72%, transparent) !important;
 }
 .maplibregl-ctrl-attrib a {
   color: var(--color-texto-3) !important;

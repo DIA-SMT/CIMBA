@@ -146,7 +146,7 @@ export function AnalisisZona({
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <Cifra n={stats.pendientes} etiqueta="pedidos pendientes" color="#f4dc00" />
+              <Cifra n={stats.pendientes} etiqueta="pedidos pendientes" color="var(--color-amarillo)" />
               <Cifra n={stats.sinAtencion} etiqueta="sin atención (brecha)" color={COLOR_MACRO.en_curso} />
               <Cifra n={stats.enCurso + stats.abiertos} etiqueta="incidentes activos" color={COLOR_MACRO.abierto} />
               <Cifra n={stats.resueltos} etiqueta="reparaciones hechas" color={COLOR_MACRO.resuelto} />
@@ -235,7 +235,7 @@ export function AnalisisZona({
 /** Tabla comparativa A vs. B con densidades por hectárea (radios distintos comparables). */
 function ComparacionAB({ a, b }: { a: StatsZona; b: StatsZona }) {
   const filas: Array<{ etiqueta: string; va: number; vb: number; color?: string }> = [
-    { etiqueta: "Pedidos pendientes", va: a.pendientes, vb: b.pendientes, color: "#f4dc00" },
+    { etiqueta: "Pedidos pendientes", va: a.pendientes, vb: b.pendientes, color: "var(--color-amarillo)" },
     { etiqueta: "Sin atención (brecha)", va: a.sinAtencion, vb: b.sinAtencion, color: COLOR_MACRO.en_curso },
     { etiqueta: "Incidentes activos", va: a.abiertos + a.enCurso, vb: b.abiertos + b.enCurso, color: COLOR_MACRO.abierto },
     { etiqueta: "Reparaciones hechas", va: a.resueltos, vb: b.resueltos, color: COLOR_MACRO.resuelto },

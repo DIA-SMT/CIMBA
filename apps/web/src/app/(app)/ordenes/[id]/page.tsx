@@ -6,6 +6,7 @@ import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
+import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AccionesOrden } from "./acciones-orden";
 import {
   COLOR_ESTADO_ITEM,
@@ -282,17 +283,23 @@ function FilaItem({ item }: { item: ItemOrden }) {
   return (
     <tr className="border-b border-borde/60 transition hover:bg-panel-2">
       <td className="max-w-56 px-3 py-2.5">
-        <span className="block truncate" title={item.direccion ?? undefined}>
-          {item.direccion ?? "Sin dirección"}
-        </span>
-        {item.observaciones && (
-          <span className="block truncate text-[11px] text-texto-3" title={item.observaciones}>
-            {item.observaciones}
+        <div className="flex items-center gap-1.5">
+          {/* El pedido del Director: verificar el punto sin salir de la orden */}
+          <ChipMiniMapa lat={item.lat} lon={item.lon} etiqueta={item.direccion ?? `Item #${item.id}`} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate" title={item.direccion ?? undefined}>
+              {item.direccion ?? "Sin dirección"}
+            </span>
+            {item.observaciones && (
+              <span className="block truncate text-[11px] text-texto-3" title={item.observaciones}>
+                {item.observaciones}
+              </span>
+            )}
           </span>
-        )}
+        </div>
       </td>
       <td className="px-3 py-2.5 text-xs text-texto-2">{ETIQUETA_TIPO_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo}</td>
-      <td className="num px-3 py-2.5 text-right font-bold" style={{ color: item.reclamos > 0 ? "#f4dc00" : "#5c6b84" }}>
+      <td className="num px-3 py-2.5 text-right font-bold" style={{ color: item.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
         {numero(item.reclamos)}
       </td>
       <td className="px-3 py-2.5">

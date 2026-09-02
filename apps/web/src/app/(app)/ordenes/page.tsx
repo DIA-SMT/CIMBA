@@ -78,10 +78,10 @@ export default async function PaginaOrdenes({
 
       {/* KPIs */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi n={ordenesActivas.length} etiqueta="órdenes activas" color="#3987e5" nota="emitidas o en ejecución" />
-        <Kpi n={itemsPendientes} etiqueta="items pendientes" color="#d95926" nota="baches y tramos ya asignados a empresas" />
-        <Kpi n={m2Reportados} etiqueta="m² reportados" color="#199e70" nota="superficie cargada por las empresas" />
-        <Kpi n={empresasConCarga} etiqueta="empresas con carga" color="#f4dc00" nota={`de ${empresas.length} registradas`} />
+        <Kpi n={ordenesActivas.length} etiqueta="órdenes activas" color="var(--color-abierto)" nota="emitidas o en ejecución" />
+        <Kpi n={itemsPendientes} etiqueta="items pendientes" color="var(--color-encurso)" nota="baches y tramos ya asignados a empresas" />
+        <Kpi n={m2Reportados} etiqueta="m² reportados" color="var(--color-ok)" nota="superficie cargada por las empresas" />
+        <Kpi n={empresasConCarga} etiqueta="empresas con carga" color="var(--color-amarillo)" nota={`de ${empresas.length} registradas`} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
@@ -130,11 +130,11 @@ export default async function PaginaOrdenes({
                         <td className="px-3 py-2 text-xs text-texto-2">{c.empresaNombre ?? "—"}</td>
                       </>
                     )}
-                    <td className="num px-3 py-2 text-right font-bold" style={{ color: c.pendientes > 0 ? "#d95926" : "#5c6b84" }}>
+                    <td className="num px-3 py-2 text-right font-bold" style={{ color: c.pendientes > 0 ? "var(--color-encurso)" : "var(--color-texto-3)" }}>
                       {numero(c.pendientes)}
                     </td>
                     <td className="num px-3 py-2 text-right text-amarillo">{numero(c.demandasAbiertas)}</td>
-                    <td className="num px-3 py-2 text-right" style={{ color: "#199e70" }}>
+                    <td className="num px-3 py-2 text-right" style={{ color: "var(--color-ok)" }}>
                       {numero(c.reparados)}
                     </td>
                     <td className="num px-3 py-2 text-right text-texto-2">{numero(c.ordenesActivas)}</td>
@@ -265,7 +265,7 @@ export default async function PaginaOrdenes({
                       </span>
                     </div>
                   </td>
-                  <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "#199e70" : "#5c6b84" }}>
+                  <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
                     {o.m2Reportados > 0 ? numero(o.m2Reportados) : "—"}
                   </td>
                   <td className={`num px-4 py-2.5 ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
+import { BotonTema } from "@/components/boton-tema";
 
 /**
  * Layout del portal de empresas contratistas. Vive FUERA del route group
@@ -11,8 +12,9 @@ import { LogoCimba } from "@/components/marca";
 export default async function LayoutEmpresa({ children }: { children: React.ReactNode }) {
   const sesion = await leerSesion();
   if (!sesion) redirect("/acceso");
-  // admin entra para dar soporte; cualquier otro rol tiene su propio portal
-  if (sesion.rol_cimba !== "empresa" && sesion.rol_cimba !== "admin") redirect("/mapa");
+  // admin y planificacion (el Director) entran para soporte y vista espejo;
+  // cualquier otro rol tiene su propio portal
+  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) redirect("/mapa");
 
   return (
     <div className="min-h-screen bg-fondo">
@@ -22,6 +24,7 @@ export default async function LayoutEmpresa({ children }: { children: React.Reac
           <span className="min-w-0 truncate text-sm font-semibold" title={sesion.nombre}>
             {sesion.nombre}
           </span>
+          <BotonTema />
           <a
             href="/api/auth/logout"
             title="Cerrar sesión"

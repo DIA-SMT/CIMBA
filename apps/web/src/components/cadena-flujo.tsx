@@ -8,7 +8,7 @@ const PASOS = [
     titulo: "Pedido (demanda)",
     texto: "Un vecino o institución reclama un problema.",
     href: "/demandas",
-    color: "#3987e5",
+    color: "var(--color-abierto)",
     Icono: Inbox,
   },
   {
@@ -16,7 +16,7 @@ const PASOS = [
     titulo: "Problema (incidente)",
     texto: "Los pedidos del mismo lugar se agrupan y priorizan.",
     href: "/incidentes",
-    color: "#f4dc00",
+    color: "var(--color-amarillo)",
     Icono: Wrench,
   },
   {
@@ -24,7 +24,7 @@ const PASOS = [
     titulo: "Trabajo (intervención)",
     texto: "Una cuadrilla u obra repara.",
     href: "/intervenciones",
-    color: "#199e70",
+    color: "var(--color-ok)",
     Icono: HardHat,
   },
 ] as const;

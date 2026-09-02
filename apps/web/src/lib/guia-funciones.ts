@@ -114,6 +114,12 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
     tour: "balance",
   },
   {
+    id: "tema",
+    titulo: "Tema claro y oscuro",
+    desc: "CIMBA arranca en claro para el trabajo de oficina; el botón de luna/sol del encabezado lo pasa a oscuro (ideal para la pantalla de comando o de noche). El mapa cambia con el tema: callejero claro u oscuro. La elección queda guardada en este dispositivo.",
+    como: "Tocá el ícono de luna (o sol) arriba a la derecha.",
+  },
+  {
     id: "circuitos-operativos",
     titulo: "Circuitos operativos",
     desc: "Con la capa de circuitos prendida, cada circuito se pinta según la empresa que lo trabaja y su borde marca la prioridad vial (naranja = primaria, amarillo = secundaria). Tocá un circuito para ver su ficha: pendientes, reclamos, empresa asignada y órdenes activas. La asignación se maneja desde Órdenes.",

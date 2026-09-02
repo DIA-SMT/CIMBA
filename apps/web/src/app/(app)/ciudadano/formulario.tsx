@@ -1,11 +1,12 @@
 "use client";
 
-import { FileUp, LocateFixed, X } from "lucide-react";
+import { FileUp, LocateFixed, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { TIPOS_PROBLEMA } from "@cimba/domain";
-import { crearDemandaFuncionario } from "@/lib/acciones";
+import { crearDemandaCiudadano } from "@/lib/acciones";
 import { leerArchivoComoCapa, type CapaPuntos } from "@/lib/capa-archivo";
+import { useDictadoVoz } from "@/lib/dictado";
 import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
 import { CargaRapida, type CargaInterpretada } from "@/components/carga-rapida";
@@ -14,7 +15,13 @@ import { Panel } from "@/components/ui";
 /** Distritos operativos de la ciudad (referencia editable; queda en metadata). */
 const DISTRITOS = ["Distrito Norte", "Distrito Sur", "Distrito Este", "Distrito Oeste", "Centro"];
 
-export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }) {
+/**
+ * Carga del pedido de un vecino que reclama en persona o por teléfono. El que
+ * tipea es el personal, muchas veces con el vecino delante o al teléfono: por
+ * eso dirección y descripción se pueden DICTAR con el micrófono en vez de
+ * tipearse.
+ */
+export function FormularioCiudadano() {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [punto, setPunto] = useState<{ lat: number; lon: number } | null>(null);
@@ -24,7 +31,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
   const [direccion, setDireccion] = useState("");
   const [buscandoDireccion, setBuscandoDireccion] = useState(false);
   const [descripcion, setDescripcion] = useState("");
-  const [solicitante, setSolicitante] = useState(nombreSesion.startsWith("Dev ") ? "" : nombreSesion);
+  const [solicitante, setSolicitante] = useState("");
   const [area, setArea] = useState("");
   const [distrito, setDistrito] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +40,13 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
   const [nombreCapa, setNombreCapa] = useState<string | null>(null);
   const [errorCapa, setErrorCapa] = useState<string | null>(null);
   const inputArchivo = useRef<HTMLInputElement>(null);
+
+  // La dirección se dictó completa: se reemplaza. La descripción se va
+  // dictando de a frases mientras el vecino habla: se acumula.
+  const dictadoDireccion = useDictadoVoz((frase) => setDireccion(frase));
+  const dictadoDescripcion = useDictadoVoz((frase) =>
+    setDescripcion((previa) => (previa ? `${previa} ${frase}` : frase)),
+  );
 
   const georevRef = useRef(0);
   const resolverDireccion = async (lat: number, lon: number) => {
@@ -43,7 +57,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
       const data = (await res.json()) as { direccion: string | null };
       if (pedido === georevRef.current && data.direccion) setDireccion(data.direccion);
     } catch {
-      // sin dirección automática: se escribe a mano
+      // sin dirección automática: se escribe (o dicta) a mano
     } finally {
       if (pedido === georevRef.current) setBuscandoDireccion(false);
     }
@@ -94,13 +108,13 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
 
   const enviar = () => {
     if (!punto) {
-      setError("Usá el GPS o marcá la ubicación en el mapa");
+      setError("Marcá la ubicación en el mapa (o usá el GPS si estás en el lugar)");
       return;
     }
     setError(null);
     startTransition(async () => {
       try {
-        const r = await crearDemandaFuncionario({
+        const r = await crearDemandaCiudadano({
           lat: punto.lat,
           lon: punto.lon,
           tipo,
@@ -114,7 +128,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
         setCreado(r.id ?? null);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo crear el pedido");
+        setError(e instanceof Error ? e.message : "No se pudo registrar el pedido");
       }
     });
   };
@@ -124,7 +138,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
       <Panel className="p-6 text-center">
         <p className="text-lg font-bold text-resuelto">Pedido registrado ✓</p>
         <p className="mt-1 text-sm text-texto-2">
-          Quedó como demanda <span className="num font-bold">#{creado}</span> con fuente Secretarías
+          Quedó como demanda <span className="num font-bold">#{creado}</span> con fuente Carga manual
           {distrito && (
             <>
               {" "}({distrito})
@@ -139,6 +153,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
             setDesdeGps(false);
             setDireccion("");
             setDescripcion("");
+            setSolicitante("");
           }}
           className="mt-4 rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white"
         >
@@ -165,7 +180,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
       <div>
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <label className="block text-xs font-semibold tracking-wider text-texto-3 uppercase">
-            Ubicación — GPS o clic en el mapa
+            Ubicación — clic en el mapa (o GPS si estás en el lugar)
           </label>
           <div className="flex items-center gap-2">
             {nombreCapa && capa ? (
@@ -201,7 +216,7 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
             <button
               onClick={usarGps}
               disabled={buscandoGps}
-              title="Usar tu ubicación actual: ideal para cargar el pedido parado frente al problema"
+              title="Usar tu ubicación actual: solo sirve si estás parado frente al problema"
               className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${desdeGps ? "border border-resuelto/50 bg-resuelto/10 text-resuelto" : "bg-azul text-white hover:brightness-110"} disabled:opacity-50`}
             >
               <LocateFixed size={12} className={buscandoGps ? "animate-spin" : ""} />
@@ -222,13 +237,26 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
         <div>
           <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
             Dirección {buscandoDireccion && <span className="text-celeste">· buscando…</span>}
+            {dictadoDireccion.escuchando && <span className="text-peligro"> · escuchando…</span>}
           </label>
-          <input
-            value={direccion}
-            onChange={(e) => setDireccion(e.target.value)}
-            placeholder="Ej: Av. Mate de Luna 2400"
-            className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
-          />
+          <div className="flex gap-2">
+            <input
+              value={direccion}
+              onChange={(e) => setDireccion(e.target.value)}
+              placeholder="Ej: Av. Mate de Luna 2400"
+              className="w-full min-w-0 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
+            />
+            {dictadoDireccion.hayVoz && (
+              <BotonMicrofono
+                escuchando={dictadoDireccion.escuchando}
+                alternar={dictadoDireccion.alternar}
+                titulo="Dictar la dirección"
+              />
+            )}
+          </div>
+          {dictadoDireccion.error && (
+            <p className="mt-1 text-xs text-peligro">{dictadoDireccion.error}</p>
+          )}
         </div>
         <div>
           <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Tipo de problema</label>
@@ -239,25 +267,25 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
           </select>
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Funcionario que carga</label>
+          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Vecino que pide</label>
           <input
             value={solicitante}
             onChange={(e) => setSolicitante(e.target.value)}
-            placeholder="Nombre y apellido"
+            placeholder="Nombre y apellido del vecino"
             className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Secretaría / área</label>
+          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Área que lo atiende</label>
           <input
             value={area}
             onChange={(e) => setArea(e.target.value)}
-            placeholder="Ej: Secretaría de Obras Públicas"
+            placeholder="Ej: Dirección de Bacheo, mesa de entradas"
             className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Distrito que recorrés</label>
+          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Distrito (si se sabe)</label>
           <select
             value={distrito}
             onChange={(e) => setDistrito(e.target.value)}
@@ -272,14 +300,34 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
       </div>
 
       <div>
-        <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Descripción</label>
-        <textarea
-          value={descripcion}
-          onChange={(e) => setDescripcion(e.target.value)}
-          rows={3}
-          placeholder="Qué viste y dónde exactamente…"
-          className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
-        />
+        <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
+          Descripción
+          {dictadoDescripcion.escuchando && <span className="text-peligro"> · escuchando…</span>}
+        </label>
+        <div className="flex items-stretch gap-2">
+          <textarea
+            value={descripcion}
+            onChange={(e) => setDescripcion(e.target.value)}
+            rows={3}
+            placeholder={
+              dictadoDescripcion.hayVoz
+                ? "Qué cuenta el vecino y dónde exactamente… (podés dictarlo con el micrófono)"
+                : "Qué cuenta el vecino y dónde exactamente…"
+            }
+            className="w-full min-w-0 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
+          />
+          {dictadoDescripcion.hayVoz && (
+            <BotonMicrofono
+              escuchando={dictadoDescripcion.escuchando}
+              alternar={dictadoDescripcion.alternar}
+              titulo="Dictar la descripción (se agrega a lo ya escrito)"
+              alto
+            />
+          )}
+        </div>
+        {dictadoDescripcion.error && (
+          <p className="mt-1 text-xs text-peligro">{dictadoDescripcion.error}</p>
+        )}
       </div>
 
       {error && <p className="text-sm text-peligro">{error}</p>}
@@ -292,5 +340,37 @@ export function FormularioFuncionario({ nombreSesion }: { nombreSesion: string }
         {pendiente ? "Enviando…" : "Registrar pedido"}
       </button>
     </div>
+  );
+}
+
+/**
+ * Botón de micrófono grande (target de 44px+): el que carga suele estar con
+ * el teléfono en una mano y el vecino hablando; tiene que poder tocarlo sin
+ * mirar.
+ */
+function BotonMicrofono({
+  escuchando,
+  alternar,
+  titulo,
+  alto = false,
+}: {
+  escuchando: boolean;
+  alternar: () => void;
+  titulo: string;
+  alto?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={alternar}
+      title={escuchando ? "Dejar de escuchar" : titulo}
+      className={`flex w-12 shrink-0 items-center justify-center rounded-lg border transition ${alto ? "" : "h-12"} ${
+        escuchando
+          ? "animate-pulse border-peligro/50 bg-peligro/15 text-peligro"
+          : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste hover:text-celeste"
+      }`}
+    >
+      <Mic size={20} />
+    </button>
   );
 }

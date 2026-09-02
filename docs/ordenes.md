@@ -56,6 +56,22 @@ ve los reclamos cuyo problema
   incidente esté reparado — el botón no existe para promesas. El cierre queda
   en `metadata.cierre` y la demanda sale de la brecha.
 
+## Cómo entra cada uno
+
+| Quién | Usuario | Cómo lo consigue | A dónde cae |
+|---|---|---|---|
+| Dirección de IA (admin) | `direccionia` | variables de entorno | `/mapa` |
+| Director de Bacheo (planificación) | `bacheo` | variables de entorno | `/ordenes` |
+| Empresa contratista | su slug (`uocra`, `ingeco`, `calleri`…) | el Director genera la clave en `/ordenes/empresas` y se la pasa al referente; se muestra UNA vez | `/empresa` |
+
+Todos entran por la misma pantalla `/acceso`. La empresa no ve nada del sistema
+del personal: su portal son sus órdenes y nada más.
+
+**Vista espejo**: admin y planificación pueden abrir el portal exactamente como
+lo ve una empresa (`/empresa?empresa=N`, o el link "ver su portal" en
+`/ordenes/empresas`). Un banner recuerda que lo que se cargue ahí vale de
+verdad.
+
 ## La regla de capacidad (los números del Director)
 
 Una cuadrilla hace ~**10 baches por turno** (mañana y tarde). De **4 toneladas**

@@ -9,6 +9,7 @@ import { cerrarDemandaAtencion } from "@/lib/acciones-ordenes";
 import type { DemandaParaCerrar } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeFuente, BadgeTipo } from "@/components/ui";
+import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 
 /**
  * Fila de la bandeja de cierre, con su botón "Cerrar" que expande la
@@ -59,8 +60,19 @@ export function FilaCierre({
         <td className="px-4 py-2.5">
           <BadgeTipo tipo={demanda.tipo} />
         </td>
-        <td className="max-w-64 truncate px-4 py-2.5" title={demanda.direccion ?? ""}>
-          {demanda.direccion ?? "—"}
+        <td className="max-w-64 px-4 py-2.5">
+          <div className="flex items-center gap-1.5">
+            {/* Verificar el punto reparado antes de responderle al vecino:
+                el cierre es por fila y a conciencia, el mapa ayuda a mirar. */}
+            <ChipMiniMapa
+              lat={demanda.lat}
+              lon={demanda.lon}
+              etiqueta={demanda.direccion ?? `Incidente #${demanda.incidenteId}`}
+            />
+            <span className="min-w-0 flex-1 truncate" title={demanda.direccion ?? ""}>
+              {demanda.direccion ?? "—"}
+            </span>
+          </div>
         </td>
         <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(demanda.creadoEn)}</td>
         <td className="num px-4 py-2.5 font-semibold text-resuelto">{fechaCorta(demanda.cerradoEn)}</td>

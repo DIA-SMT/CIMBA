@@ -48,7 +48,7 @@ function CargaArchivo() {
           throw new Error(
             `La capa "${tabla}" no tiene el formato del consolidado: faltan las columnas ${faltan.join(", ").toUpperCase()}. ` +
               "Para ingerir demandas el GPKG debe traer ID, TIPO, UBICACION, LATITUD, LONGITUD y FUENTE " +
-              "(para solo VERLO como capa de referencia, cargalo desde el mapa de HCD o Funcionarios).",
+              "(para solo VERLO como capa de referencia, cargalo desde el mapa de Ciudadano).",
           );
         }
         const num = (v: unknown) => {

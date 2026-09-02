@@ -7,7 +7,6 @@ import {
   GitCompareArrows,
   HardHat,
   Inbox,
-  Landmark,
   LogOut,
   Map as MapIcon,
   ShieldCheck,
@@ -17,6 +16,7 @@ import {
 } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
+import { BotonTema } from "@/components/boton-tema";
 import { MigueChat } from "@/components/migue-chat";
 import { BotonPush } from "@/components/boton-push";
 
@@ -30,8 +30,7 @@ const NAV = [
   { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
   { href: "/calidad", etiqueta: "Calidad", icono: ShieldCheck },
   { href: "/cargar", etiqueta: "Cargar", icono: Upload },
-  { href: "/hcd/nuevo", etiqueta: "HCD", icono: Landmark },
-  { href: "/funcionarios/nuevo", etiqueta: "Funcionarios", icono: UserRound },
+  { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
   { href: "/campo", etiqueta: "Campo", icono: Smartphone },
 ];
 
@@ -49,6 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <LogoCimba />
         </Link>
         <div className="flex items-center gap-4">
+          <BotonTema compacto />
           <BotonPush />
           <div className="hidden text-right sm:block">
             <div className="text-xs font-semibold">{sesion.nombre}</div>

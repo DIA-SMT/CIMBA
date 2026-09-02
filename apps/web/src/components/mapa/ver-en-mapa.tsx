@@ -5,10 +5,7 @@ import { Eye, MapPin, Maximize2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { Map as MapaGL, Marker, NavigationControl } from "react-map-gl/maplibre";
-
-const ESTILO =
-  process.env.NEXT_PUBLIC_MAP_STYLE_DARK ??
-  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+import { estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /** Niveles de opacidad del panel: opaco → translúcido → casi transparente. */
 const NIVELES_OPACIDAD = [1, 0.55, 0.22] as const;
@@ -32,6 +29,7 @@ export function VerEnMapa({
   color?: string;
 }) {
   const id = useId();
+  const tema = usarTemaMapa();
   const [abierto, setAbierto] = useState(false);
   const [nivel, setNivel] = useState(0);
 
@@ -111,7 +109,7 @@ export function VerEnMapa({
             <div style={{ height: 250 }}>
               <MapaGL
                 initialViewState={{ longitude: lon, latitude: lat, zoom: 16 }}
-                mapStyle={ESTILO}
+                mapStyle={estiloMapa(tema)}
                 attributionControl={false}
               >
                 <NavigationControl position="bottom-right" showCompass={false} />

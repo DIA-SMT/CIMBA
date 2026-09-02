@@ -166,7 +166,7 @@ export default async function PaginaIncidentes({
                           className="h-full rounded-full"
                           style={{
                             width: `${Math.max(4, (100 * i.scorePrioridad) / maxScore)}%`,
-                            background: i.scorePrioridad >= 60 ? "#f4dc00" : i.scorePrioridad >= 35 ? "#2EB1FF" : "#8b94a3",
+                            background: i.scorePrioridad >= 60 ? "var(--color-amarillo)" : i.scorePrioridad >= 35 ? "var(--color-celeste)" : "#8b94a3",
                           }}
                         />
                       </div>
@@ -192,7 +192,7 @@ export default async function PaginaIncidentes({
                 <td className="px-4 py-2.5">
                   <span
                     className={`num text-[13px] font-bold ${i.demandas > 0 ? "" : "text-texto-3"}`}
-                    style={i.demandas > 0 ? { color: "#3987e5" } : undefined}
+                    style={i.demandas > 0 ? { color: "var(--color-abierto)" } : undefined}
                     title={i.demandas === 0 ? "Nadie lo pidió: se detectó trabajando" : `${i.demandas} pedido(s) apuntan acá`}
                   >
                     {i.demandas}
@@ -201,7 +201,7 @@ export default async function PaginaIncidentes({
                 <td className="px-4 py-2.5">
                   <span
                     className={`num text-[13px] font-bold ${i.intervenciones > 0 ? "" : "text-texto-3"}`}
-                    style={i.intervenciones > 0 ? { color: "#199e70" } : undefined}
+                    style={i.intervenciones > 0 ? { color: "var(--color-ok)" } : undefined}
                     title={i.intervenciones === 0 ? "Todavía sin trabajo asignado" : `${i.intervenciones} trabajo(s) lo atendieron`}
                   >
                     {i.intervenciones}

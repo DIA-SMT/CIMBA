@@ -4,19 +4,39 @@ import Image from "next/image";
  * Marca según manual SMT (junio 2025):
  *  - Isotipo flor de azahar extraído del vector oficial (SMT_Logotipos.ai).
  *  - Sobre fondos oscuros se usa la versión monocromática blanca, como exige
- *    el manual cuando el fondo no garantiza contraste del color institucional.
+ *    el manual cuando el fondo no garantiza contraste del color institucional;
+ *    sobre fondos claros va la versión color. Como este componente es de
+ *    servidor, el swap lo hace CSS contra html[data-tema] (sin JS ni flash).
  *  - CIMBA convive como identidad municipal secundaria: lockup "CIUDAD SMT | CIMBA".
  */
 
 export function IsotipoSmt({ tam = 28, mono = true }: { tam?: number; mono?: boolean }) {
+  const alto = Math.round((tam * 648) / 571);
+  if (!mono) {
+    return <Image src="/marca/isotipo-smt.png" alt="Ciudad San Miguel de Tucumán" width={tam} height={alto} priority />;
+  }
   return (
-    <Image
-      src={mono ? "/marca/isotipo-smt-blanco.png" : "/marca/isotipo-smt.png"}
-      alt="Ciudad San Miguel de Tucumán"
-      width={tam}
-      height={Math.round((tam * 648) / 571)}
-      priority
-    />
+    <>
+      {/* Versión blanca: solo con tema oscuro (en claro sería invisible) */}
+      <Image
+        src="/marca/isotipo-smt-blanco.png"
+        alt="Ciudad San Miguel de Tucumán"
+        width={tam}
+        height={alto}
+        priority
+        className="[[data-tema=claro]_&]:hidden"
+      />
+      {/* Versión color institucional: solo con tema claro */}
+      <Image
+        src="/marca/isotipo-smt.png"
+        alt=""
+        aria-hidden
+        width={tam}
+        height={alto}
+        priority
+        className="hidden [[data-tema=claro]_&]:block"
+      />
+    </>
   );
 }
 

@@ -40,6 +40,11 @@ export default async function Acceso({
         )}
 
         <FormularioAcceso />
+
+        <p className="mt-6 text-center text-xs leading-relaxed text-texto-3">
+          ¿Sos empresa contratista? Entrás por acá mismo, con el usuario y la clave que te da la
+          Dirección de Bacheo.
+        </p>
       </div>
     </main>
   );

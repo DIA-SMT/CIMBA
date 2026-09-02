@@ -49,7 +49,7 @@ export default async function PaginaIntervenciones({
         <Cifra n={resumen.finalizadas} etiqueta="trabajos finalizados" color={C.hecho}
           nota={`${numero(resumen.m2)} m² reparados`} />
         <Cifra n={resumen.enCurso} etiqueta="en curso ahora" color={C.curso} />
-        <Cifra n={resumen.asignadas} etiqueta="asignados, por empezar" color="#f4dc00" />
+        <Cifra n={resumen.asignadas} etiqueta="asignados, por empezar" color="var(--color-amarillo)" />
         <Cifra n={resumen.contratadas} etiqueta="obras contratadas (SIGOV)" color={C.pedido}
           nota={`${numero(resumen.municipales)} de gestión municipal (bacheo y cuadrillas)`} />
       </div>
@@ -200,7 +200,7 @@ function Avance({ estado }: { estado: string }) {
   }
   const pasos = ["asignada", "en_curso", "finalizada"] as const;
   const idx = pasos.indexOf(estado as (typeof pasos)[number]);
-  const colores = ["#f4dc00", C.curso, C.hecho];
+  const colores = ["var(--color-amarillo)", C.curso, C.hecho];
   const color = colores[idx] ?? "#8b94a3";
   return (
     <div title={`${ETIQUETA[estado] ?? estado}: asignada → en curso → finalizada`}>

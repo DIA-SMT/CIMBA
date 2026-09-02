@@ -35,10 +35,14 @@ export const ETIQUETA_PRIORIDAD: Record<PrioridadVial, string> = {
  * Antes acá primaria era amarilla y secundaria celeste — el mismo dato se
  * pintaba con colores opuestos según la pantalla.
  */
+// Tokens CSS (no hex): estos colores se usan como TEXTO sobre paneles y el
+// amarillo pleno desaparece en tema claro; el token flipea solo. OJO: por eso
+// COLOR_PRIORIDAD no admite el truco `${color}22` (concatenar alfa) — para
+// eso están COLOR_ESTADO_ORDEN / COLOR_ESTADO_ITEM, que siguen en hex.
 export const COLOR_PRIORIDAD: Record<PrioridadVial, string> = {
-  primaria: "#d95926",
-  secundaria: "#f4dc00",
-  terciaria: "#8fa3bf",
+  primaria: "var(--color-encurso)",
+  secundaria: "var(--color-amarillo)",
+  terciaria: "var(--color-texto-2)",
 };
 
 export const ETIQUETA_TIPO_TRABAJO: Record<string, string> = {

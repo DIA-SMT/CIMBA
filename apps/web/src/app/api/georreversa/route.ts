@@ -3,7 +3,7 @@ import { leerSesion } from "@/lib/auth";
 
 /**
  * Reverse geocoding para autocompletar la dirección al marcar un punto en el
- * mapa (HCD, carga manual). Server-side contra Nominatim, con caché en
+ * mapa (pedido de un ciudadano, carga manual). Server-side contra Nominatim, con caché en
  * memoria y redondeo a ~10 m para reutilizar resultados cercanos.
  */
 const cache = new Map<string, string | null>();

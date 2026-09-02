@@ -59,6 +59,7 @@ import { BuscadorMapa } from "./buscador-mapa";
 import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
+import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
 
 /**
  * Vistas del mapa: la respuesta a "es muchísima información y no se entiende".
@@ -129,9 +130,52 @@ interface GeoDatos {
 }
 
 const CENTRO_SMT: [number, number] = [-65.2226, -26.8241];
-const ESTILO_MAPA =
-  process.env.NEXT_PUBLIC_MAP_STYLE_DARK ??
-  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+
+// ── Tema visual del mapa ────────────────────────────────────────────────────
+// El estilo base y el hook reactivo (data-tema + MutationObserver) viven en
+// tema-mapa.ts, compartidos con los mini-mapas; la paleta de las capas
+// propias es local a este archivo.
+
+type Tema = TemaMapa;
+
+/**
+ * Variantes de color por tema para las capas del mapa. El OSCURO conserva
+ * exactamente los valores históricos (validados sobre dark-matter); el CLARO
+ * oscurece los acentos que mueren sobre positron (el amarillo como texto/anillo
+ * pasa a ocre), invierte los halos de etiqueta (claros, no #070a10) y da vuelta
+ * las rampas secuenciales pensadas para fondo negro (densidad alta = azul
+ * OSCURO sobre fondo claro, no celeste lavado).
+ */
+function paleta(tema: Tema) {
+  const oscuro = tema === "oscuro";
+  return {
+    oscuro,
+    /** Halo de toda etiqueta de texto sobre el mapa. */
+    halo: oscuro ? "#070a10" : "#ffffff",
+    /** Amarillo de acento: anillos, hilos de cotejo, cifras flotantes. */
+    acento: oscuro ? "#f4dc00" : "#b48f00",
+    /** Trazo color-de-fondo que separa un punto de sus vecinos. */
+    tinta: oscuro ? "#0B0F16" : "#ffffff",
+    trazoPunto: oscuro ? "rgba(237,242,250,0.4)" : "rgba(22,24,29,0.4)",
+    trazoCluster: oscuro ? "rgba(237,242,250,0.35)" : "rgba(22,24,29,0.3)",
+    trazoBrecha: oscuro ? "rgba(7,10,16,0.8)" : "rgba(255,255,255,0.85)",
+    avenidaNombre: oscuro ? "#7cc4e8" : "#19638f",
+    distritos: oscuro ? "#a78bfa" : "#6d4fd4",
+    circuitos: oscuro ? "#34d399" : "#0c8a5f",
+    barrios: oscuro ? "#f472b6" : "#c22672",
+    demanda: oscuro ? "#8fa3bf" : "#5b6b82",
+    /** Amarillo del inicio de la rampa de antigüedad (como relleno de punto). */
+    edadReciente: oscuro ? "#f4dc00" : "#bfa000",
+    /** El relleno por empresa al 0.12 casi no se ve sobre claro: sube un poco. */
+    opacidadEmpresa: oscuro ? 0.12 : 0.22,
+    /** Rampa secuencial azul (calor / hexágonos), de menor a mayor densidad. */
+    rampa: oscuro
+      ? (["#104281", "#1c5cab", "#3987e5", "#86b6ef", "#cde2fb"] as const)
+      : (["#a8cbf4", "#6ba3e8", "#3987e5", "#1c5cab", "#0d3568"] as const),
+    calorCero: oscuro ? "rgba(13,54,107,0)" : "rgba(168,203,244,0)",
+  };
+}
+type Paleta = ReturnType<typeof paleta>;
 
 // ── Capas MapLibre ──────────────────────────────────────────────────────────
 
@@ -183,7 +227,7 @@ const capaAvenidas: LayerProps = {
   },
 };
 
-const capaAvenidasNombre: LayerProps = {
+const capaAvenidasNombre = (p: Paleta): LayerProps => ({
   id: "avenidas-nombre",
   type: "symbol",
   source: "carto",
@@ -199,12 +243,12 @@ const capaAvenidasNombre: LayerProps = {
     "text-max-angle": 35,
   },
   paint: {
-    "text-color": "#7cc4e8",
+    "text-color": p.avenidaNombre,
     "text-opacity": 0.85,
-    "text-halo-color": "#070a10",
+    "text-halo-color": p.halo,
     "text-halo-width": 1.8,
   },
-};
+});
 
 // ── Límites territoriales de referencia ──────────────────────────────────────
 // Tres capas de contexto administrativo: distritos (violeta, la más "oficial"
@@ -215,27 +259,27 @@ const capaAvenidasNombre: LayerProps = {
 // Pedido literal del Director: "quiero que los circuitos y distritos estén
 // mucho más marcados" — línea sólida firme + un halo tenue debajo, para que
 // el límite se lea incluso con el satélite prendido sin tapar los datos.
-const capaDistritosHalo: LayerProps = {
+const capaDistritosHalo = (p: Paleta): LayerProps => ({
   id: "distritos-halo",
   type: "line",
   source: "distritos",
   paint: {
-    "line-color": "#a78bfa",
+    "line-color": p.distritos,
     "line-opacity": 0.22,
     "line-blur": 3,
     "line-width": ["interpolate", ["linear"], ["zoom"], 11, 5, 14, 8, 17, 12],
   },
-};
-const capaDistritosLinea: LayerProps = {
+});
+const capaDistritosLinea = (p: Paleta): LayerProps => ({
   id: "distritos-linea",
   type: "line",
   source: "distritos",
   paint: {
-    "line-color": "#a78bfa",
+    "line-color": p.distritos,
     "line-opacity": 0.8,
     "line-width": 2.5,
   },
-};
+});
 /**
  * Coropleta de la deuda: cada distrito teñido según qué proporción de sus
  * pedidos abiertos no tiene nada cerca. Verde = atendido, rojo = abandonado;
@@ -257,7 +301,7 @@ const capaDistritosRelleno: LayerProps = {
   },
 };
 
-const capaDistritosNombre: LayerProps = {
+const capaDistritosNombre = (p: Paleta): LayerProps => ({
   id: "distritos-nombre",
   type: "symbol",
   source: "distritos",
@@ -272,29 +316,29 @@ const capaDistritosNombre: LayerProps = {
     "text-font": ["Open Sans Bold"],
     "text-size": 12.5,
   },
-  paint: { "text-color": "#a78bfa", "text-halo-color": "#070a10", "text-halo-width": 2.2 },
-};
+  paint: { "text-color": p.distritos, "text-halo-color": p.halo, "text-halo-width": 2.2 },
+});
 
 /** Contorno grueso del distrito aislado con ?distrito= (el filtro es runtime). */
-const capaDistritoFoco = (id: number): LayerProps => ({
+const capaDistritoFoco = (id: number, p: Paleta): LayerProps => ({
   id: "distrito-foco",
   type: "line",
   source: "distritos",
   filter: ["==", ["get", "id"], id],
-  paint: { "line-color": "#f4dc00", "line-width": 3, "line-opacity": 0.9 },
+  paint: { "line-color": p.acento, "line-width": 3, "line-opacity": 0.9 },
 });
 
-const capaCircuitosLinea: LayerProps = {
+const capaCircuitosLinea = (p: Paleta): LayerProps => ({
   id: "circuitos-linea",
   type: "line",
   source: "circuitos",
   paint: {
-    "line-color": "#34d399",
+    "line-color": p.circuitos,
     "line-opacity": 0.85,
     "line-width": 2,
   },
-};
-const capaCircuitosNombre: LayerProps = {
+});
+const capaCircuitosNombre = (p: Paleta): LayerProps => ({
   id: "circuitos-nombre",
   type: "symbol",
   source: "circuitos",
@@ -307,8 +351,8 @@ const capaCircuitosNombre: LayerProps = {
     "text-size": 11.5,
     "text-letter-spacing": 0.05,
   },
-  paint: { "text-color": "#34d399", "text-halo-color": "#070a10", "text-halo-width": 2 },
-};
+  paint: { "text-color": p.circuitos, "text-halo-color": p.halo, "text-halo-width": 2 },
+});
 
 // ── Capa OPERATIVA de circuitos ──────────────────────────────────────────────
 // Con el toggle de circuitos prendido, el mapa pide /api/circuitos-operativos
@@ -335,9 +379,10 @@ const ETIQUETA_PRIORIDAD: Record<string, string> = {
   secundaria: "Secundaria",
   terciaria: "Terciaria",
 };
-const COLOR_PRIORIDAD: Record<string, string> = { primaria: "#d95926", secundaria: "#f4dc00" };
+// En HTML (no en el canvas) los tokens sí flipean solos con el tema.
+const COLOR_PRIORIDAD: Record<string, string> = { primaria: "var(--color-encurso)", secundaria: "var(--color-amarillo)" };
 
-const capaCircuitosEmpresa: LayerProps = {
+const capaCircuitosEmpresa = (p: Paleta): LayerProps => ({
   id: "circuitos-empresa-relleno",
   type: "fill",
   source: "circuitos",
@@ -345,23 +390,23 @@ const capaCircuitosEmpresa: LayerProps = {
     "fill-color": ["coalesce", ["get", "color_empresa"], "rgba(0,0,0,0)"],
     // Sin empresa asignada no hay tinte, pero la capa sigue siendo clickeable
     // (la opacidad 0 no saca el polígono de queryRenderedFeatures).
-    "fill-opacity": ["case", ["has", "color_empresa"], 0.12, 0],
+    "fill-opacity": ["case", ["has", "color_empresa"], p.opacidadEmpresa, 0],
   },
-};
+});
 
 /** Refuerzo del borde según prioridad; la terciaria no se refuerza a propósito
  *  (que lo urgente resalte exige que lo demás no compita). */
-const capaCircuitosPrioridad: LayerProps = {
+const capaCircuitosPrioridad = (p: Paleta): LayerProps => ({
   id: "circuitos-prioridad-borde",
   type: "line",
   source: "circuitos",
   filter: ["match", ["get", "prioridad"], ["primaria", "secundaria"], true, false],
   paint: {
-    "line-color": ["match", ["get", "prioridad"], "primaria", "#d95926", "secundaria", "#f4dc00", "rgba(0,0,0,0)"],
+    "line-color": ["match", ["get", "prioridad"], "primaria", "#d95926", "secundaria", p.acento, "rgba(0,0,0,0)"],
     "line-opacity": 0.9,
     "line-width": ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 3, 17, 4.5],
   },
-};
+});
 
 const capaBarriosRelleno: LayerProps = {
   id: "barrios-relleno",
@@ -370,17 +415,17 @@ const capaBarriosRelleno: LayerProps = {
   // Los que tienen problemas reportados se leen sin abrir el panel: rojo tenue.
   paint: { "fill-color": "#ff3b30", "fill-opacity": ["case", ["get", "problemas"], 0.1, 0] },
 };
-const capaBarriosLinea: LayerProps = {
+const capaBarriosLinea = (p: Paleta): LayerProps => ({
   id: "barrios-linea",
   type: "line",
   source: "barrios",
   paint: {
-    "line-color": "#f472b6",
+    "line-color": p.barrios,
     "line-opacity": 0.55,
     "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 15, 1.2, 17, 1.8],
   },
-};
-const capaBarriosNombre: LayerProps = {
+});
+const capaBarriosNombre = (p: Paleta): LayerProps => ({
   id: "barrios-nombre",
   type: "symbol",
   source: "barrios",
@@ -390,10 +435,10 @@ const capaBarriosNombre: LayerProps = {
     "text-font": ["Open Sans Regular"],
     "text-size": 9.5,
   },
-  paint: { "text-color": "#f472b6", "text-halo-color": "#070a10", "text-halo-width": 1.4 },
-};
+  paint: { "text-color": p.barrios, "text-halo-color": p.halo, "text-halo-width": 1.4 },
+});
 
-const capaClusters: LayerProps = {
+const capaClusters = (p: Paleta): LayerProps => ({
   id: "clusters",
   type: "circle",
   source: "incidentes",
@@ -402,9 +447,9 @@ const capaClusters: LayerProps = {
     "circle-color": ["step", ["get", "point_count"], "#1c5cab", 10, "#0066ff", 60, "#2eb1ff", 200, "#f4dc00"],
     "circle-radius": ["step", ["get", "point_count"], 14, 10, 19, 60, 26, 200, 33],
     "circle-stroke-width": 2,
-    "circle-stroke-color": "rgba(237,242,250,0.35)",
+    "circle-stroke-color": p.trazoCluster,
   },
-};
+});
 
 const capaClusterConteo: LayerProps = {
   id: "cluster-conteo",
@@ -421,7 +466,7 @@ const capaClusterConteo: LayerProps = {
   },
 };
 
-const capaIncidentes: LayerProps = {
+const capaIncidentes = (p: Paleta): LayerProps => ({
   id: "incidentes-punto",
   type: "circle",
   source: "incidentes",
@@ -436,20 +481,20 @@ const capaIncidentes: LayerProps = {
       COLOR_MACRO.inactivo,
     ],
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6, 17, 9, 19.5, 14],
-    // Anillo amarillo = obra SIGOV (contratada); anillo claro = CIMBA/planillas
+    // Anillo amarillo = obra SIGOV (contratada); anillo neutro = CIMBA/planillas
     "circle-stroke-width": ["case", ["==", ["get", "origen"], "sigov"], 2, 1],
     "circle-stroke-color": [
       "case",
       ["==", ["get", "origen"], "sigov"],
-      "#f4dc00",
-      "rgba(237,242,250,0.4)",
+      p.acento,
+      p.trazoPunto,
     ],
   },
   layout: {},
-};
+});
 
 /** Anillo de selección: marca exactamente el punto elegido. */
-const capaSeleccion: LayerProps = {
+const capaSeleccion = (p: Paleta): LayerProps => ({
   id: "seleccion-anillo",
   type: "circle",
   source: "seleccion",
@@ -457,9 +502,9 @@ const capaSeleccion: LayerProps = {
     "circle-color": "rgba(0,0,0,0)",
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 9, 17, 16],
     "circle-stroke-width": 2.5,
-    "circle-stroke-color": "#f4dc00",
+    "circle-stroke-color": p.acento,
   },
-};
+});
 
 const capaPulso: LayerProps = {
   id: "incidentes-pulso",
@@ -475,12 +520,12 @@ const capaPulso: LayerProps = {
   },
 };
 
-const capaDemandas: LayerProps = {
+const capaDemandas = (p: Paleta): LayerProps => ({
   id: "demandas-punto",
   type: "circle",
   source: "demandas",
   paint: {
-    "circle-color": "#8fa3bf",
+    "circle-color": p.demanda,
     // Honestidad visual: la opacidad refleja la confianza de la geocodificación
     // (un punto tenue puede no estar exactamente ahí).
     "circle-opacity": [
@@ -493,12 +538,12 @@ const capaDemandas: LayerProps = {
     "circle-stroke-width": ["case", ["<", ["coalesce", ["get", "confianza"], 1], 0.5], 1.2, 0],
     "circle-stroke-color": "#e66767",
   },
-};
+});
 
 /** Vista Brecha: el color de cada pedido dice si fue atendido o no. */
 /** Vista Brecha, sub-modo antigüedad: la deuda envejece a la vista (amarillo
  * reciente → rojo encendido con más de un año esperando; gris = sin fecha). */
-const capaDemandasEdad: LayerProps = {
+const capaDemandasEdad = (p: Paleta): LayerProps => ({
   id: "demandas-punto",
   type: "circle",
   paint: {
@@ -509,15 +554,15 @@ const capaDemandasEdad: LayerProps = {
     "circle-color": [
       "case", ["<", ["get", "edad_dias"], 0], "#6b7280",
       ["interpolate", ["linear"], ["get", "edad_dias"],
-        30, "#f4dc00", 180, "#f59e0b", 365, "#d95926", 730, "#ff3b30"],
+        30, p.edadReciente, 180, "#f59e0b", 365, "#d95926", 730, "#ff3b30"],
     ],
-    "circle-stroke-color": "#0B0F16",
+    "circle-stroke-color": p.tinta,
     "circle-stroke-width": 1,
     "circle-opacity": 0.92,
   },
-};
+});
 
-const capaDemandasBrecha: LayerProps = {
+const capaDemandasBrecha = (p: Paleta): LayerProps => ({
   id: "demandas-punto",
   type: "circle",
   source: "demandas",
@@ -533,44 +578,44 @@ const capaDemandasBrecha: LayerProps = {
     "circle-opacity": 0.85,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.6, 14, 4.5, 17, 7, 19.5, 10],
     "circle-stroke-width": 0.8,
-    "circle-stroke-color": "rgba(7,10,16,0.8)",
+    "circle-stroke-color": p.trazoBrecha,
   },
-};
+});
 
 /** Círculo del analizador de zona. */
-const capaZonaRelleno: LayerProps = {
+const capaZonaRelleno = (p: Paleta): LayerProps => ({
   id: "zona-relleno",
   type: "fill",
   source: "zona",
-  paint: { "fill-color": "#f4dc00", "fill-opacity": 0.07 },
-};
-const capaZonaBorde: LayerProps = {
+  paint: { "fill-color": p.acento, "fill-opacity": p.oscuro ? 0.07 : 0.1 },
+});
+const capaZonaBorde = (p: Paleta): LayerProps => ({
   id: "zona-borde",
   type: "line",
   source: "zona",
-  paint: { "line-color": "#f4dc00", "line-width": 2, "line-dasharray": [2, 1.5] },
-};
+  paint: { "line-color": p.acento, "line-width": 2, "line-dasharray": [2, 1.5] },
+});
 
 /** Densidad 3D: hexágonos extruidos por cantidad de pedidos (rampa azul secuencial). */
-const capaHexagonos: LayerProps = {
+const capaHexagonos = (p: Paleta): LayerProps => ({
   id: "hexagonos-3d",
   type: "fill-extrusion",
   source: "hexbins",
   paint: {
     "fill-extrusion-color": [
       "interpolate", ["linear"], ["get", "n"],
-      1, "#104281",
-      4, "#1c5cab",
-      10, "#3987e5",
-      25, "#86b6ef",
-      60, "#cde2fb",
+      1, p.rampa[0],
+      4, p.rampa[1],
+      10, p.rampa[2],
+      25, p.rampa[3],
+      60, p.rampa[4],
     ],
     "fill-extrusion-height": ["*", ["get", "n"], 45],
     "fill-extrusion-opacity": 0.82,
   },
-};
+});
 
-const capaCalor: LayerProps = {
+const capaCalor = (p: Paleta): LayerProps => ({
   id: "demandas-calor",
   type: "heatmap",
   source: "demandas",
@@ -581,15 +626,15 @@ const capaCalor: LayerProps = {
     "heatmap-opacity": 0.75,
     "heatmap-color": [
       "interpolate", ["linear"], ["heatmap-density"],
-      0, "rgba(13,54,107,0)",
-      0.25, "#104281",
-      0.5, "#1c5cab",
-      0.72, "#3987e5",
-      0.9, "#86b6ef",
-      1, "#cde2fb",
+      0, p.calorCero,
+      0.25, p.rampa[0],
+      0.5, p.rampa[1],
+      0.72, p.rampa[2],
+      0.9, p.rampa[3],
+      1, p.rampa[4],
     ],
   },
-};
+});
 
 // ── Componente principal ────────────────────────────────────────────────────
 
@@ -682,6 +727,36 @@ function MapaInterno({
   inicial?: InicialMapa;
 }) {
   const mapRef = useRef<MapRef>(null);
+  // Tema reactivo: cambia el estilo base (positron/dark-matter) y la paleta
+  // de las capas propias. Las Sources/Layers declarativas sobreviven al
+  // setStyle porque react-map-gl las re-agrega al nuevo estilo.
+  const tema = usarTemaMapa();
+  const pal = useMemo(() => paleta(tema), [tema]);
+  const capas = useMemo(
+    () => ({
+      avenidasNombre: capaAvenidasNombre(pal),
+      distritosHalo: capaDistritosHalo(pal),
+      distritosLinea: capaDistritosLinea(pal),
+      distritosNombre: capaDistritosNombre(pal),
+      circuitosLinea: capaCircuitosLinea(pal),
+      circuitosNombre: capaCircuitosNombre(pal),
+      circuitosEmpresa: capaCircuitosEmpresa(pal),
+      circuitosPrioridad: capaCircuitosPrioridad(pal),
+      barriosLinea: capaBarriosLinea(pal),
+      barriosNombre: capaBarriosNombre(pal),
+      clusters: capaClusters(pal),
+      incidentes: capaIncidentes(pal),
+      seleccion: capaSeleccion(pal),
+      demandas: capaDemandas(pal),
+      demandasEdad: capaDemandasEdad(pal),
+      demandasBrecha: capaDemandasBrecha(pal),
+      zonaRelleno: capaZonaRelleno(pal),
+      zonaBorde: capaZonaBorde(pal),
+      hexagonos: capaHexagonos(pal),
+      calor: capaCalor(pal),
+    }),
+    [pal],
+  );
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
   const [panelCapas, setPanelCapas] = useState(true);
   // En pantallas chicas el panel de Capas taparía medio mapa: arranca cerrado.
@@ -1442,9 +1517,9 @@ function MapaInterno({
       };
       chip("LO PEDIDO", 14 * esc, "left", "#3987e5");
       chip("LO HECHO", ancho - 14 * esc, "right", "#199e70");
-      // marca y fecha, discretas, abajo a la derecha
+      // marca y fecha, discretas, abajo a la derecha (tinta según el fondo del mapa)
       ctx.font = `${11 * esc}px sans-serif`;
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillStyle = pal.oscuro ? "rgba(255,255,255,0.85)" : "rgba(22,28,38,0.85)";
       ctx.textAlign = "right";
       ctx.fillText(`CIMBA · ${new Date().toLocaleDateString("es-AR")}`, ancho - 12 * esc, alto - 12 * esc);
 
@@ -1610,12 +1685,24 @@ function MapaInterno({
    * remoto: se ajustan las capas ya presentes cuando el estilo termina de cargar.
    */
   useEffect(() => {
-    const NOMBRES = [
-      { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#b9c6d8" },
-      { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#c8d4e4" },
-      { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#d6e0ee" },
-      { id: "roadname_major", minzoom: 11.5, size: 12, color: "#e2eaf5" },
-    ];
+    const oscuro = tema === "oscuro";
+    // Colores por tema: sobre dark-matter hay que ACLARAR texto y trazas;
+    // sobre positron el texto se oscurece y las trazas se dejan como vienen
+    // (el estilo claro ya trae calles legibles — pisarlas con los grises del
+    // oscuro las volvería barro). Los zooms adelantados valen en ambos.
+    const NOMBRES = oscuro
+      ? [
+          { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#b9c6d8" },
+          { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#c8d4e4" },
+          { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#d6e0ee" },
+          { id: "roadname_major", minzoom: 11.5, size: 12, color: "#e2eaf5" },
+        ]
+      : [
+          { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#5b6b7d" },
+          { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#4d5c6e" },
+          { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#41505f" },
+          { id: "roadname_major", minzoom: 11.5, size: 12, color: "#36434f" },
+        ];
     const TRAZAS = [
       { id: "road_minor_fill", minzoom: 13.5, color: "rgba(88, 97, 118, 1)" },
       { id: "road_minor_case", minzoom: 12.5, color: "rgba(72, 79, 98, 1)" },
@@ -1626,7 +1713,17 @@ function MapaInterno({
     let cancelado = false;
     const aplicar = () => {
       const mapa = mapRef.current?.getMap();
-      if (!mapa || !mapa.isStyleLoaded()) return false;
+      if (!mapa) return false;
+      // OJO: isStyleLoaded() da false mientras quede UNA tesela pendiente
+      // (el raster satelital tarda): alcanza con que el estilo esté parseado
+      // y sus capas existan para poder pintarlas.
+      let capas = 0;
+      try {
+        capas = mapa.getStyle()?.layers?.length ?? 0;
+      } catch {
+        capas = 0;
+      }
+      if (capas === 0) return false;
       if (!mapa.getLayer("roadname_minor")) setHayAnclaEtiquetas(false);
 
       for (const c of NOMBRES) {
@@ -1636,7 +1733,7 @@ function MapaInterno({
         mapa.setLayerZoomRange(c.id, c.minzoom, 24);
         mapa.setLayoutProperty(c.id, "text-size", c.size);
         mapa.setPaintProperty(c.id, "text-color", c.color);
-        mapa.setPaintProperty(c.id, "text-halo-color", "#070a10");
+        mapa.setPaintProperty(c.id, "text-halo-color", oscuro ? "#070a10" : "#ffffff");
         mapa.setPaintProperty(c.id, "text-halo-width", 1.7);
       }
 
@@ -1644,13 +1741,17 @@ function MapaInterno({
       for (const c of TRAZAS) {
         if (!mapa.getLayer(c.id)) continue;
         mapa.setLayerZoomRange(c.id, c.minzoom, 24);
-        mapa.setPaintProperty(c.id, "line-color", c.color);
+        if (oscuro) mapa.setPaintProperty(c.id, "line-color", c.color);
       }
       return true;
     };
 
-    if (aplicar()) return;
-    // El estilo puede no estar listo al montar: reintenta y se engancha a styledata.
+    // SIEMPRE engancharse a styledata (no solo cuando el primer intento
+    // falla): el toggle de tema dispara un setStyle que borra estos ajustes,
+    // y sin el listener el realce moriría tras el primer cambio de estilo.
+    // aplicar() es idempotente (setPaintProperty con el mismo valor no
+    // re-emite styledata), así que no hay bucle.
+    aplicar();
     const id = setInterval(() => {
       if (cancelado || aplicar()) clearInterval(id);
     }, 300);
@@ -1661,7 +1762,7 @@ function MapaInterno({
       clearInterval(id);
       mapa?.off("styledata", aplicar);
     };
-  }, [verCalles]);
+  }, [verCalles, tema]);
   // Pulso animado de "en ejecución"
   useEffect(() => {
     let vivo = true;
@@ -1828,7 +1929,7 @@ function MapaInterno({
           latitude: foco?.lat ?? inicial?.camara?.lat ?? CENTRO_SMT[1],
           zoom: foco?.zoom ?? inicial?.camara?.zoom ?? 12.6,
         }}
-        mapStyle={ESTILO_MAPA}
+        mapStyle={estiloMapa(tema)}
         maxZoom={19.5}
         interactiveLayerIds={
           // El relleno de circuitos entra solo cuando su capa está montada:
@@ -1978,7 +2079,7 @@ function MapaInterno({
           <>
             <Layer {...capaAvenidasBrillo} />
             <Layer {...capaAvenidas} />
-            <Layer {...capaAvenidasNombre} />
+            <Layer {...capas.avenidasNombre} />
           </>
         )}
 
@@ -1986,45 +2087,45 @@ function MapaInterno({
         {verBarrios && barriosGeo && (
           <Source id="barrios" type="geojson" data={barriosGeo}>
             <Layer {...capaBarriosRelleno} />
-            <Layer {...capaBarriosLinea} />
-            <Layer {...capaBarriosNombre} />
+            <Layer {...capas.barriosLinea} />
+            <Layer {...capas.barriosNombre} />
           </Source>
         )}
         {verCircuitos && circuitosConOperativa && (
           <Source id="circuitos" type="geojson" data={circuitosConOperativa}>
-            <Layer {...capaCircuitosEmpresa} />
-            <Layer {...capaCircuitosLinea} />
-            <Layer {...capaCircuitosPrioridad} />
-            <Layer {...capaCircuitosNombre} />
+            <Layer {...capas.circuitosEmpresa} />
+            <Layer {...capas.circuitosLinea} />
+            <Layer {...capas.circuitosPrioridad} />
+            <Layer {...capas.circuitosNombre} />
           </Source>
         )}
         {verDistritos && distritosConBrecha && (
           <Source id="distritos" type="geojson" data={distritosConBrecha}>
             {verCoropleta && <Layer {...capaDistritosRelleno} />}
-            <Layer {...capaDistritosHalo} />
-            <Layer {...capaDistritosLinea} />
-            {distritoFoco != null && <Layer {...capaDistritoFoco(distritoFoco)} />}
-            <Layer {...capaDistritosNombre} />
+            <Layer {...capas.distritosHalo} />
+            <Layer {...capas.distritosLinea} />
+            {distritoFoco != null && <Layer {...capaDistritoFoco(distritoFoco, pal)} />}
+            <Layer {...capas.distritosNombre} />
           </Source>
         )}
 
         {verDemandas && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
-            {verCalor && <Layer {...capaCalor} />}
-            <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capaDemandasEdad : capaDemandasBrecha) : capaDemandas)} />
+            {verCalor && <Layer {...capas.calor} />}
+            <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha) : capas.demandas)} />
           </Source>
         )}
 
         {hexData && (
           <Source id="hexbins" type="geojson" data={hexData}>
-            <Layer {...capaHexagonos} />
+            <Layer {...capas.hexagonos} />
           </Source>
         )}
 
         {zona && circuloZona && (
           <Source id="zona" type="geojson" data={circuloZona}>
-            <Layer {...capaZonaRelleno} />
-            <Layer {...capaZonaBorde} />
+            <Layer {...capas.zonaRelleno} />
+            <Layer {...capas.zonaBorde} />
           </Source>
         )}
 
@@ -2040,7 +2141,7 @@ function MapaInterno({
             <Layer
               id="cotejo-linea"
               type="line"
-              paint={{ "line-color": "#f4dc00", "line-width": 1.8, "line-dasharray": [2, 1.5], "line-opacity": 0.9 }}
+              paint={{ "line-color": pal.acento, "line-width": 1.8, "line-dasharray": [2, 1.5], "line-opacity": 0.9 }}
             />
           </Source>
         )}
@@ -2063,7 +2164,7 @@ function MapaInterno({
             <Layer
               id="cotejo-candidatos-halo"
               type="circle"
-              paint={{ "circle-radius": 13, "circle-color": "#f4dc00", "circle-opacity": 0.18 }}
+              paint={{ "circle-radius": 13, "circle-color": pal.acento, "circle-opacity": 0.18 }}
             />
             <Layer
               id="cotejo-candidatos-punto"
@@ -2077,7 +2178,7 @@ function MapaInterno({
                   "resuelto", COLOR_MACRO.resuelto,
                   "#8b94a3",
                 ],
-                "circle-stroke-color": "#0B0F16",
+                "circle-stroke-color": pal.tinta,
                 "circle-stroke-width": 2,
               }}
             />
@@ -2089,7 +2190,14 @@ function MapaInterno({
             <Layer
               id="top20-circulo"
               type="circle"
-              paint={{ "circle-radius": 11, "circle-color": "#f4dc00", "circle-stroke-color": "#0B0F16", "circle-stroke-width": 2 }}
+              paint={{
+                // El disco amarillo con número oscuro se banca los dos temas;
+                // en claro el borde pasa a ocre oscuro para despegarlo del fondo.
+                "circle-radius": 11,
+                "circle-color": "#f4dc00",
+                "circle-stroke-color": pal.oscuro ? "#0B0F16" : "#6b5d00",
+                "circle-stroke-width": 2,
+              }}
             />
             <Layer
               id="top20-num"
@@ -2116,7 +2224,7 @@ function MapaInterno({
                 "text-font": ["Montserrat Regular"],
                 "text-size": 14,
               }}
-              paint={{ "text-color": "#f4dc00", "text-halo-color": "#070a10", "text-halo-width": 1.8 }}
+              paint={{ "text-color": pal.acento, "text-halo-color": pal.halo, "text-halo-width": 1.8 }}
             />
           </Source>
         )}
@@ -2130,8 +2238,8 @@ function MapaInterno({
           clusterRadius={45}
         >
           <Layer {...capaPulso} />
-          <Layer {...capaIncidentes} />
-          <Layer {...capaClusters} />
+          <Layer {...capas.incidentes} />
+          <Layer {...capas.clusters} />
           <Layer {...capaClusterConteo} />
         </Source>
 
@@ -2145,7 +2253,7 @@ function MapaInterno({
               : [],
           }}
         >
-          <Layer {...capaSeleccion} />
+          <Layer {...capas.seleccion} />
         </Source>
 
         {resaltado && resaltado.fc.features.length > 0 && (
@@ -2153,7 +2261,7 @@ function MapaInterno({
             <Layer
               id="resaltado-halo"
               type="circle"
-              paint={{ "circle-radius": 15, "circle-color": "#f4dc00", "circle-opacity": 0.1 }}
+              paint={{ "circle-radius": 15, "circle-color": pal.acento, "circle-opacity": pal.oscuro ? 0.1 : 0.14 }}
             />
             <Layer
               id="resaltado-anillo"
@@ -2161,7 +2269,7 @@ function MapaInterno({
               paint={{
                 "circle-radius": 10,
                 "circle-color": "rgba(0,0,0,0)",
-                "circle-stroke-color": "#f4dc00",
+                "circle-stroke-color": pal.acento,
                 "circle-stroke-width": 2.5,
                 "circle-stroke-opacity": 0.95,
               }}
@@ -2556,12 +2664,12 @@ function MapaInterno({
           className="pointer-events-auto absolute left-3 right-3 z-10 flex gap-2 overflow-x-auto pb-1 sm:pointer-events-none sm:flex-wrap sm:overflow-visible sm:pb-0"
           style={{ top: altoHerr > 0 ? altoHerr + 24 : 64 }}
         >
-          <Kpi etiqueta="Demandas" valor={kpis.demandas} color="#8fa3bf" ayuda={AYUDA_KPI.demandas} />
-          <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="#f4dc00" ayuda={AYUDA_KPI.sinVincular} />
+          <Kpi etiqueta="Demandas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
+          <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="var(--color-amarillo)" ayuda={AYUDA_KPI.sinVincular} />
           <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
           <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
           <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
-          <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="#2eb1ff" ayuda={AYUDA_KPI.m2} />
+          <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
         </div>
       )}
 
@@ -2586,10 +2694,10 @@ function MapaInterno({
         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             En pantalla: <b className="num text-texto">{numero(balance.pend)}</b> pedidos pendientes ·{" "}
-            <b className="num" style={{ color: "#d95926" }}>
+            <b className="num" style={{ color: "var(--color-encurso)" }}>
               {balance.pend > 0 ? Math.round((100 * balance.sinAt) / balance.pend) : 0}%
             </b>{" "}
-            sin respuesta · <b className="num" style={{ color: "#199e70" }}>{numero(balance.m2)} m²</b> hechos
+            sin respuesta · <b className="num" style={{ color: "var(--color-ok)" }}>{numero(balance.m2)} m²</b> hechos
           </div>
         </div>
       )}
@@ -2626,7 +2734,7 @@ function MapaInterno({
               </p>
             </div>
             {cotejo.candidatos.length === 0 ? (
-              <p className="rounded-lg border border-encurso/40 bg-encurso/10 px-3 py-2.5 text-xs leading-relaxed" style={{ color: "#d95926" }}>
+              <p className="rounded-lg border border-encurso/40 bg-encurso/10 px-3 py-2.5 text-xs leading-relaxed text-encurso">
                 No hay incidentes ni reparaciones a menos de 60 m: <b>brecha real confirmada</b> — nadie tocó esto todavía.
               </p>
             ) : (
@@ -2725,7 +2833,7 @@ function MapaInterno({
                     circuitoSel.prioridad ? (
                       <span
                         className="font-semibold"
-                        style={{ color: COLOR_PRIORIDAD[String(circuitoSel.prioridad)] ?? "#8fa3bf" }}
+                        style={{ color: COLOR_PRIORIDAD[String(circuitoSel.prioridad)] ?? "var(--color-texto-2)" }}
                       >
                         {ETIQUETA_PRIORIDAD[String(circuitoSel.prioridad)] ?? String(circuitoSel.prioridad)}
                       </span>
@@ -2737,9 +2845,9 @@ function MapaInterno({
                 <div className="grid grid-cols-3 gap-2 border-t border-borde pt-3 text-center">
                   {(
                     [
-                      ["pendientes", "Pendientes", "#3987e5"],
-                      ["demandas_abiertas", "Reclamos", "#d95926"],
-                      ["ordenes_activas", "OTs activas", "#f4dc00"],
+                      ["pendientes", "Pendientes", "var(--color-abierto)"],
+                      ["demandas_abiertas", "Reclamos", "var(--color-encurso)"],
+                      ["ordenes_activas", "OTs activas", "var(--color-amarillo)"],
                     ] as const
                   ).map(([clave, etiqueta, color]) => (
                     <div key={clave}>
@@ -3049,7 +3157,7 @@ function MapaInterno({
             ))}
             {modoBrecha === "antiguedad" && (
               <span className="flex items-center gap-1.5 text-[10px] text-texto-3">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#f4dc00" }} /> reciente
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--color-amarillo)" }} /> reciente
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#d95926" }} /> +1 año
                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#ff3b30" }} /> +2 años
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#6b7280" }} /> sin fecha
@@ -3133,7 +3241,7 @@ function MapaInterno({
                 onChange={(e) => setVerDistritos(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded" style={{ background: "#a78bfa", borderTop: "1px dashed #a78bfa" }} />
+              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.distritos, borderTop: `1px dashed ${pal.distritos}` }} />
               Distritos
             </label>
             {verDistritos && (
@@ -3164,7 +3272,7 @@ function MapaInterno({
                 onChange={(e) => setVerCircuitos(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded bg-[#34d399]" />
+              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.circuitos }} />
               Circuitos de trabajo
             </label>
             {verCircuitos && circuitosOp && (
@@ -3172,7 +3280,7 @@ function MapaInterno({
                 <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(79,156,249,0.45)" }} />
                 relleno = empresa ·
                 <span className="inline-block h-0.5 w-3 rounded" style={{ background: "#d95926" }} />
-                <span className="inline-block h-0.5 w-3 rounded" style={{ background: "#f4dc00" }} />
+                <span className="inline-block h-0.5 w-3 rounded" style={{ background: "var(--color-amarillo)" }} />
                 borde = prioridad
               </p>
             )}
@@ -3186,7 +3294,7 @@ function MapaInterno({
                 onChange={(e) => setVerBarrios(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded bg-[#f472b6]" />
+              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.barrios }} />
               Barrios
             </label>
             </>)}
@@ -3414,7 +3522,7 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
             </>
           ) : (
             <>
-              <span className="inline-block h-3 w-3 rounded-full bg-[#8fa3bf]" />
+              <span className="inline-block h-3 w-3 rounded-full bg-texto-2" />
               <span className="text-sm font-bold">Demanda #{String(p.id)}</span>
             </>
           )}

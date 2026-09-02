@@ -259,6 +259,38 @@ export async function reportarItemHecho(formData: FormData) {
 
   const superficie = Math.round(datos.anchoM * datos.largoM * 100) / 100;
 
+  // El punto (si viene corregido) tiene que caer en la ciudad. La caja del zod
+  // es un margen laxo; esta es la frontera operativa real.
+  if (datos.lat != null && datos.lon != null) {
+    const { dentroDeSMT } = await import("@cimba/domain");
+    if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+      throw new Error("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+    }
+  }
+
+  /**
+   * Antes de subir nada a Storage, un pre-chequeo barato de que el item existe,
+   * está pendiente y ES de esta empresa. Sin esto, cualquier empresa logueada
+   * podía persistir imágenes en el bucket público municipal bajo rutas de items
+   * ajenos (la subida iba primero y la validación vivía recién en la
+   * transacción, que fallaba DESPUÉS del upload, dejando el archivo huérfano).
+   * La transacción re-valida y reclama atómicamente igual: esto no la reemplaza,
+   * le saca el costado explotable.
+   */
+  const previa = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.estado, ot.estado as orden_estado, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<{ estado: string; orden_estado: string; empresa_id: number }>,
+  ))[0];
+  if (!previa) throw new Error("El item no existe o no es de tu empresa");
+  if (previa.estado !== "pendiente") throw new Error("Este item ya fue reportado");
+  if (!["emitida", "en_ejecucion"].includes(previa.orden_estado)) throw new Error("La orden no está activa");
+  if (sesion.rol_cimba === "empresa" && Number(previa.empresa_id) !== sesion.id_empresa) {
+    throw new Error("El item no pertenece a tu empresa");
+  }
+
   /**
    * Las fotos se suben a Storage ANTES de tocar la base. Antes iban después del
    * commit y el comentario decía "puede reintentar", pero era mentira: si la
@@ -266,8 +298,8 @@ export async function reportarItemHecho(formData: FormData) {
    * "ya fue reportado" — la intervención quedaba sin su foto obligatoria y sin
    * forma de adjuntarla. Ahora, si la subida falla, no se tocó nada y el
    * capataz reintenta de cero; los inserts en `fotografias` van DENTRO de la
-   * transacción, con las rutas ya subidas. Un archivo que sobre en el bucket
-   * (si la transacción falla después) es inocuo.
+   * transacción, con las rutas ya subidas. Si la transacción falla después,
+   * los archivos se borran en el catch.
    */
   const { createClient } = await import("@supabase/supabase-js");
   const supabase = createClient(
@@ -462,11 +494,18 @@ export async function reportarItemHecho(formData: FormData) {
     revalidatePath("/cierres");
     return { ok: true, superficie, incidenteId: resultado.incidenteId };
   } catch (e) {
+    // Nada de la transacción quedó, así que las fotos ya subidas y el incidente
+    // de servicio (caso tramo) son huérfanos: se limpian. Si la limpieza falla,
+    // el error original manda igual.
+    await supabase.storage
+      .from("fotografias")
+      .remove(fotos.map((f) => f.ruta))
+      .catch(() => undefined);
     if (incidenteServicioId != null) {
       const { getDb } = await import("@cimba/db");
       await getDb()
         .execute(sql`delete from incidentes where id = ${incidenteServicioId}`)
-        .catch(() => undefined); // si la limpieza falla, el error original manda igual
+        .catch(() => undefined);
     }
     throw e;
   }

@@ -60,7 +60,7 @@ export default async function PaginaBrecha() {
           <Segmento n={b.brechaReal} total={b.totalAbiertas} color={C.alerta} href="/mapa?vista=brecha&brecha=sin_atencion" />
           <Segmento n={b.enCola} total={b.totalAbiertas} color={C.pedido} href="/mapa?vista=brecha&brecha=en_cola" />
           <Segmento n={b.yaResueltasProbable} total={b.totalAbiertas} color={C.hecho} href="/mapa?vista=brecha&brecha=posible_resuelta" />
-          <Segmento n={b.reincidencias} total={b.totalAbiertas} color="#f4dc00" href="/mapa?vista=brecha&brecha=posible_resuelta" />
+          <Segmento n={b.reincidencias} total={b.totalAbiertas} color="var(--color-amarillo)" href="/mapa?vista=brecha&brecha=posible_resuelta" />
         </div>
         <div className="mt-3 grid gap-2 text-[13px] sm:grid-cols-4">
           <Leyenda color={C.alerta} n={b.brechaReal} titulo="Sin atención (brecha real)"
@@ -69,7 +69,7 @@ export default async function PaginaBrecha() {
             detalle="Hay un incidente abierto cerca: están en proceso." href="/mapa?vista=brecha&brecha=en_cola" />
           <Leyenda color={C.hecho} n={b.yaResueltasProbable} titulo="Probablemente ya resueltos"
             detalle="Hay una reparación posterior al pedido a menos de 40 m: falta cerrar el circuito, no falta obra." href="/mapa?vista=brecha&brecha=posible_resuelta" />
-          <Leyenda color="#f4dc00" n={b.reincidencias} titulo="Reincidencias"
+          <Leyenda color="var(--color-amarillo)" n={b.reincidencias} titulo="Reincidencias"
             detalle="Se reparó ANTES del pedido y volvieron a reclamar: el problema volvió." href="/mapa?vista=brecha&brecha=posible_resuelta" />
         </div>
       </Panel>
@@ -346,7 +346,7 @@ function GraficoMensual({ datos }: { datos: Array<{ mes: string; pedidos: number
               <title>{`${d.mes}: ${numero(d.pedidos)} pedidos · ${numero(d.hechos)} trabajos — clic para ver esos pedidos`}</title>
               <rect x={x} y={alto - hp} width={16} height={hp} rx={3} fill={C.pedido} />
               <rect x={x + 19} y={alto - hh} width={16} height={hh} rx={3} fill={C.hecho} />
-              <text x={x + 18} y={alto + 14} textAnchor="middle" fontSize={9} fill="#5c6b84">
+              <text x={x + 18} y={alto + 14} textAnchor="middle" fontSize={9} fill="var(--color-texto-3)">
                 {d.mes.slice(2).replace("-", "/")}
               </text>
             </g>

@@ -274,51 +274,13 @@ export async function finalizarIntervencion(entrada: {
   return { ok: true };
 }
 
-// ── Formulario HCD ──────────────────────────────────────────────────────────
-
-export async function crearDemandaHcd(entrada: {
-  lat: number;
-  lon: number;
-  tipo: string;
-  descripcion: string;
-  direccion: string;
-  solicitante: string;
-  prioridad?: number;
-}) {
-  const sesion = await requerirRol("hcd");
-  const datos = z
-    .object({
-      lat: z.number().min(-27.2).max(-26.4),
-      lon: z.number().min(-65.6).max(-64.9),
-      tipo: tipoProblemaSchema,
-      descripcion: z.string().min(5).max(2000),
-      direccion: z.string().min(3).max(300),
-      solicitante: z.string().min(3).max(200),
-      prioridad: z.number().int().min(1).max(5).optional(),
-    })
-    .parse(entrada);
-
-  const id = await conRls(claims(sesion), async (tx) => {
-    const filas = (await tx.execute(sql`
-      insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
-                            solicitante, prioridad_informada, creado_por)
-      values ('hcd', ${datos.tipo}, ${datos.descripcion}, ${datos.direccion},
-              st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), 1.0,
-              ${datos.solicitante}, ${datos.prioridad ?? null}, ${sesion.sub})
-      returning id
-    `)) as unknown as Array<{ id: number }>;
-    return filas[0]?.id;
-  });
-  revalidatePath("/demandas");
-  return { ok: true, id };
-}
-
 /**
- * Pedidos de funcionarios municipales: cargan desde el territorio (GPS o clic
- * en el mapa) conforme el distrito que recorren. Entra como demanda con fuente
- * 'secretaria' y el área/distrito en metadata.
+ * Pedido de un ciudadano cargado por el personal: la carga presencial o
+ * telefónica de un vecino (mostrador, 147 derivado, llamado directo). Entra
+ * como demanda con fuente 'carga_manual', canal 'presencial' y el
+ * área/distrito en metadata.
  */
-export async function crearDemandaFuncionario(entrada: {
+export async function crearDemandaCiudadano(entrada: {
   lat: number;
   lon: number;
   tipo: string;
@@ -329,7 +291,9 @@ export async function crearDemandaFuncionario(entrada: {
   distrito?: string;
   desdeGps?: boolean;
 }) {
-  const sesion = await requerirRol("funcionario", "planificacion", "supervision");
+  // atencion_ciudadana incluida: es justamente quien atiende al vecino en
+  // mostrador y por teléfono.
+  const sesion = await requerirRol("funcionario", "planificacion", "supervision", "atencion_ciudadana");
   const datos = z
     .object({
       lat: z.number().min(-27.2).max(-26.4),
@@ -345,7 +309,8 @@ export async function crearDemandaFuncionario(entrada: {
     .parse(entrada);
 
   const metadata = {
-    origen: "pedidos_funcionarios",
+    origen: "pedido_ciudadano",
+    canal: "presencial",
     area: datos.area,
     distrito: datos.distrito ?? null,
     desde_gps: datos.desdeGps ?? false,
@@ -354,7 +319,7 @@ export async function crearDemandaFuncionario(entrada: {
     const filas = (await tx.execute(sql`
       insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
                             solicitante, creado_por, metadata)
-      values ('secretaria', ${datos.tipo}, ${datos.descripcion}, ${datos.direccion},
+      values ('carga_manual', ${datos.tipo}, ${datos.descripcion}, ${datos.direccion},
               st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), 1.0,
               ${datos.solicitante}, ${sesion.sub}, ${JSON.stringify(metadata)}::jsonb)
       returning id
