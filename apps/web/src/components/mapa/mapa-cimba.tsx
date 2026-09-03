@@ -9,6 +9,7 @@ import {
   Columns2,
   Crosshair,
   Download,
+  Eye,
   EyeOff,
   Flame,
   GripVertical,
@@ -2654,6 +2655,21 @@ function MapaInterno({
           </div>
         </div>
       </div>
+
+      {/* El camino de vuelta de "Despejar". El botón que despeja vive DENTRO de
+          la barra que se esconde, así que al despejarse desaparecía junto con
+          todo lo demás y no había forma visible de volver — el ojito se
+          esfumaba. Este chip existe SOLO con el mapa despejado. */}
+      {despejado && (
+        <button
+          onClick={() => setDespejado(false)}
+          className="panel-vidrio absolute top-3 right-3 z-30 flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-amarillo ring-1 ring-amarillo/60 transition hover:brightness-110"
+          title="Volver a mostrar los paneles y datos sobre el mapa"
+        >
+          <Eye size={14} />
+          <span className="hidden sm:inline">Mostrar paneles</span>
+        </button>
+      )}
 
       {/* KPIs — fila propia, informativa y fija (no forma parte de la barra movible).
           El top se mide en vivo contra el alto real de la barra de herramientas,
