@@ -3,10 +3,10 @@
 import { LocateFixed, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import { PRIORIDADES_VIALES, type PrioridadVial } from "@cimba/domain";
+import { PRIORIDADES_VIALES, type FuenteDemanda, type PrioridadVial } from "@cimba/domain";
 import { crearOrden } from "@/lib/acciones-ordenes";
 import { proyectar, type ParametrosCapacidad } from "@/lib/capacidad";
-import { ETIQUETA_TIPO, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
 // Solo tipos: se borran al compilar, así que no arrastran @cimba/db al cliente.
 import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
@@ -308,8 +308,16 @@ export function FormularioOrden({
                           <td className="num px-3 py-2 text-right text-xs text-texto-2">
                             {p.score != null ? p.score.toFixed(1) : "—"}
                           </td>
-                          <td className="num px-3 py-2 text-right text-base font-extrabold" style={{ color: p.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
-                            {numero(p.reclamos)}
+                          <td className="num px-3 py-2 text-right">
+                            <span className="text-base font-extrabold" style={{ color: p.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
+                              {numero(p.reclamos)}
+                            </span>
+                            {/* De dónde vienen: "me gustaría que aparezca de dónde viene el reclamo" (el Director) */}
+                            {p.fuentes.length > 0 && (
+                              <span className="ml-auto block max-w-36 text-[9px] leading-tight font-normal text-texto-3">
+                                {p.fuentes.map((fu) => ETIQUETA_FUENTE[fu as FuenteDemanda] ?? fu).join(" · ")}
+                              </span>
+                            )}
                           </td>
                           <td className="num px-3 py-2 text-right text-xs text-texto-2">
                             {p.superficieM2 != null ? numero(Math.round(p.superficieM2)) : "—"}

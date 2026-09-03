@@ -183,6 +183,10 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const anchoN = aNumero(ancho);
   const largoN = aNumero(largo);
   const superficie = anchoN > 0 && largoN > 0 ? anchoN * largoN : null;
+  const espesorN = aNumero(espesor);
+  // El volumen de mezcla en vivo (el espesor viene en cm): le dice al capataz
+  // cuánto material se llevó el paño, no solo cuánta superficie tapó.
+  const volumen = superficie != null && espesorN > 0 ? (superficie * espesorN) / 100 : null;
 
   const enviar = () => {
     setError(null);
@@ -332,6 +336,11 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
             {superficie != null && (
               <p className="num mt-2 text-xl font-extrabold text-celeste">
                 = {superficie.toLocaleString("es-AR", { maximumFractionDigits: 2 })} m²
+                {volumen != null && (
+                  <span className="text-texto-2">
+                    {" "}· {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
+                  </span>
+                )}
               </p>
             )}
             <p className="mt-1 text-xs leading-relaxed text-texto-3">

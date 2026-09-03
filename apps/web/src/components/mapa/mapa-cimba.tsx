@@ -41,7 +41,7 @@ import {
   type MapRef,
   type ViewState,
 } from "react-map-gl/maplibre";
-import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
+import type { FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
 import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
@@ -125,6 +125,8 @@ const AYUDA_KPI = {
 type FC = FeatureCollection<Point, Record<string, unknown>>;
 /** Capas de referencia territorial (distritos/circuitos/barrios): polígonos. */
 type FCPoligono = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
+/** Capas viales (jerarquía, red vial, recorridos de colectivos): líneas. */
+type FCLinea = FeatureCollection<LineString | MultiLineString, Record<string, unknown>>;
 interface GeoDatos {
   incidentes: FC;
   demandas: FC;
@@ -161,6 +163,24 @@ function paleta(tema: Tema) {
     trazoCluster: oscuro ? "rgba(237,242,250,0.35)" : "rgba(22,24,29,0.3)",
     trazoBrecha: oscuro ? "rgba(7,10,16,0.8)" : "rgba(255,255,255,0.85)",
     avenidaNombre: oscuro ? "#7cc4e8" : "#19638f",
+    /** Jerarquía vial oficial (primarias/secundarias): azul firme sobre claro,
+     *  celeste suave sobre oscuro — nunca el azul #0066ff de los clusters. */
+    jerarquiaVial: oscuro ? "#8fc7f2" : "#2456a6",
+    /** Red vial: el pavimento es contexto (casi se funde con el fondo), el
+     *  RIPIO es la estrella (ahí no hay bache: es pasado de máquina). */
+    pavimento: oscuro ? "#4a5468" : "#b9c1cc",
+    ripio: oscuro ? "#e6893a" : "#b45309",
+    cordonCuneta: oscuro ? "#95a2b6" : "#79879a",
+    /** Recorridos de colectivos: rosa sobre oscuro, violeta sobre claro —
+     *  lejos del rosa de barrios y del violeta de distritos. */
+    colectivo: oscuro ? "#f08fd0" : "#8b2fc9",
+    /** EN CURSO vs RESUELTO distinguibles de lejos: naranja más saturado y
+     *  con trazo fuerte vs. verde apagado — al combinarlos "no te cambia la
+     *  visión" era el reclamo. Solo para los puntos del mapa; las leyendas
+     *  HTML siguen con COLOR_MACRO. */
+    enCursoVivo: oscuro ? "#ff6a1f" : "#f05a00",
+    resueltoApagado: oscuro ? "#2f7d5c" : "#6ba98a",
+    trazoEnCurso: oscuro ? "rgba(237,242,250,0.95)" : "rgba(22,24,29,0.8)",
     distritos: oscuro ? "#a78bfa" : "#6d4fd4",
     circuitos: oscuro ? "#34d399" : "#0c8a5f",
     barrios: oscuro ? "#f472b6" : "#c22672",
@@ -368,10 +388,28 @@ const PALETA_EMPRESAS = [
 ] as const;
 
 /** Color estable por hash del nombre: la misma empresa se pinta igual en
- *  cualquier sesión y pantalla, sin coordinar nada con el servidor. */
+ *  cualquier sesión y pantalla, sin coordinar nada con el servidor.
+ *  Se normaliza el nombre (minúsculas, sin espacios de borde) porque la misma
+ *  empresa llega como "ingeco" en sectores-licitacion.json y con la grafía de
+ *  la tabla empresas en /api/circuitos-operativos: ambas capas deben coincidir. */
 function colorDeEmpresa(nombre: string): string {
+  /**
+   * La MISMA empresa llega con grafías distintas según la fuente: los sectores
+   * de licitación traen el slug ("calleri") y los circuitos operativos el
+   * nombre completo de la tabla ("CALLERI E HIJOS S.A."). Se hashea solo la
+   * primera palabra sin acentos, que coincide con el slug en todas las
+   * empresas reales (LÍNEA→linea, INGECO S.A.→ingeco, LECHESI ARECO→lechesi…),
+   * para que cada empresa tenga UN color en todas las capas.
+   */
+  const clave =
+    nombre
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .trim()
+      .toLowerCase()
+      .split(/[\s(]+/)[0] ?? "";
   let h = 5381;
-  for (let i = 0; i < nombre.length; i++) h = ((h << 5) + h + nombre.charCodeAt(i)) | 0;
+  for (let i = 0; i < clave.length; i++) h = ((h << 5) + h + clave.charCodeAt(i)) | 0;
   return PALETA_EMPRESAS[Math.abs(h) % PALETA_EMPRESAS.length] ?? "#4f9cf9";
 }
 
@@ -439,6 +477,148 @@ const capaBarriosNombre = (p: Paleta): LayerProps => ({
   paint: { "text-color": p.barrios, "text-halo-color": p.halo, "text-halo-width": 1.4 },
 });
 
+// ── Capas viales nuevas (GeoJSON municipales estáticos, fetch lazy) ─────────
+
+/** "Avenidas y calles principales": jerarquía vial oficial del municipio.
+ *  Primarias con línea firme, secundarias finas — las terciarias ya vienen
+ *  filtradas del JSON ("te hacen una mancha"). */
+const capaJerarquiaLinea = (p: Paleta): LayerProps => ({
+  id: "jerarquia-linea",
+  type: "line",
+  source: "jerarquia",
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: {
+    "line-color": p.jerarquiaVial,
+    "line-opacity": 0.8,
+    "line-width": ["match", ["get", "jerarquia"], "primaria", 2.5, 1.2],
+  },
+});
+const capaJerarquiaNombre = (p: Paleta): LayerProps => ({
+  id: "jerarquia-nombre",
+  type: "symbol",
+  source: "jerarquia",
+  minzoom: 14,
+  layout: {
+    "symbol-placement": "line",
+    "text-field": ["get", "nombre"],
+    "text-font": ["Open Sans Bold"],
+    "text-size": 10.5,
+    "symbol-spacing": 350,
+    "text-max-angle": 35,
+  },
+  paint: { "text-color": p.jerarquiaVial, "text-halo-color": p.halo, "text-halo-width": 1.6 },
+});
+
+/** Red vial por tipo de calzada. Tres capas del mismo source (line-dasharray
+ *  no admite expresiones por feature): pavimento apenas visible, cordón cuneta
+ *  punteado intermedio y el RIPIO encima de todo, bien marcado. */
+const capaRedPavimento = (p: Paleta): LayerProps => ({
+  id: "red-pavimento",
+  type: "line",
+  source: "red-vial",
+  filter: ["==", ["get", "capa"], "pavimento"],
+  paint: {
+    "line-color": p.pavimento,
+    "line-opacity": 0.5,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 16, 1.4],
+  },
+});
+const capaRedCordon = (p: Paleta): LayerProps => ({
+  id: "red-cordon",
+  type: "line",
+  source: "red-vial",
+  filter: ["==", ["get", "capa"], "cordon_cuneta"],
+  paint: {
+    "line-color": p.cordonCuneta,
+    "line-opacity": 0.75,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.9, 16, 2],
+    "line-dasharray": [2, 1.8],
+  },
+});
+const capaRedRipio = (p: Paleta): LayerProps => ({
+  id: "red-ripio",
+  type: "line",
+  source: "red-vial",
+  filter: ["==", ["get", "capa"], "ripio"],
+  paint: {
+    "line-color": p.ripio,
+    "line-opacity": 0.95,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.6, 17, 4.5],
+  },
+});
+
+/** Sectores de licitación de hormigón: relleno suave por empresa (mismo hash
+ *  de color que los circuitos operativos) con su borde. */
+const capaSectoresRelleno = (p: Paleta): LayerProps => ({
+  id: "sectores-hormigon-relleno",
+  type: "fill",
+  source: "sectores",
+  filter: ["==", ["get", "tipo"], "hormigon"],
+  paint: {
+    "fill-color": ["coalesce", ["get", "color_empresa"], "rgba(0,0,0,0)"],
+    "fill-opacity": p.opacidadEmpresa,
+  },
+});
+const capaSectoresBorde: LayerProps = {
+  id: "sectores-hormigon-borde",
+  type: "line",
+  source: "sectores",
+  filter: ["==", ["get", "tipo"], "hormigon"],
+  paint: {
+    "line-color": ["coalesce", ["get", "color_empresa"], "#8b94a3"],
+    "line-opacity": 0.85,
+    "line-width": 1.5,
+  },
+};
+/** Los 4 cuadrantes: borde grueso SIN relleno visible. El relleno transparente
+ *  existe solo para que el clic dentro del cuadrante abra su detalle (la
+ *  opacidad 0 no lo saca de queryRenderedFeatures, como en circuitos). */
+const capaCuadrantesClick: LayerProps = {
+  id: "sectores-cuadrante-relleno",
+  type: "fill",
+  source: "sectores",
+  filter: ["==", ["get", "tipo"], "cuadrante"],
+  paint: { "fill-color": "rgba(0,0,0,0)", "fill-opacity": 0 },
+};
+const capaCuadrantesBorde = (p: Paleta): LayerProps => ({
+  id: "sectores-cuadrante-borde",
+  type: "line",
+  source: "sectores",
+  filter: ["==", ["get", "tipo"], "cuadrante"],
+  paint: {
+    "line-color": ["coalesce", ["get", "color_empresa"], p.acento],
+    "line-opacity": 0.9,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 11, 3, 15, 5],
+  },
+});
+const capaCuadrantesEtiqueta = (p: Paleta): LayerProps => ({
+  id: "sectores-cuadrante-nombre",
+  type: "symbol",
+  source: "sectores",
+  filter: ["==", ["get", "tipo"], "cuadrante"],
+  layout: {
+    // "SECTOR SURESTE · hormigón INGECO / asfalto CONTRATUC" (precalculada)
+    "text-field": ["get", "etiqueta"],
+    "text-font": ["Open Sans Bold"],
+    "text-size": 11,
+    "text-letter-spacing": 0.06,
+  },
+  paint: {
+    "text-color": ["coalesce", ["get", "color_empresa"], p.acento],
+    "text-halo-color": p.halo,
+    "text-halo-width": 2,
+  },
+});
+
+/** Recorridos de colectivos: la sensibilidad por transporte, líneas finas. */
+const capaColectivos = (p: Paleta): LayerProps => ({
+  id: "colectivos-linea",
+  type: "line",
+  source: "colectivos",
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: { "line-color": p.colectivo, "line-opacity": 0.7, "line-width": 1 },
+});
+
 const capaClusters = (p: Paleta): LayerProps => ({
   id: "clusters",
   type: "circle",
@@ -473,21 +653,36 @@ const capaIncidentes = (p: Paleta): LayerProps => ({
   source: "incidentes",
   filter: ["!", ["has", "point_count"]],
   paint: {
+    // EN CURSO y RESUELTO tienen que distinguirse DE LEJOS cuando conviven:
+    // en curso naranja saturado, más grande y con trazo fuerte (es lo que
+    // está pasando ahora); resuelto verde apagado y más chico (es archivo).
     "circle-color": [
       "match",
       ["get", "macro"],
       "abierto", COLOR_MACRO.abierto,
-      "en_curso", COLOR_MACRO.en_curso,
-      "resuelto", COLOR_MACRO.resuelto,
+      "en_curso", p.enCursoVivo,
+      "resuelto", p.resueltoApagado,
       COLOR_MACRO.inactivo,
     ],
-    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6, 17, 9, 19.5, 14],
-    // Anillo amarillo = obra SIGOV (contratada); anillo neutro = CIMBA/planillas
-    "circle-stroke-width": ["case", ["==", ["get", "origen"], "sigov"], 2, 1],
+    "circle-radius": [
+      "interpolate", ["linear"], ["zoom"],
+      11, ["match", ["get", "macro"], "en_curso", 4.5, "resuelto", 3, 3.5],
+      14, ["match", ["get", "macro"], "en_curso", 7.5, "resuelto", 5, 6],
+      17, ["match", ["get", "macro"], "en_curso", 11, "resuelto", 7.5, 9],
+      19.5, ["match", ["get", "macro"], "en_curso", 16, "resuelto", 11.5, 14],
+    ],
+    // Anillo amarillo = obra SIGOV (contratada); trazo fuerte = en curso;
+    // anillo neutro = el resto (CIMBA/planillas)
+    "circle-stroke-width": [
+      "case",
+      ["==", ["get", "origen"], "sigov"], 2,
+      ["==", ["get", "macro"], "en_curso"], 2,
+      1,
+    ],
     "circle-stroke-color": [
       "case",
-      ["==", ["get", "origen"], "sigov"],
-      p.acento,
+      ["==", ["get", "origen"], "sigov"], p.acento,
+      ["==", ["get", "macro"], "en_curso"], p.trazoEnCurso,
       p.trazoPunto,
     ],
   },
@@ -507,7 +702,7 @@ const capaSeleccion = (p: Paleta): LayerProps => ({
   },
 });
 
-const capaPulso: LayerProps = {
+const capaPulso = (p: Paleta): LayerProps => ({
   id: "incidentes-pulso",
   type: "circle",
   source: "incidentes",
@@ -516,10 +711,11 @@ const capaPulso: LayerProps = {
     "circle-color": "rgba(0,0,0,0)",
     "circle-radius": 10,
     "circle-stroke-width": 2,
-    "circle-stroke-color": COLOR_MACRO.en_curso,
+    // El mismo naranja saturado del punto en curso: el pulso es su eco.
+    "circle-stroke-color": p.enCursoVivo,
     "circle-stroke-opacity": 0.6,
   },
-};
+});
 
 const capaDemandas = (p: Paleta): LayerProps => ({
   id: "demandas-punto",
@@ -745,6 +941,16 @@ function MapaInterno({
       circuitosPrioridad: capaCircuitosPrioridad(pal),
       barriosLinea: capaBarriosLinea(pal),
       barriosNombre: capaBarriosNombre(pal),
+      jerarquiaLinea: capaJerarquiaLinea(pal),
+      jerarquiaNombre: capaJerarquiaNombre(pal),
+      redPavimento: capaRedPavimento(pal),
+      redCordon: capaRedCordon(pal),
+      redRipio: capaRedRipio(pal),
+      sectoresRelleno: capaSectoresRelleno(pal),
+      cuadrantesBorde: capaCuadrantesBorde(pal),
+      cuadrantesEtiqueta: capaCuadrantesEtiqueta(pal),
+      colectivos: capaColectivos(pal),
+      pulso: capaPulso(pal),
       clusters: capaClusters(pal),
       incidentes: capaIncidentes(pal),
       seleccion: capaSeleccion(pal),
@@ -822,12 +1028,18 @@ function MapaInterno({
   const [reproduciendo, setReproduciendo] = useState(false);
   // Tooltip al pasar el mouse + acordeón del panel
   const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[] } | null>(null);
+  // Acordeón del panel de capas. Las claves quedaron con su nombre histórico
+  // aunque los títulos visibles sean otros (demandas → "Lo pedido",
+  // incidentes → "Lo hecho"): así no se rompe nada que dependa de ellas.
+  // Territorio arranca cerrado (es lo más largo) y Período también — su
+  // resumen ("Todo"/"30d") ya dice lo que hay adentro sin abrirlo.
   const [secciones, setSecciones] = useState<Record<string, boolean>>({
     territorio: false,
     incidentes: true,
     demandas: true,
+    fondo: true,
     tipos: false,
-    periodo: true,
+    periodo: false,
   });
   const barraEstadoRef = useRef<HTMLDivElement>(null);
   const modoAnalisisRef = useRef(false);
@@ -912,6 +1124,67 @@ function MapaInterno({
     if (!verBarrios || barriosGeo) return;
     fetch("/data/barrios.json").then((r) => r.json()).then(setBarriosGeo).catch(() => {});
   }, [verBarrios, barriosGeo]);
+
+  // ── Capas viales nuevas: apagadas por defecto, fetch lazy al prenderlas ──
+  // (mismo patrón que circuitos/barrios: nadie paga el JSON sin pedirlo —
+  // red-vial.json solo ya pesa ~2 MB).
+  const [verJerarquia, setVerJerarquia] = useState(false);
+  const [verRedVial, setVerRedVial] = useState(false);
+  const [verSectores, setVerSectores] = useState(false);
+  const [verColectivos, setVerColectivos] = useState(false);
+  const [jerarquiaGeo, setJerarquiaGeo] = useState<FCLinea | null>(null);
+  const [redVialGeo, setRedVialGeo] = useState<FCLinea | null>(null);
+  const [sectoresGeo, setSectoresGeo] = useState<FCPoligono | null>(null);
+  const [colectivosGeo, setColectivosGeo] = useState<FCLinea | null>(null);
+  // Detalle del sector de licitación clickeado (hormigón o cuadrante)
+  const [sectorSel, setSectorSel] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    if (!verJerarquia || jerarquiaGeo) return;
+    fetch("/data/jerarquia-vial.json").then((r) => r.json()).then(setJerarquiaGeo).catch(() => {});
+  }, [verJerarquia, jerarquiaGeo]);
+  useEffect(() => {
+    if (!verRedVial || redVialGeo) return;
+    fetch("/data/red-vial.json").then((r) => r.json()).then(setRedVialGeo).catch(() => {});
+  }, [verRedVial, redVialGeo]);
+  useEffect(() => {
+    if (!verColectivos || colectivosGeo) return;
+    fetch("/data/recorridos-colectivos.json").then((r) => r.json()).then(setColectivosGeo).catch(() => {});
+  }, [verColectivos, colectivosGeo]);
+  useEffect(() => {
+    if (!verSectores || sectoresGeo) return;
+    fetch("/data/sectores-licitacion.json")
+      .then((r) => r.json() as Promise<FCPoligono>)
+      .then((fc) => {
+        // Se precalculan UNA vez: el color estable por empresa (misma función
+        // de hash que los circuitos operativos) y la etiqueta del cuadrante
+        // ("SECTOR SURESTE · hormigón INGECO / asfalto CONTRATUC") — MapLibre
+        // no puede concatenar con mayúsculas, así que se resuelve acá.
+        setSectoresGeo({
+          type: "FeatureCollection",
+          features: fc.features.map((f) => {
+            const empresa = f.properties.empresa ? String(f.properties.empresa) : null;
+            const asfalto = f.properties.empresaAsfalto ? String(f.properties.empresaAsfalto) : null;
+            const detalle =
+              f.properties.tipo === "cuadrante"
+                ? `hormigón ${empresa?.toUpperCase() ?? "—"} / asfalto ${asfalto?.toUpperCase() ?? "—"}`
+                : `hormigón ${empresa?.toUpperCase() ?? "—"}`;
+            return {
+              ...f,
+              properties: {
+                ...f.properties,
+                ...(empresa ? { color_empresa: colorDeEmpresa(empresa) } : {}),
+                detalle,
+                etiqueta:
+                  f.properties.tipo === "cuadrante"
+                    ? `${String(f.properties.sector)} · ${detalle}`
+                    : String(f.properties.sector),
+              },
+            };
+          }),
+        });
+      })
+      .catch(() => {});
+  }, [verSectores, sectoresGeo]);
 
   // Al entrar con ?distrito=, encuadrar su polígono apenas esté cargado.
   const encuadreDistritoRef = useRef(false);
@@ -1842,11 +2115,14 @@ function MapaInterno({
       // el centro lo fija onMouseDown; acá solo evitamos abrir el detalle
       return;
     }
-    const feature = e.features?.[0];
+    // Las líneas de colectivos son solo informativas (tooltip): un clic sobre
+    // ellas no debe abrir ni cerrar nada — se busca el siguiente feature útil.
+    const feature = e.features?.find((f) => f.layer.id !== "colectivos-linea");
     if (!feature) {
       setSeleccion(null);
       setCotejo(null);
       setCircuitoSel(null);
+      setSectorSel(null);
       return;
     }
     // El relleno del circuito cubre todo el polígono, pero los puntos se
@@ -1855,7 +2131,17 @@ function MapaInterno({
     if (feature.layer.id === "circuitos-empresa-relleno") {
       setSeleccion(null);
       setCotejo(null);
+      setSectorSel(null);
       setCircuitoSel(feature.properties ?? {});
+      return;
+    }
+    // Sector de licitación (hormigón o cuadrante): popup con empresa(s) y
+    // licitación. El cuadrante entra por su relleno transparente.
+    if (feature.layer.id === "sectores-hormigon-relleno" || feature.layer.id === "sectores-cuadrante-relleno") {
+      setSeleccion(null);
+      setCotejo(null);
+      setCircuitoSel(null);
+      setSectorSel(feature.properties ?? {});
       return;
     }
     if (feature.layer.id === "clusters") {
@@ -1872,6 +2158,7 @@ function MapaInterno({
     const lngLat: [number, number] =
       geom.type === "Point" && geom.coordinates ? [geom.coordinates[0], geom.coordinates[1]] : [e.lngLat.lng, e.lngLat.lat];
     setCircuitoSel(null);
+    setSectorSel(null);
     if (feature.layer.id === "incidentes-punto") {
       setSeleccion({ capa: "incidente", props: feature.properties ?? {}, lngLat });
     } else if (feature.layer.id === "demandas-punto") {
@@ -1932,13 +2219,16 @@ function MapaInterno({
         }}
         mapStyle={estiloMapa(tema)}
         maxZoom={19.5}
-        interactiveLayerIds={
-          // El relleno de circuitos entra solo cuando su capa está montada:
-          // consultar una capa inexistente haría fallar el query de features.
-          verCircuitos && circuitosConOperativa
-            ? ["clusters", "incidentes-punto", "demandas-punto", "circuitos-empresa-relleno"]
-            : ["clusters", "incidentes-punto", "demandas-punto"]
-        }
+        interactiveLayerIds={[
+          // Cada capa opcional entra solo cuando está montada: consultar una
+          // capa inexistente haría fallar el query de features.
+          "clusters",
+          "incidentes-punto",
+          "demandas-punto",
+          ...(verCircuitos && circuitosConOperativa ? ["circuitos-empresa-relleno"] : []),
+          ...(verSectores && sectoresGeo ? ["sectores-hormigon-relleno", "sectores-cuadrante-relleno"] : []),
+          ...(verColectivos && colectivosGeo ? ["colectivos-linea"] : []),
+        ]}
         onClick={alClick}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -2042,6 +2332,11 @@ function MapaInterno({
                   " · " + numero(Number(p.pendientes ?? 0)) + " pendientes · clic para el detalle"
                 : "clic para el detalle",
             ];
+          } else if (f.layer.id === "colectivos-linea") {
+            // "L4 · MERCOFRUT": la sensibilidad por transporte del ingeniero
+            lineas = [String(p.linea ?? "") + " · " + String(p.ramal ?? ""), "recorrido de colectivo"];
+          } else if (f.layer.id === "sectores-hormigon-relleno" || f.layer.id === "sectores-cuadrante-relleno") {
+            lineas = [String(p.sector ?? ""), String(p.detalle ?? "") + " · clic para el detalle"];
           } else {
             lineas = [
               String(p.direccion ?? "Pedido #" + String(p.id)),
@@ -2059,6 +2354,14 @@ function MapaInterno({
             type="raster"
             tiles={["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}
             tileSize={256}
+            // EL BUG DEL "MAPA QUE COLAPSA" CON MUCHO ZOOM: Esri no tiene
+            // imágenes de SMT más allá de z19 — para z20+ responde 200 con un
+            // placeholder gris liso (~2,5 KB), y como esta fuente no declaraba
+            // maxzoom, MapLibre pedía esos tiles (con tileSize 256 ya desde
+            // ~z18.5 de cámara) y tapaba TODO el mapa de gris. Con maxzoom 19
+            // los tiles reales de z19 se sobre-escalan y el zoom máximo
+            // (19.5) queda usable.
+            maxzoom={19}
             attribution="Esri, Maxar, Earthstar Geographics"
           >
             {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
@@ -2082,6 +2385,36 @@ function MapaInterno({
             <Layer {...capaAvenidas} />
             <Layer {...capas.avenidasNombre} />
           </>
+        )}
+
+        {/* Capas viales nuevas — también debajo de los datos. Orden: red vial
+            (contexto), sectores (relleno), jerarquía y colectivos (líneas). */}
+        {verRedVial && redVialGeo && (
+          <Source id="red-vial" type="geojson" data={redVialGeo}>
+            <Layer {...capas.redPavimento} />
+            <Layer {...capas.redCordon} />
+            <Layer {...capas.redRipio} />
+          </Source>
+        )}
+        {verSectores && sectoresGeo && (
+          <Source id="sectores" type="geojson" data={sectoresGeo}>
+            <Layer {...capaCuadrantesClick} />
+            <Layer {...capas.sectoresRelleno} />
+            <Layer {...capaSectoresBorde} />
+            <Layer {...capas.cuadrantesBorde} />
+            <Layer {...capas.cuadrantesEtiqueta} />
+          </Source>
+        )}
+        {verJerarquia && jerarquiaGeo && (
+          <Source id="jerarquia" type="geojson" data={jerarquiaGeo}>
+            <Layer {...capas.jerarquiaLinea} />
+            <Layer {...capas.jerarquiaNombre} />
+          </Source>
+        )}
+        {verColectivos && colectivosGeo && (
+          <Source id="colectivos" type="geojson" data={colectivosGeo}>
+            <Layer {...capas.colectivos} />
+          </Source>
         )}
 
         {/* Límites territoriales de referencia — igual, debajo de los datos */}
@@ -2238,7 +2571,7 @@ function MapaInterno({
           clusterMaxZoom={14}
           clusterRadius={45}
         >
-          <Layer {...capaPulso} />
+          <Layer {...capas.pulso} />
           <Layer {...capas.incidentes} />
           <Layer {...capas.clusters} />
           <Layer {...capaClusterConteo} />
@@ -2885,6 +3218,72 @@ function MapaInterno({
         </aside>
       )}
 
+      {/* Detalle del sector de licitación clickeado */}
+      {sectorSel && !comparar && (
+        <aside className="panel-vidrio absolute top-28 right-3 z-20 w-72 max-w-[calc(100vw-24px)] rounded-xl">
+          <div className="flex items-center justify-between border-b border-borde px-4 py-3">
+            <span className="flex items-center gap-2 text-sm font-bold">
+              <span
+                className="inline-block h-3 w-3 rounded-sm"
+                style={{ background: sectorSel.color_empresa ? String(sectorSel.color_empresa) : "#8b94a3" }}
+              />
+              {String(sectorSel.sector ?? "Sector")}
+            </span>
+            <button onClick={() => setSectorSel(null)} className="text-texto-3 hover:text-texto">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="space-y-3 px-4 py-4 text-[13px]">
+            <Dato
+              etiqueta={sectorSel.tipo === "cuadrante" ? "Empresa (hormigón)" : "Empresa"}
+              valor={
+                sectorSel.empresa ? (
+                  <span className="flex items-center gap-2 font-semibold uppercase">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: String(sectorSel.color_empresa ?? "#8b94a3") }}
+                    />
+                    {String(sectorSel.empresa)}
+                  </span>
+                ) : (
+                  <span className="text-texto-3">sin asignar</span>
+                )
+              }
+            />
+            {sectorSel.tipo === "cuadrante" && (
+              <Dato
+                etiqueta="Empresa (asfalto)"
+                valor={
+                  sectorSel.empresaAsfalto ? (
+                    <span className="font-semibold uppercase">{String(sectorSel.empresaAsfalto)}</span>
+                  ) : (
+                    <span className="text-texto-3">sin asignar</span>
+                  )
+                }
+              />
+            )}
+            <Dato
+              etiqueta="Licitación"
+              valor={
+                sectorSel.licitacion ? (
+                  <span className="num font-semibold">N.º {String(sectorSel.licitacion)}</span>
+                ) : (
+                  <span className="text-texto-3">sin número informado</span>
+                )
+              }
+            />
+            {sectorSel.panios != null && (
+              <Dato etiqueta="Paños" valor={<span className="num font-semibold">{numero(Number(sectorSel.panios))}</span>} />
+            )}
+            <p className="border-t border-borde pt-2.5 text-[10px] leading-relaxed text-texto-3">
+              {sectorSel.tipo === "cuadrante"
+                ? "Cuadrante de licitación: dentro de este borde grueso trabajan la empresa de hormigón y la de asfalto indicadas."
+                : "Sector de licitación de HORMIGÓN: el relleno usa el mismo color que esa empresa en los circuitos operativos."}
+            </p>
+          </div>
+        </aside>
+      )}
+
       {/* Menú contextual del clic derecho */}
       {menuCtx && (
         <>
@@ -3190,7 +3589,7 @@ function MapaInterno({
           ahí desincroniza la cortina "Lo pedido | Lo hecho". */}
       <div data-tour="capas" className={`absolute bottom-6 left-3 z-10 ${despejado || comparar ? "hidden" : ""}`} style={arrCapas.estilo}>
         {panelCapas ? (
-          <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-64 overflow-y-auto rounded-xl p-4">
+          <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-72 overflow-y-auto rounded-xl p-4">
             <div
               {...arrCapas.asaProps}
               className="mb-3 flex items-center justify-between select-none"
@@ -3200,52 +3599,168 @@ function MapaInterno({
                 <GripVertical size={13} className="text-texto-3" />
                 <Layers size={14} className="text-celeste" /> Capas
               </span>
-              <button onClick={() => setPanelCapas(false)} className="text-texto-3 hover:text-texto">
-                <X size={14} />
-              </button>
+              <span className="flex items-center gap-1">
+                {/* La vista satelital "la usa siempre": atajo fijo en la
+                    cabecera, accesible sin scroll aunque el panel esté largo. */}
+                <button
+                  onClick={() => setVerSatelite((v) => !v)}
+                  className={`rounded-md p-1 transition ${verSatelite ? "text-celeste" : "text-texto-3 hover:text-texto"}`}
+                  title={verSatelite ? "Apagar la vista satelital" : "Prender la vista satelital"}
+                >
+                  <Satellite size={14} />
+                </button>
+                <button onClick={() => setPanelCapas(false)} className="text-texto-3 hover:text-texto">
+                  <X size={14} />
+                </button>
+              </span>
             </div>
+
+            {/* Grupos pedidos por el Director ("yo necesito simpleza… mucha
+                info no te permite ver bien"): LO PEDIDO / LO HECHO /
+                TERRITORIO / FONDO. Las claves internas del acordeón conservan
+                su nombre histórico (demandas/incidentes/territorio) para no
+                tocar el mecanismo existente — solo se agregó "fondo". */}
+            <Seccion titulo="Lo pedido" resumen={numero(kpis.demandas)}
+              abierta={secciones.demandas ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />
+            {secciones.demandas && (<>
+            <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]" title="Los pedidos (reclamos, intimaciones, notas) como puntos sobre el mapa">
+              <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: pal.demanda }} />
+              <span className="min-w-0 truncate">Pedidos (puntos)</span>
+            </label>
+            <label
+              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Mostrar solo demandas aún sin cotejar (recibidas/en validación); apagalo para ver también las ya vinculadas o descartadas"
+            >
+              <input
+                type="checkbox"
+                checked={soloDemandasAbiertas}
+                onChange={(e) => setSoloDemandasAbiertas(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="min-w-0 truncate">Solo pendientes</span>
+            </label>
+            <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
+              <input type="checkbox" checked={verCalor} onChange={(e) => setVerCalor(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="min-w-0 truncate">Mapa de calor</span>
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Hexágonos extruidos por cantidad de pedidos: inclina la cámara y muestra dónde se concentra la demanda en 3D"
+            >
+              <input type="checkbox" checked={verHex} onChange={(e) => setVerHex(e.target.checked)} className="accent-[#0066ff]" />
+              <Boxes size={13} className="shrink-0 text-celeste" />
+              <span className="min-w-0 truncate">Densidad 3D</span>
+            </label>
+            {fuentesPresentes.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {fuentesPresentes.map((f) => {
+                  const activa = fuentes[f] !== false;
+                  return (
+                    <button
+                      key={f}
+                      onClick={() => setFuentes((v) => ({ ...v, [f]: !activa }))}
+                      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition ${
+                        activa ? "border-celeste/50 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-3"
+                      }`}
+                    >
+                      {ETIQUETA_FUENTE[f as keyof typeof ETIQUETA_FUENTE] ?? f}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            </>)}
+
+            <Seccion titulo="Lo hecho" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
+              abierta={secciones.incidentes ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />
+            {secciones.incidentes && (<>
+            {(
+              [
+                ["abierto", "Abiertos"],
+                ["en_curso", "En curso"],
+                ["resuelto", "Resueltos"],
+                ["inactivo", "Desestimados"],
+              ] as const
+            ).map(([clave, etiqueta]) => (
+              <label key={clave} className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
+                <input
+                  type="checkbox"
+                  checked={verMacro[clave] ?? false}
+                  onChange={(e) => setVerMacro((v) => ({ ...v, [clave]: e.target.checked }))}
+                  className="accent-[#0066ff]"
+                />
+                {/* Los puntitos de la leyenda copian el color REAL del mapa:
+                    en curso saturado y resuelto apagado (contraste pedido). */}
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{
+                    background:
+                      clave === "en_curso" ? pal.enCursoVivo : clave === "resuelto" ? pal.resueltoApagado : COLOR_MACRO[clave],
+                  }}
+                />
+                <span className="min-w-0 flex-1 truncate">{etiqueta}</span>
+                <span className="num text-[10px] text-texto-3">
+                  {numero(clave === "abierto" ? kpis.abiertos : clave === "en_curso" ? kpis.enCurso : clave === "resuelto" ? kpis.resueltos : 0)}
+                </span>
+              </label>
+            ))}
+            <p className="mt-1 mb-2 flex items-center gap-1.5 text-[10px] text-texto-3">
+              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amarillo" /> anillo amarillo = obra SIGOV
+            </p>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
+            >
+              <input type="checkbox" checked={verTop20} onChange={(e) => setVerTop20(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="num rounded bg-amarillo px-1 text-[10px] font-black text-fondo">1</span>
+              <span className="min-w-0 truncate">Top 20 urgentes</span>
+            </label>
+            </>)}
 
             <Seccion titulo="Territorio" abierta={secciones.territorio ?? false}
               alConmutar={() => setSecciones((v) => ({ ...v, territorio: !v.territorio }))} />
             {secciones.territorio && (<>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Avenidas y corredores principales según la clasificación vial de OpenStreetMap (motorway/trunk/primary/secondary)"
+              title="Jerarquía vial oficial: las primarias bien marcadas y las secundarias finas — las terciarias no se muestran porque hacen una mancha"
             >
-              <input
-                type="checkbox"
-                checked={verAvenidas}
-                onChange={(e) => setVerAvenidas(e.target.checked)}
-                className="accent-[#0066ff]"
-              />
-              <span className="inline-block h-0.5 w-4 rounded bg-celeste" />
-              Avenidas principales
+              <input type="checkbox" checked={verJerarquia} onChange={(e) => setVerJerarquia(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: pal.jerarquiaVial }} />
+              <span className="min-w-0 truncate">Avenidas y calles principales</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Nombres de todas las calles al acercar el zoom, para ubicar cualquier dirección"
+              title="Las 10.392 cuadras según su calzada. El RIPIO es lo importante: ahí no hay bache, es pasado de máquina."
             >
-              <input
-                type="checkbox"
-                checked={verCalles}
-                onChange={(e) => setVerCalles(e.target.checked)}
-                className="accent-[#0066ff]"
-              />
-              <span className="text-[10px] text-texto-3">Aa</span>
-              Nombres de calles
+              <input type="checkbox" checked={verRedVial} onChange={(e) => setVerRedVial(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.ripio }} />
+              <span className="min-w-0 truncate">Pavimento y ripio</span>
+            </label>
+            {verRedVial && (
+              <p className="mb-2 ml-5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-texto-3">
+                <span className="inline-block h-1 w-3 rounded" style={{ background: pal.ripio }} /> ripio
+                <span className="inline-block h-0.5 w-3 rounded" style={{ background: pal.pavimento }} /> pavimento
+                <span className="inline-block w-3 border-t border-dashed" style={{ borderColor: pal.cordonCuneta }} /> cordón cuneta
+              </p>
+            )}
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Los 11 sectores de HORMIGÓN teñidos por empresa y los 4 cuadrantes (hormigón + asfalto) con borde grueso. Clic en uno para su detalle."
+            >
+              <input type="checkbox" checked={verSectores} onChange={(e) => setVerSectores(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-2.5 w-4 shrink-0 rounded-sm border border-[#4f9cf9]" style={{ background: "rgba(79,156,249,0.35)" }} />
+              <span className="min-w-0 truncate">Sectores de licitación</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Imagen satelital real (Esri) para ubicar con precisión — los nombres de calles quedan encima"
+              title="Recorridos de las líneas de colectivos (sensibilidad por transporte) — pasá el mouse por una línea para ver línea y ramal"
             >
-              <input
-                type="checkbox"
-                checked={verSatelite}
-                onChange={(e) => setVerSatelite(e.target.checked)}
-                className="accent-[#0066ff]"
-              />
-              <Satellite size={13} className="text-celeste" />
-              Vista satelital
+              <input type="checkbox" checked={verColectivos} onChange={(e) => setVerColectivos(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.colectivo }} />
+              <span className="min-w-0 truncate">Recorridos de colectivos</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
@@ -3257,8 +3772,8 @@ function MapaInterno({
                 onChange={(e) => setVerDistritos(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.distritos, borderTop: `1px dashed ${pal.distritos}` }} />
-              Distritos
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.distritos, borderTop: `1px dashed ${pal.distritos}` }} />
+              <span className="min-w-0 truncate">Distritos</span>
             </label>
             {verDistritos && (
               <label
@@ -3272,10 +3787,10 @@ function MapaInterno({
                   className="accent-[#0066ff]"
                 />
                 <span
-                  className="inline-block h-2.5 w-4 rounded-sm"
+                  className="inline-block h-2.5 w-4 shrink-0 rounded-sm"
                   style={{ background: "linear-gradient(90deg,#199e70,#f4dc00,#ff3b30)" }}
                 />
-                Pintar por deuda
+                <span className="min-w-0 truncate">Pintar por deuda</span>
               </label>
             )}
             <label
@@ -3288,8 +3803,8 @@ function MapaInterno({
                 onChange={(e) => setVerCircuitos(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.circuitos }} />
-              Circuitos de trabajo
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.circuitos }} />
+              <span className="min-w-0 truncate">Circuitos de trabajo</span>
             </label>
             {verCircuitos && circuitosOp && (
               <p className="mb-2 ml-5 flex items-center gap-1.5 text-[10px] text-texto-3">
@@ -3310,100 +3825,53 @@ function MapaInterno({
                 onChange={(e) => setVerBarrios(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              <span className="inline-block h-0.5 w-4 rounded" style={{ background: pal.barrios }} />
-              Barrios
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.barrios }} />
+              <span className="min-w-0 truncate">Barrios</span>
             </label>
             </>)}
 
-            <Seccion titulo="Incidentes" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
-              abierta={secciones.incidentes ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />
-            {secciones.incidentes && (<>
-            {(
-              [
-                ["abierto", "Abiertos"],
-                ["en_curso", "En curso"],
-                ["resuelto", "Resueltos"],
-                ["inactivo", "Desestimados"],
-              ] as const
-            ).map(([clave, etiqueta]) => (
-              <label key={clave} className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
-                <input
-                  type="checkbox"
-                  checked={verMacro[clave] ?? false}
-                  onChange={(e) => setVerMacro((v) => ({ ...v, [clave]: e.target.checked }))}
-                  className="accent-[#0066ff]"
-                />
-                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_MACRO[clave] }} />
-                <span className="flex-1">{etiqueta}</span>
-                <span className="num text-[10px] text-texto-3">
-                  {numero(clave === "abierto" ? kpis.abiertos : clave === "en_curso" ? kpis.enCurso : clave === "resuelto" ? kpis.resueltos : 0)}
-                </span>
-              </label>
-            ))}
-            <p className="mt-1 mb-2 flex items-center gap-1.5 text-[10px] text-texto-3">
-              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amarillo" /> anillo amarillo = obra SIGOV
-            </p>
+            <Seccion titulo="Fondo" abierta={secciones.fondo ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, fondo: !v.fondo }))} />
+            {secciones.fondo && (<>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
-            >
-              <input type="checkbox" checked={verTop20} onChange={(e) => setVerTop20(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="num rounded bg-amarillo px-1 text-[10px] font-black text-fondo">1</span>
-              Top 20 urgentes
-            </label>
-            </>)}
-
-            <Seccion titulo="Demandas" resumen={numero(kpis.demandas)}
-              abierta={secciones.demandas ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />
-            {secciones.demandas && (<>
-            <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
-              Puntos de demanda
-            </label>
-            <label
-              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Mostrar solo demandas aún sin cotejar (recibidas/en validación); apagalo para ver también las ya vinculadas o descartadas"
+              title="Imagen satelital real (Esri) para ubicar con precisión — los nombres de calles quedan encima. También está el atajo con el ícono de arriba."
             >
               <input
                 type="checkbox"
-                checked={soloDemandasAbiertas}
-                onChange={(e) => setSoloDemandasAbiertas(e.target.checked)}
+                checked={verSatelite}
+                onChange={(e) => setVerSatelite(e.target.checked)}
                 className="accent-[#0066ff]"
               />
-              Solo pendientes (sin vincular)
-            </label>
-            <label className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={verCalor} onChange={(e) => setVerCalor(e.target.checked)} className="accent-[#0066ff]" />
-              Mapa de calor
+              <Satellite size={13} className="shrink-0 text-celeste" />
+              <span className="min-w-0 truncate">Vista satelital</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Hexágonos extruidos por cantidad de pedidos: inclina la cámara y muestra dónde se concentra la demanda en 3D"
+              title="Nombres de todas las calles al acercar el zoom, para ubicar cualquier dirección"
             >
-              <input type="checkbox" checked={verHex} onChange={(e) => setVerHex(e.target.checked)} className="accent-[#0066ff]" />
-              <Boxes size={13} className="text-celeste" />
-              Densidad 3D (hexágonos)
+              <input
+                type="checkbox"
+                checked={verCalles}
+                onChange={(e) => setVerCalles(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="shrink-0 text-[10px] text-texto-3">Aa</span>
+              <span className="min-w-0 truncate">Nombres de calles</span>
             </label>
-            {fuentesPresentes.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {fuentesPresentes.map((f) => {
-                  const activa = fuentes[f] !== false;
-                  return (
-                    <button
-                      key={f}
-                      onClick={() => setFuentes((v) => ({ ...v, [f]: !activa }))}
-                      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition ${
-                        activa ? "border-celeste/50 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-3"
-                      }`}
-                    >
-                      {ETIQUETA_FUENTE[f as keyof typeof ETIQUETA_FUENTE] ?? f}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Realce azul de avenidas y corredores según OpenStreetMap (es parte del fondo; la capa oficial está en Territorio)"
+            >
+              <input
+                type="checkbox"
+                checked={verAvenidas}
+                onChange={(e) => setVerAvenidas(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span className="inline-block h-0.5 w-4 shrink-0 rounded bg-celeste" />
+              <span className="min-w-0 truncate">Realce de avenidas</span>
+            </label>
             </>)}
 
             <Seccion titulo="Tipo de problema" abierta={secciones.tipos ?? false}
@@ -3558,7 +4026,24 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
           <>
             <Dato etiqueta="Estado" valor={String(p.estado).replaceAll("_", " ")} />
             {p.score != null && <Dato etiqueta="Score de prioridad" valor={<span className="num font-bold text-amarillo">{Number(p.score).toFixed(1)}</span>} />}
-            <Dato etiqueta="Demandas vinculadas" valor={String(p.demandas ?? 0)} />
+            {/* "Debería mandarte al pedido": si hay demandas vinculadas, el
+                popup lleva directo a la historia del incidente (donde viven
+                los pedidos); si no hay, se dice honesto — relevamiento interno. */}
+            <div>
+              <div className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Pedidos detrás</div>
+              <div className="mt-0.5">
+                {Number(p.demandas ?? 0) > 0 ? (
+                  <Link
+                    href={`/incidentes/${String(p.id)}`}
+                    className="font-semibold text-celeste hover:underline"
+                  >
+                    ver los pedidos ({numero(Number(p.demandas))}) →
+                  </Link>
+                ) : (
+                  <span className="text-texto-3">sin pedido detrás: relevamiento interno</span>
+                )}
+              </div>
+            </div>
             {p.m2 != null && <Dato etiqueta="Superficie" valor={`${numero(Number(p.m2))} m²`} />}
             {p.origen === "sigov" && <Dato etiqueta="Origen" valor="Obra contratada (SIGOV)" />}
             <Dato etiqueta="Detectado" valor={fechaCorta(String(p.detectado_en))} />

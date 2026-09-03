@@ -10,10 +10,21 @@ import { BusquedaNatural } from "@/components/busqueda-natural";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * demandas.destino (enum destino_resolucion): quién resuelve cada pedido.
+ * Etiquetas y colores locales — formato.ts no se toca en esta tarea; los
+ * colores son tokens del tema, así flipean solos en claro/oscuro.
+ */
+const DESTINOS = [
+  ["bacheo", "Bacheo", "var(--color-abierto)", "Lo resuelven las cuadrillas y empresas de bacheo"],
+  ["sat", "SAT (Aguas)", "var(--color-celeste)", "Pérdidas de agua, tapas y sumideros: los resuelve la SAT"],
+  ["ingenieria", "Ingeniería (ripio)", "var(--color-amarillo)", "Calles de ripio: pasado de máquina de Ingeniería"],
+] as const;
+
 export default async function PaginaDemandas({
   searchParams,
 }: {
-  searchParams: Promise<{ fuente?: string; estado?: string; q?: string; calidad?: string; mes?: string; pagina?: string }>;
+  searchParams: Promise<{ fuente?: string; estado?: string; destino?: string; q?: string; calidad?: string; mes?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -50,7 +61,7 @@ export default async function PaginaDemandas({
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <Link
           href="/demandas"
-          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${!filtros.estado && !filtros.fuente ? "border-celeste/60 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-2 hover:border-celeste/50 hover:text-texto"}`}
+          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${!filtros.estado && !filtros.fuente && !filtros.destino ? "border-celeste/60 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-2 hover:border-celeste/50 hover:text-texto"}`}
         >
           Todas <span className="num">{numero(resumen.total)}</span>
         </Link>
@@ -79,7 +90,7 @@ export default async function PaginaDemandas({
           );
         })}
       </div>
-      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Quién pide:</span>
         {resumen.porFuente.map(({ fuente, n }) => (
           <Link
@@ -91,6 +102,28 @@ export default async function PaginaDemandas({
             {ETIQUETA_FUENTE[fuente as FuenteDemanda] ?? fuente} <span className="num text-texto-3">{numero(n)}</span>
           </Link>
         ))}
+      </div>
+      {/* Salido de la reunión con el Director: separar lo que es de bacheo de lo
+          que resuelven la SAT (agua) o Ingeniería (ripio). Cada chip filtra y se
+          des-filtra con otro clic. */}
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">¿Quién lo resuelve?</span>
+        {DESTINOS.map(([clave, etiqueta, color, ayuda]) => {
+          const n = resumen.porDestino[clave] ?? 0;
+          if (n === 0) return null;
+          const activo = filtros.destino === clave;
+          return (
+            <Link
+              key={clave}
+              href={link({ destino: activo ? undefined : clave })}
+              title={ayuda}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${activo ? "border-borde-2 bg-panel-2 font-semibold text-texto" : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"}`}
+            >
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
+              {etiqueta} <span className="num text-texto-3">{numero(n)}</span>
+            </Link>
+          );
+        })}
       </div>
 
       {filtros.mes && (
@@ -118,6 +151,8 @@ export default async function PaginaDemandas({
       />
 
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/demandas" method="get">
+        {/* El filtro de destino vive en los chips: se preserva al re-filtrar por acá */}
+        {filtros.destino && <input type="hidden" name="destino" value={filtros.destino} />}
         <select name="fuente" defaultValue={filtros.fuente ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
           <option value="">Todas las fuentes</option>
           {FUENTES_DEMANDA.map((f) => (
@@ -139,7 +174,7 @@ export default async function PaginaDemandas({
         <button className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">
           Filtrar
         </button>
-        {(filtros.fuente || filtros.estado || filtros.q) && (
+        {(filtros.fuente || filtros.estado || filtros.destino || filtros.q) && (
           <Link href="/demandas" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
         <a
@@ -148,6 +183,7 @@ export default async function PaginaDemandas({
               Object.entries({
                 fuente: filtros.fuente,
                 estado: filtros.estado,
+                destino: filtros.destino,
                 q: filtros.q,
                 calidad: filtros.calidad,
                 mes: filtros.mes,
@@ -180,7 +216,18 @@ export default async function PaginaDemandas({
               <tr key={d.id} className="border-b border-borde/60 transition hover:bg-panel-2">
                 <td className="num px-4 py-2.5 text-texto-3">{d.id}</td>
                 <td className="px-4 py-2.5"><BadgeFuente fuente={d.fuente} /></td>
-                <td className="px-4 py-2.5"><BadgeTipo tipo={d.tipo} /></td>
+                <td className="px-4 py-2.5">
+                  <BadgeTipo tipo={d.tipo} />
+                  {/* Quién lo resuelve, en chico y con su color, debajo del tipo */}
+                  {d.destino && (
+                    <span
+                      className="mt-0.5 block text-[10px] font-semibold"
+                      style={{ color: DESTINOS.find(([clave]) => clave === d.destino)?.[2] }}
+                    >
+                      {DESTINOS.find(([clave]) => clave === d.destino)?.[1] ?? d.destino}
+                    </span>
+                  )}
+                </td>
                 <td className="max-w-64 truncate px-4 py-2.5" title={d.direccion ?? ""}>{d.direccion ?? "—"}</td>
                 <td className="px-4 py-2.5"><BarraConfianza valor={d.geocodConfianza} /></td>
                 <td className="px-4 py-2.5"><BadgeEstadoDemanda estado={d.estado} /></td>

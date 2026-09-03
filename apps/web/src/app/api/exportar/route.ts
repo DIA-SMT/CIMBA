@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
     const { filas, total } = await listarDemandas(sesion, {
       fuente: p.get("fuente") ?? undefined,
       estado: p.get("estado") ?? undefined,
+      destino: p.get("destino") ?? undefined,
       q: p.get("q") ?? undefined,
       calidad: p.get("calidad") ?? undefined,
       mes: p.get("mes") ?? undefined,

@@ -41,7 +41,12 @@ export const HERRAMIENTAS_MIGUE = [
         properties: {
           texto: { type: "string", description: "Texto a buscar en dirección o descripción (ej: 'mate de luna')" },
           fuente: { type: "string", enum: ["atencion_ciudadana", "hcd", "redes_sociales", "secretaria", "sat", "carga_manual"] },
-          estado: { type: "string", enum: ["recibida", "en_validacion", "vinculada", "descartada"] },
+          estado: { type: "string", enum: ["recibida", "en_validacion", "vinculada", "descartada", "cerrada"] },
+          destino: {
+            type: "string",
+            enum: ["bacheo", "sat", "ingenieria"],
+            description: "Quién lo resuelve: bacheo (cuadrillas/empresas), sat (agua: pérdidas, tapas, sumideros) o ingenieria (calles de ripio: pasado de máquina)",
+          },
           tipo: { type: "string", enum: ["bache", "pavimento_deteriorado", "hundimiento", "fisura", "sumidero", "tapa_registro", "perdida_agua", "otro"] },
           limite: { type: "number", description: "máx 20" },
         },
@@ -233,7 +238,7 @@ export async function ejecutarHerramientaMigue(
     case "buscar_demandas": {
       const texto = typeof args.texto === "string" ? args.texto.slice(0, 80) : null;
       return ejecutar(sesion, sql`
-        select d.id, d.fuente, d.estado, d.tipo,
+        select d.id, d.fuente, d.estado, d.tipo, d.destino,
                coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
                left(d.descripcion, 140) as descripcion, d.creado_en::date as fecha,
                d.geocod_confianza
@@ -243,6 +248,7 @@ export async function ejecutarHerramientaMigue(
           and (${(args.fuente as string) || null}::text is null or d.fuente = (${(args.fuente as string) || null})::fuente_demanda)
           and (${(args.estado as string) || null}::text is null or d.estado = (${(args.estado as string) || null})::estado_demanda)
           and (${(args.tipo as string) || null}::text is null or d.tipo = (${(args.tipo as string) || null})::tipo_problema)
+          and (${(args.destino as string) || null}::text is null or d.destino = (${(args.destino as string) || null})::destino_resolucion)
         order by d.creado_en desc
         limit ${lim(args.limite)}
       `);
@@ -495,6 +501,8 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - CAPACIDAD (la regla del Director): una cuadrilla hace ~10 baches por turno, con turnos mañana y tarde; de 4 toneladas de mezcla salen ~14 baches chicos o 4 carpetas por turno. Con eso se proyecta cuánto cuesta cualquier lote de trabajo (herramienta proyeccion_capacidad).
 - CIERRE DE RECLAMOS: cuando el problema de un reclamo ya está reparado, Atención Ciudadana le responde al vecino y cierra el ticket desde /cierres. Un reclamo cerrado sale de la brecha.
 - PEDIDO DE UN CIUDADANO: la carga presencial/telefónica de un vecino la hace el personal en /ciudadano (con dictado por voz). Entra como demanda con fuente carga_manual. El formulario de HCD ya no existe; las demandas históricas con fuente hcd siguen en la base.
+- DESTINO DE RESOLUCIÓN: cada demanda se clasifica automáticamente según QUIÉN la resuelve — "bacheo" (cuadrillas y empresas), "sat" (agua: pérdidas, tapas de registro, sumideros; se le arma expediente a la SAT) o "ingenieria" (calles de ripio o cordón cuneta: es pasado de máquina, no hay bache que bachear). La clasificación usa el tipo, el texto del reclamo y la RED VIAL real (10.392 cuadras con pavimento/ripio). Números actuales: ~1.850 bacheo, ~1.180 SAT, ~150 ingeniería — por eso "la marea de sin vincular" era engañosa: más de un tercio nunca fue de bacheo.
+- CAPAS VIALES NUEVAS del mapa: jerarquía vial (avenidas primarias y secundarias), pavimento/ripio/cordón cuneta por cuadra, sectores de licitación (la zonificación real: 11 sectores de paños de hormigón con su empresa + 4 cuadrantes con doble adjudicataria hormigón/asfalto y n° de licitación) y recorridos de colectivos (sensibilidad por transporte).
 - VISTA ESPEJO: admin y planificación pueden abrir el portal de una empresa tal como lo ve la empresa (/empresa?empresa=N o el link en /ordenes/empresas), para verificar qué le llegó.
 - TEMA: la interfaz tiene tema claro (default) y oscuro; se alterna con el botón de luna/sol del encabezado y el mapa acompaña.
 

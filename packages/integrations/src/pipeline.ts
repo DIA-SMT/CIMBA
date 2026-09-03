@@ -96,6 +96,13 @@ export async function ingestarDemandas(
                    then jsonb_build_object(
                           'ubicacion_corregida', metadata->'ubicacion_corregida',
                           'ubicacion_corregida_en', metadata->'ubicacion_corregida_en')
+                   else '{}'::jsonb end ||
+              -- La marca de destino corregido a mano también sobrevive: el
+              -- trigger de clasificación la mira en NEW, y este UPDATE toca
+              -- tipo/descripcion/geom — sin preservarla, cada re-importación
+              -- pisaría la corrección humana en silencio.
+              case when metadata->'destino_corregido' is not null
+                   then jsonb_build_object('destino_corregido', metadata->'destino_corregido')
                    else '{}'::jsonb end
           where id = ${existente[0].id_local}
         `);

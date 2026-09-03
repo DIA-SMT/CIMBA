@@ -6,6 +6,7 @@ import { listarCuadrillas, obtenerHistoriaIncidente } from "@/lib/consultas";
 import { COLOR_MACRO, ETIQUETA_FUENTE, fechaCorta, macroDeEstado, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { BadgeEstadoIncidente, BadgeFuente, BadgeTipo, Panel } from "@/components/ui";
+import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { MapaPunto } from "@/components/mapa/mapa-punto";
 import { StreetView } from "@/components/mapa/street-view";
 import { AccionesIncidente } from "../acciones-incidente";
@@ -93,6 +94,28 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
   eventos.sort((a, b) => Date.parse(a.fecha!) - Date.parse(b.fecha!));
 
   const macro = macroDeEstado(h.estado);
+
+  // La galería con URLs ya resueltas: el visor es una isla cliente y recibe
+  // todo serializado desde el servidor (nada de funciones ni filas crudas).
+  const fotosGaleria: FotoVisor[] = h.galeria.flatMap((fo) => {
+    const url = urlFoto(fo);
+    if (!url) return [];
+    const momento = ETIQUETA_MOMENTO[fo.momento] ?? fo.momento;
+    const fecha = fo.tomadaEn ? fechaCorta(fo.tomadaEn) : "sin fecha";
+    return [
+      {
+        url,
+        alt: `Obra ${momento} en ${h.direccion ?? "el lugar"}`,
+        etiqueta: `${momento.toUpperCase()} · ${fecha}`,
+        insignia: {
+          texto: momento,
+          color: fo.momento === "despues" ? C.hecho : fo.momento === "antes" ? C.pedido : C.curso,
+        },
+        // El sello que vuelve la foto auditable: cuándo y dónde se tomó.
+        sello: [fecha, ...(fo.lat != null && fo.lon != null ? [`${fo.lat.toFixed(5)}, ${fo.lon.toFixed(5)}`] : [])],
+      },
+    ];
+  });
 
   return (
     <div className="mx-auto max-w-6xl p-6">
@@ -280,49 +303,10 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
       </h2>
       <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
         <Panel className="p-4">
-          {h.galeria.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {h.galeria.map((fo) => {
-                const url = urlFoto(fo);
-                if (!url) return null;
-                return (
-                  <a
-                    key={fo.id}
-                    href={url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="group relative block overflow-hidden rounded-lg border border-borde"
-                    title="Abrir en tamaño completo"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- imagen de Storage, sin optimizador */}
-                    <img
-                      src={url}
-                      alt={`Obra ${ETIQUETA_MOMENTO[fo.momento]} en ${h.direccion ?? "el lugar"}`}
-                      className="h-32 w-full object-cover transition group-hover:brightness-110"
-                      loading="lazy"
-                    />
-                    <span
-                      className="absolute top-1.5 left-1.5 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase"
-                      style={{
-                        background: "rgba(7,10,16,0.8)",
-                        color: fo.momento === "despues" ? C.hecho : fo.momento === "antes" ? C.pedido : C.curso,
-                      }}
-                    >
-                      {ETIQUETA_MOMENTO[fo.momento]}
-                    </span>
-                    {/* El sello que vuelve la foto auditable: cuándo y dónde se tomó */}
-                    <span className="absolute inset-x-0 bottom-0 bg-fondo/85 px-1.5 py-1 text-[9px] leading-tight text-texto-2">
-                      {fo.tomadaEn ? fechaCorta(fo.tomadaEn) : "sin fecha"}
-                      {fo.lat != null && fo.lon != null && (
-                        <span className="num block text-texto-3">
-                          {fo.lat.toFixed(5)}, {fo.lon.toFixed(5)}
-                        </span>
-                      )}
-                    </span>
-                  </a>
-                );
-              })}
-            </div>
+          {fotosGaleria.length > 0 ? (
+            /* El visor sin salir de la página — el pedido del Director:
+               "no quiero abrir muchas pestañas". */
+            <GaleriaFotos fotos={fotosGaleria} miniAlto={128} className="grid grid-cols-2 gap-3 sm:grid-cols-3" />
           ) : (
             <div className="py-6 text-center text-sm leading-relaxed text-texto-2">
               <Camera size={22} className="mx-auto mb-2 text-texto-3" />

@@ -92,7 +92,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, destino: perfil.rol === "planificacion" ? "/ordenes" : "/mapa" });
   }
 
-  // 3) Empresa contratista por slug + clave (hash en la base, nunca en claro).
+  // 3) Usuario local del personal (Silvana, Alejandro, …): usuario y clave
+  //    propios en perfiles, con clave temporal que se pide cambiar al entrar.
+  const locales = (await getDb().execute(sql`
+    select id, id_persona, nombre, rol, activo, clave_hash, clave_temporal
+    from perfiles
+    where usuario = ${usuario.toLowerCase()} and clave_hash is not null
+  `)) as unknown as Array<{
+    id: string; id_persona: number; nombre: string; rol: string;
+    activo: boolean; clave_hash: string; clave_temporal: boolean;
+  }>;
+  const local = locales[0];
+  if (local && local.clave_hash === sha256(clave)) {
+    const rechazo = perfilSuspendido(local);
+    if (rechazo) return rechazo;
+    const jwt = await firmarSesion({
+      sub: local.id,
+      rol_cimba: local.rol as never,
+      id_persona: Number(local.id_persona),
+      nombre: local.nombre,
+      // Con clave temporal, el middleware no lo deja salir de /clave: el
+      // "destino" de abajo era solo una sugerencia que se podía ignorar.
+      ...(local.clave_temporal ? { ct: true } : {}),
+    });
+    await escribirCookieSesion(jwt);
+    await getDb().execute(sql`update perfiles set ultimo_ingreso = now() where id = ${local.id}::uuid`);
+    // Clave temporal: se lo lleva derecho a cambiarla antes que a trabajar.
+    const destino = local.clave_temporal
+      ? "/clave"
+      : local.rol === "atencion_ciudadana"
+        ? "/cierres"
+        : local.rol === "planificacion"
+          ? "/ordenes"
+          : "/mapa";
+    return NextResponse.json({ ok: true, destino });
+  }
+
+  // 4) Empresa contratista por slug + clave (hash en la base, nunca en claro).
   //    Sin RLS acá: todavía no hay sesión. La consulta es puntual por slug.
   const empresas = (await getDb().execute(sql`
     select id, nombre, slug, clave_hash from empresas

@@ -5,6 +5,7 @@ import { listarEmpresas } from "@/lib/ordenes";
 import { numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { BotonClave } from "./boton-clave";
+import { CeldaDotacion } from "./celda-dotacion";
 
 export const dynamic = "force-dynamic";
 
@@ -62,8 +63,22 @@ export default async function PaginaEmpresas() {
                 <td className="px-4 py-2.5">
                   <code className="rounded bg-panel-3 px-1.5 py-0.5 text-xs text-texto-2">{e.slug}</code>
                 </td>
-                <td className="num px-4 py-2.5 text-right">{numero(e.cuadrillas)}</td>
-                <td className="num px-4 py-2.5 text-right">{numero(e.turnosPorDia)}</td>
+                {/* La dotación "va variando": quien planifica la corrige acá mismo
+                    (guarda al blur/Enter); el resto la ve como número. */}
+                <td className="px-4 py-2.5 text-right">
+                  {puedePlanificar ? (
+                    <CeldaDotacion empresaId={e.id} campo="cuadrillas" valor={e.cuadrillas} min={1} max={20} />
+                  ) : (
+                    <span className="num">{numero(e.cuadrillas)}</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  {puedePlanificar ? (
+                    <CeldaDotacion empresaId={e.id} campo="turnosPorDia" valor={e.turnosPorDia} min={1} max={4} />
+                  ) : (
+                    <span className="num">{numero(e.turnosPorDia)}</span>
+                  )}
+                </td>
                 <td className="max-w-48 truncate px-4 py-2.5 text-xs text-texto-2" title={e.circuitosAsignados.join(", ")}>
                   {e.circuitosAsignados.length > 0 ? e.circuitosAsignados.join(", ") : "—"}
                 </td>

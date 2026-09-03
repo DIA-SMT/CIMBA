@@ -120,6 +120,12 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
     como: "Tocá el ícono de luna (o sol) arriba a la derecha.",
   },
   {
+    id: "capas-viales",
+    titulo: "Red vial y licitaciones",
+    desc: "En Capas → Territorio hay cuatro capas nuevas: avenidas primarias y secundarias, pavimento/ripio/cordón cuneta por cuadra (el ripio bien visible: ahí no se bachea, se pasa la máquina), los sectores de licitación con su empresa adjudicataria (hormigón y asfalto) y los recorridos de colectivos. Con la red vial, cada reclamo se clasifica solo: bacheo, SAT o ingeniería.",
+    como: "Panel de Capas → grupo Territorio. Tocá un sector de licitación para ver empresa y n° de licitación.",
+  },
+  {
     id: "circuitos-operativos",
     titulo: "Circuitos operativos",
     desc: "Con la capa de circuitos prendida, cada circuito se pinta según la empresa que lo trabaja y su borde marca la prioridad vial (naranja = primaria, amarillo = secundaria). Tocá un circuito para ver su ficha: pendientes, reclamos, empresa asignada y órdenes activas. La asignación se maneja desde Órdenes.",

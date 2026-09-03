@@ -597,6 +597,52 @@ export async function cerrarDemandaAtencion(entrada: { demandaId: number; respue
   return { ok: true };
 }
 
+// ── Dotación de las empresas ─────────────────────────────────────────────────
+
+/**
+ * Cuadrillas y turnos por día de una empresa, editables desde la tabla de
+ * empresas: la dotación "va variando" (palabras del Director) y es el insumo
+ * de la proyección de capacidad al armar órdenes. Cada campo es opcional para
+ * que la celda inline mande solo lo que cambió.
+ */
+export async function actualizarEmpresa(entrada: {
+  empresaId: number;
+  cuadrillas?: number;
+  turnosPorDia?: number;
+}) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({
+      empresaId: z.number().int().positive(),
+      cuadrillas: z.number().int().min(1).max(20).optional(),
+      turnosPorDia: z.number().int().min(1).max(4).optional(),
+    })
+    .parse(entrada);
+  if (datos.cuadrillas == null && datos.turnosPorDia == null) {
+    throw new Error("No hay nada para actualizar");
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    const r = (await tx.execute(sql`
+      update empresas set
+        cuadrillas = coalesce(${datos.cuadrillas ?? null}::int, cuadrillas),
+        -- turnos_por_dia vive en metadata (no hay columna): se mergea sin pisar el resto
+        metadata = case
+          when ${datos.turnosPorDia != null}
+            then metadata || jsonb_build_object('turnos_por_dia', ${datos.turnosPorDia ?? null}::int)
+          else metadata
+        end
+      where id = ${datos.empresaId}
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    if (!r[0]) throw new Error("La empresa no existe");
+  });
+  revalidatePath("/ordenes/empresas");
+  // La proyección de capacidad de /ordenes usa esta dotación.
+  revalidatePath("/ordenes");
+  return { ok: true };
+}
+
 // ── Claves de acceso de las empresas ─────────────────────────────────────────
 
 /**

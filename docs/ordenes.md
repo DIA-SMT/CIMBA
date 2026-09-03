@@ -62,7 +62,13 @@ ve los reclamos cuyo problema
 |---|---|---|---|
 | Dirección de IA (admin) | `direccionia` | variables de entorno | `/mapa` |
 | Director de Bacheo (planificación) | `bacheo` | variables de entorno | `/ordenes` |
+| Personal con usuario propio (Silvana, Alejandro, …) | su nombre (`silvana`, `alejandro`) | clave inicial que entrega la Dirección de IA; el sistema lo lleva a `/clave` para cambiarla en el primer ingreso | según su rol |
 | Empresa contratista | su slug (`uocra`, `ingeco`, `calleri`…) | el Director genera la clave en `/ordenes/empresas` y se la pasa al referente; se muestra UNA vez | `/empresa` |
+
+Los usuarios locales viven en `perfiles` (usuario + hash de clave +
+`clave_temporal`): se los suspende con `activo = false` y cambian su clave en
+`/clave`. Suspender también corta el login de entorno (admin/bacheo) — el rol
+sale del perfil, no del hardcode.
 
 Todos entran por la misma pantalla `/acceso`. La empresa no ve nada del sistema
 del personal: su portal son sus órdenes y nada más.

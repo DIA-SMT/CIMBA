@@ -1,5 +1,6 @@
 import { conRls, getDb, sql } from "@cimba/db";
 import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain";
+import { ESTADOS_DEMANDA, FUENTES_DEMANDA } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 
@@ -11,6 +12,15 @@ const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona:
  * acá cadena vacía es null (= sin filtro).
  */
 const filtro = (v?: string | null): string | null => (v ? v : null);
+
+/**
+ * Filtro contra una lista cerrada. Los enums de Postgres no perdonan: un
+ * ?destino=xxx tipeado en la URL revienta el cast (22P02) y tira la página
+ * entera a 500. Cualquier valor fuera de la lista se ignora, como si el
+ * filtro no viniera.
+ */
+export const filtroEnum = (v: string | null | undefined, validos: readonly string[]): string | null =>
+  v && validos.includes(v) ? v : null;
 
 // ── KPIs del centro de comando ──────────────────────────────────────────────
 
@@ -55,6 +65,10 @@ export interface DemandaResumen {
   fuente: FuenteDemanda;
   estado: string;
   tipo: TipoProblema | null;
+  /** Quién lo resuelve (bacheo | sat | ingenieria): clasificado por el trigger
+   *  de la base. Opcional porque solo lo trae el listado (obtenerDemanda no lo
+   *  necesita y no se toca). */
+  destino?: string | null;
   descripcion: string | null;
   direccion: string | null;
   geocodConfianza: number | null;
@@ -77,15 +91,16 @@ const FILTROS_CALIDAD: Record<string, ReturnType<typeof sql>> = {
 
 export async function listarDemandas(
   sesion: Sesion,
-  filtros: { fuente?: string; estado?: string; q?: string; calidad?: string; mes?: string; limite?: number; pagina?: number },
+  filtros: { fuente?: string; estado?: string; destino?: string; q?: string; calidad?: string; mes?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: DemandaResumen[]; total: number }> {
   const verContacto = puedeVerContacto(sesion.rol_cimba);
   const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const condCalidad = (filtros.calidad && FILTROS_CALIDAD[filtros.calidad]) || sql``;
 
-  const fuente = filtro(filtros.fuente);
-  const estado = filtro(filtros.estado);
+  const fuente = filtroEnum(filtros.fuente, FUENTES_DEMANDA);
+  const estado = filtroEnum(filtros.estado, ESTADOS_DEMANDA);
+  const destino = filtroEnum(filtros.destino, ["bacheo", "sat", "ingenieria"]);
   const q = filtro(filtros.q);
   const mes = filtro(filtros.mes);
 
@@ -93,6 +108,7 @@ export async function listarDemandas(
     const cond = sql`
       where (${fuente}::text is null or d.fuente = (${fuente})::fuente_demanda)
         and (${estado}::text is null or d.estado = (${estado})::estado_demanda)
+        and (${destino}::text is null or d.destino = (${destino})::destino_resolucion)
         and (${q}::text is null
              or d.direccion_normalizada ilike '%' || ${q ?? ""} || '%'
              or d.descripcion ilike '%' || ${q ?? ""} || '%')
@@ -100,7 +116,7 @@ export async function listarDemandas(
         ${condCalidad}
     `;
     const filas = (await tx.execute(sql`
-      select d.id, d.fuente, d.estado, d.tipo, d.descripcion,
+      select d.id, d.fuente, d.estado, d.tipo, d.destino, d.descripcion,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.geocod_confianza, st_y(d.geom) as lat, st_x(d.geom) as lon,
              d.distrito_id, d.creado_en, d.metadata,
@@ -121,6 +137,7 @@ export async function listarDemandas(
         fuente: f.fuente as FuenteDemanda,
         estado: String(f.estado),
         tipo: (f.tipo as TipoProblema) ?? null,
+        destino: (f.destino as string) ?? null,
         descripcion: (f.descripcion as string) ?? null,
         direccion: (f.direccion as string) ?? null,
         geocodConfianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,
@@ -309,10 +326,12 @@ export async function resumenIncidentes(sesion: Sesion): Promise<ResumenIncident
   });
 }
 
-/** Composición de la bandeja por estado y por fuente, para la cabecera visual. */
+/** Composición de la bandeja por estado, por fuente y por destino, para la cabecera visual. */
 export interface ResumenDemandas {
   porEstado: Record<string, number>;
   porFuente: Array<{ fuente: string; n: number }>;
+  /** Quién lo resuelve: bacheo | sat | ingenieria (los chips "¿Quién lo resuelve?"). */
+  porDestino: Record<string, number>;
   total: number;
 }
 
@@ -324,13 +343,19 @@ export async function resumenDemandas(sesion: Sesion): Promise<ResumenDemandas> 
     const fuentes = (await tx.execute(sql`
       select fuente::text as fuente, count(*)::int as n from demandas group by fuente order by 2 desc
     `)) as unknown as Array<{ fuente: string; n: string | number }>;
+    const destinos = (await tx.execute(sql`
+      select destino::text as destino, count(*)::int as n from demandas
+      where destino is not null group by destino
+    `)) as unknown as Array<{ destino: string; n: string | number }>;
     const porEstado: Record<string, number> = {};
     let total = 0;
     for (const f of estados) {
       porEstado[f.estado] = Number(f.n);
       total += Number(f.n);
     }
-    return { porEstado, porFuente: fuentes.map((f) => ({ fuente: f.fuente, n: Number(f.n) })), total };
+    const porDestino: Record<string, number> = {};
+    for (const f of destinos) porDestino[f.destino] = Number(f.n);
+    return { porEstado, porFuente: fuentes.map((f) => ({ fuente: f.fuente, n: Number(f.n) })), porDestino, total };
   });
 }
 

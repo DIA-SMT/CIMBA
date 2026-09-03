@@ -15,6 +15,8 @@ const sesionSchema = z.object({
   nombre: z.string(),
   /** Solo cuando rol_cimba = 'empresa': a qué contratista pertenece. */
   id_empresa: z.coerce.number().optional(),
+  /** Clave temporal pendiente de cambio: el middleware lo encierra en /clave. */
+  ct: z.boolean().optional(),
 });
 export type Sesion = z.infer<typeof sesionSchema>;
 

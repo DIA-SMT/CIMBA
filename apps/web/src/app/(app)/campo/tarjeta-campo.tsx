@@ -7,7 +7,7 @@ import { finalizarIntervencion, iniciarIntervencion, subirFoto } from "@/lib/acc
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 
-interface Trabajo {
+export interface Trabajo {
   id: number;
   incidenteId: number;
   estado: string;

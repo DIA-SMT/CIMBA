@@ -34,6 +34,16 @@ export async function middleware(req: NextRequest) {
       const secreto = new TextEncoder().encode(process.env.CIMBA_JWT_SECRET ?? "");
       const { payload } = await jwtVerify(token, secreto, { issuer: "cimba" });
 
+      // Clave temporal sin cambiar: solo /clave (la página y sus server
+      // actions postean ahí mismo). Al cambiarla, la cookie se re-emite sin
+      // el flag y esto deja de aplicar.
+      if (payload.ct === true && !pathname.startsWith("/clave") && !pathname.startsWith("/api")) {
+        const url = req.nextUrl.clone();
+        url.pathname = "/clave";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+
       if (payload.rol_cimba === "empresa" && !PREFIJOS_EMPRESA.some((p) => pathname.startsWith(p))) {
         if (pathname.startsWith("/api")) {
           return NextResponse.json({ error: "sin permiso" }, { status: 403 });

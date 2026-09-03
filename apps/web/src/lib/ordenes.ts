@@ -1,6 +1,7 @@
 import { conRls, sql } from "@cimba/db";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
+import { filtroEnum } from "./consultas";
 import { parametrosDesdeJson, type ParametrosCapacidad } from "./capacidad";
 
 /**
@@ -75,6 +76,9 @@ export interface PendienteCircuito {
   score: number | null;
   /** Cuántos reclamos hay detrás de este bache (demandas vinculadas). */
   reclamos: number;
+  /** De dónde vienen esos reclamos (fuente_demanda, sin repetir): el Director
+   *  quiere ver al armar la orden si detrás hay vecinos, el Concejo o la SAT. */
+  fuentes: string[];
   superficieM2: number | null;
   detectadoEn: string;
   lat: number;
@@ -92,6 +96,10 @@ export async function pendientesEnCircuito(
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
              i.detectado_en, st_y(i.geom) as lat, st_x(i.geom) as lon,
              (select count(*) from demanda_incidente di where di.incidente_id = i.id)::int as reclamos,
+             coalesce((select array_agg(distinct d.fuente::text)
+                       from demanda_incidente di
+                       join demandas d on d.id = di.demanda_id
+                       where di.incidente_id = i.id), '{}') as fuentes,
              exists (
                select 1 from orden_items oi
                join ordenes_trabajo ot on ot.id = oi.orden_id
@@ -112,6 +120,7 @@ export async function pendientesEnCircuito(
       direccion: (f.direccion as string) ?? null,
       score: f.score_prioridad != null ? Number(f.score_prioridad) : null,
       reclamos: Number(f.reclamos ?? 0),
+      fuentes: (f.fuentes as string[]) ?? [],
       superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
       detectadoEn: String(f.detectado_en),
       lat: Number(f.lat),
@@ -389,6 +398,8 @@ export interface DemandaParaCerrar {
   demandaId: number;
   fuente: string;
   tipo: TipoProblema | null;
+  /** Quién lo resuelve (bacheo | sat | ingenieria): el trigger de la base lo clasifica. */
+  destino: string | null;
   direccion: string | null;
   creadoEn: string;
   incidenteId: number;
@@ -404,11 +415,23 @@ export interface DemandaParaCerrar {
  * Demandas vinculadas a un incidente YA reparado que todavía no se cerraron:
  * la reparación existe, falta responderle al vecino. Es la bandeja de cierre
  * de Atención Ciudadana.
+ *
+ * Los filtros son null-safe (mismo patrón que listarDemandas en consultas.ts):
+ * el "" de un <select> en "Todos" se vuelve null y no filtra nada.
  */
-export async function demandasParaCerrar(sesion: Sesion): Promise<DemandaParaCerrar[]> {
+export async function demandasParaCerrar(
+  sesion: Sesion,
+  filtros: { fuente?: string; tipo?: string; destino?: string } = {},
+): Promise<DemandaParaCerrar[]> {
+  // Contra lista cerrada: un valor inventado en la URL no puede reventar el
+  // cast de enum y tirar /cierres a 500 — se ignora y listo.
+  const { FUENTES_DEMANDA, TIPOS_PROBLEMA } = await import("@cimba/domain");
+  const fuente = filtroEnum(filtros.fuente, FUENTES_DEMANDA);
+  const tipo = filtroEnum(filtros.tipo, TIPOS_PROBLEMA);
+  const destino = filtroEnum(filtros.destino, ["bacheo", "sat", "ingenieria"]);
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
-      select d.id as demanda_id, d.fuente, d.tipo,
+      select d.id as demanda_id, d.fuente, d.tipo, d.destino,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, i.id as incidente_id, i.cerrado_en,
              st_y(i.geom) as lat, st_x(i.geom) as lon,
@@ -422,6 +445,9 @@ export async function demandasParaCerrar(sesion: Sesion): Promise<DemandaParaCer
       join incidentes i on i.id = di.incidente_id
       where d.estado in ('recibida','en_validacion','vinculada')
         and i.estado in ('reparado','verificado')
+        and (${fuente}::text is null or d.fuente = (${fuente})::fuente_demanda)
+        and (${tipo}::text is null or d.tipo = (${tipo})::tipo_problema)
+        and (${destino}::text is null or d.destino = (${destino})::destino_resolucion)
       order by i.cerrado_en desc nulls last
       limit 500
     `)) as unknown as Array<Record<string, unknown>>;
@@ -430,6 +456,7 @@ export async function demandasParaCerrar(sesion: Sesion): Promise<DemandaParaCer
       demandaId: Number(f.demanda_id),
       fuente: String(f.fuente),
       tipo: (f.tipo as TipoProblema) ?? null,
+      destino: (f.destino as string) ?? null,
       direccion: (f.direccion as string) ?? null,
       creadoEn: String(f.creado_en),
       incidenteId: Number(f.incidente_id),

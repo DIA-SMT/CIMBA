@@ -1,7 +1,7 @@
 import { leerSesion } from "@/lib/auth";
 import { listarIntervenciones } from "@/lib/consultas";
 import { TituloPagina } from "@/components/ui";
-import { TarjetaCampo } from "./tarjeta-campo";
+import { ListaCampo } from "./lista-campo";
 
 export const dynamic = "force-dynamic";
 
@@ -26,23 +26,20 @@ export default async function PaginaCampo() {
           No hay intervenciones asignadas ni en curso.
         </p>
       ) : (
-        <div className="space-y-4">
-          {trabajos.map((iv) => (
-            <TarjetaCampo
-              key={iv.id}
-              intervencion={{
-                id: iv.id,
-                incidenteId: iv.incidenteId,
-                estado: iv.estado,
-                direccion: iv.direccion,
-                lat: iv.lat,
-                lon: iv.lon,
-                cuadrilla: iv.cuadrilla,
-                fotos: iv.fotos,
-              }}
-            />
-          ))}
-        </div>
+        // La isla filtra en vivo por dirección sobre lo ya cargado: encontrar
+        // "Baltazar Aguirre 2521" es tipear, no recorrer tarjetas a mano.
+        <ListaCampo
+          trabajos={trabajos.map((iv) => ({
+            id: iv.id,
+            incidenteId: iv.incidenteId,
+            estado: iv.estado,
+            direccion: iv.direccion,
+            lat: iv.lat,
+            lon: iv.lon,
+            cuadrilla: iv.cuadrilla,
+            fotos: iv.fotos,
+          }))}
+        />
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
+import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AccionesOrden } from "./acciones-orden";
 import {
@@ -38,8 +39,20 @@ const CSS_IMPRESION = `
   .hoja-impresion table { width: 100%; border-collapse: collapse; }
   .hoja-impresion th, .hoja-impresion td { border: 1px solid #555; padding: 5px 7px; font-size: 11px; text-align: left; }
   .hoja-impresion th { background: #eee; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
+  /* Evidencia fotográfica: una foto jamás se corta entre dos páginas. */
+  .hoja-impresion figure, .hoja-impresion img { break-inside: avoid; page-break-inside: avoid; }
 }
 `;
+
+const ETIQUETA_MOMENTO: Record<string, string> = { antes: "Antes", durante: "Durante", despues: "Después" };
+/** Orden funcional para leer la evidencia de cada item: antes → durante → después. */
+const ORDEN_MOMENTO: Record<string, number> = { antes: 0, durante: 1, despues: 2 };
+
+/** Fecha ordenable con los sin-fecha al final (reportes viejos sin timestamp). */
+function tiempoReporte(iso: string | null): number {
+  const t = iso != null ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
+}
 
 export default async function PaginaOrden({ params }: { params: Promise<{ id: string }> }) {
   const sesion = (await leerSesion())!;
@@ -52,6 +65,26 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   const noEncontrados = o.itemsDetalle.filter((i) => i.estado === "no_encontrado").length;
   const pct = o.items > 0 ? Math.round((100 * o.hechos) / o.items) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
+
+  // ── Evidencia para papel ────────────────────────────────────────────────
+  // "Que aparezcan las fotos también al imprimir": los items HECHOS con foto,
+  // cronológicos por reportado_en. El número de item es el de la tabla de
+  // arriba (posición en la orden), para que el pie de cada foto se pueda
+  // cruzar a mano con la planilla.
+  const posicionItem = new Map(o.itemsDetalle.map((it, i) => [it.id, i + 1]));
+  const evidencia = o.itemsDetalle
+    .filter((it) => it.estado === "hecho")
+    .map((it) => ({
+      item: it,
+      fotos: it.fotos
+        .flatMap((f) => {
+          const url = urlFoto(f);
+          return url ? [{ url, momento: f.momento }] : [];
+        })
+        .sort((a, b) => (ORDEN_MOMENTO[a.momento] ?? 9) - (ORDEN_MOMENTO[b.momento] ?? 9)),
+    }))
+    .filter((e) => e.fotos.length > 0)
+    .sort((a, b) => tiempoReporte(a.item.reportadoEn) - tiempoReporte(b.item.reportadoEn));
 
   return (
     <div className="mx-auto max-w-6xl p-6">
@@ -258,6 +291,66 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
           esta planilla a mano y la carga al volver.
         </p>
 
+        {/* Evidencia fotográfica: solo si hay hechos con fotos. En reportes
+            parciales convive con los pendientes, que arriba siguen imprimiendo
+            sus celdas vacías para anotar a mano. */}
+        {evidencia.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <p style={{ fontSize: 13, fontWeight: 800, margin: 0, textTransform: "uppercase", borderBottom: "1px solid #555", paddingBottom: 3 }}>
+              Evidencia fotográfica
+            </p>
+            <p style={{ fontSize: 10, margin: "3px 0 0" }}>
+              Fotos cargadas por {o.empresaNombre} al reportar cada trabajo, en orden cronológico.
+            </p>
+            {evidencia.map(({ item, fotos }) => {
+              const pos = posicionItem.get(item.id);
+              const medidas =
+                item.anchoM != null && item.largoM != null && item.espesorCm != null
+                  ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
+                  : null;
+              return (
+                <div key={item.id} style={{ marginTop: 12 }}>
+                  <p style={{ fontSize: 11, margin: "0 0 4px", breakInside: "avoid" }}>
+                    <b>
+                      Item {pos} — {item.direccion ?? "Sin dirección"}
+                    </b>
+                    {medidas && <> · {medidas}</>}
+                    {item.superficieM2 != null && (
+                      <>
+                        {" "}
+                        · <b>{numero(item.superficieM2)} m²</b>
+                      </>
+                    )}
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4mm" }}>
+                    {fotos.map((f, j) => (
+                      <figure key={j} style={{ margin: 0, breakInside: "avoid", pageBreakInside: "avoid" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- imagen de Storage, sin optimizador */}
+                        <img
+                          src={f.url}
+                          alt={`Foto ${ETIQUETA_MOMENTO[f.momento] ?? f.momento} — item ${pos}`}
+                          /* Excepción deliberada a la regla de lazy: esta sección
+                             vive en display:none y una imagen lazy ahí adentro
+                             NUNCA se descarga — al imprimir salían recuadros en
+                             blanco. Eager las trae de entrada; los mismos
+                             archivos ya se pidieron para los thumbnails, así
+                             que en la práctica es caché, no doble descarga. */
+                          loading="eager"
+                          style={{ width: "8cm", maxWidth: "100%", height: "6cm", objectFit: "cover", border: "1px solid #555" }}
+                        />
+                        <figcaption style={{ fontSize: 9, marginTop: 2 }}>
+                          {(ETIQUETA_MOMENTO[f.momento] ?? f.momento).toUpperCase()} — {o.numero} · item {pos} ·{" "}
+                          {fechaCorta(item.reportadoEn)}
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 40, marginTop: 36 }}>
           <div style={{ flex: 1, borderTop: "1px solid #000", paddingTop: 4, fontSize: 11 }}>
             Entregó — Dirección de Bacheo
@@ -280,6 +373,20 @@ function FilaItem({ item }: { item: ItemOrden }) {
     item.anchoM != null && item.largoM != null && item.espesorCm != null
       ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
       : null;
+  // Todas las fotos del item, ya serializadas para el visor (isla cliente):
+  // un click en cualquier thumbnail abre la tanda completa, sin pestañas.
+  const fotosVisor: FotoVisor[] = item.fotos.flatMap((f) => {
+    const url = urlFoto(f);
+    if (!url) return [];
+    const momento = ETIQUETA_MOMENTO[f.momento] ?? f.momento;
+    return [
+      {
+        url,
+        alt: `Foto ${momento}`,
+        etiqueta: `${momento.toUpperCase()} · ${item.direccion ?? `Item #${item.id}`}`,
+      },
+    ];
+  });
   return (
     <tr className="border-b border-borde/60 transition hover:bg-panel-2">
       <td className="max-w-56 px-3 py-2.5">
@@ -316,26 +423,11 @@ function FilaItem({ item }: { item: ItemOrden }) {
       </td>
       <td className="num px-3 py-2.5 text-xs text-texto-2">{fechaCorta(item.reportadoEn)}</td>
       <td className="px-3 py-2.5">
-        <div className="flex gap-1.5">
-          {item.fotos.map((f, i) => {
-            const url = urlFoto(f);
-            if (!url) return null;
-            return (
-              <a
-                key={i}
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                title={`Foto ${f.momento} — abrir en tamaño completo`}
-                className="block overflow-hidden rounded border border-borde transition hover:border-celeste"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element -- imagen de Storage, sin optimizador */}
-                <img src={url} alt={`Foto ${f.momento}`} loading="lazy" className="h-20 w-20 object-cover" />
-              </a>
-            );
-          })}
-          {item.fotos.length === 0 && <span className="text-xs text-texto-3">—</span>}
-        </div>
+        {fotosVisor.length > 0 ? (
+          <GaleriaFotos fotos={fotosVisor} miniAlto={80} miniAncho={80} className="flex gap-1.5" />
+        ) : (
+          <span className="text-xs text-texto-3">—</span>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right">
         {item.incidenteId != null && (

@@ -5,6 +5,7 @@ import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
+import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { resolverVistaPortal } from "../../vista";
 import { TarjetaItem } from "./tarjeta-item";
 
@@ -175,10 +176,25 @@ export default async function PaginaOrdenEmpresa({
   );
 }
 
+const ETIQUETA_MOMENTO: Record<string, string> = { antes: "Antes", durante: "Durante", despues: "Después" };
+// La misma paleta funcional del relato (incidentes): pedido / en curso / hecho.
+const COLOR_MOMENTO: Record<string, string> = { antes: "#3987e5", durante: "#d95926", despues: "#199e70" };
+
 function ItemHecho({ item }: { item: ItemOrden }) {
-  const fotos = item.fotos
-    .map((f) => ({ momento: f.momento, url: urlFoto(f) }))
-    .filter((f): f is { momento: string; url: string } => f.url != null);
+  // Serializado para el visor (isla cliente): URL resuelta + etiqueta legible.
+  const fotos: FotoVisor[] = item.fotos.flatMap((f) => {
+    const url = urlFoto(f);
+    if (!url) return [];
+    const momento = ETIQUETA_MOMENTO[f.momento] ?? f.momento;
+    return [
+      {
+        url,
+        alt: `Foto ${momento}`,
+        etiqueta: item.reportadoEn ? `${momento.toUpperCase()} · ${fechaCorta(item.reportadoEn)}` : momento.toUpperCase(),
+        insignia: { texto: momento, color: COLOR_MOMENTO[f.momento] ?? "#ffffff" },
+      },
+    ];
+  });
 
   return (
     <details className="rounded-xl border border-borde bg-panel">
@@ -198,21 +214,9 @@ function ItemHecho({ item }: { item: ItemOrden }) {
         )}
         {item.observaciones && <p className="mt-1 text-xs text-texto-2">{item.observaciones}</p>}
         {fotos.length > 0 && (
-          <div className="mt-2 flex gap-2 overflow-x-auto">
-            {fotos.map((f, i) => (
-              <figure key={i} className="shrink-0">
-                <img
-                  src={f.url}
-                  alt={`Foto ${f.momento}`}
-                  loading="lazy"
-                  className="h-24 w-32 rounded-lg border border-borde-2 object-cover"
-                />
-                <figcaption className="mt-0.5 text-center text-[10px] text-texto-3 uppercase">
-                  {f.momento === "despues" ? "después" : f.momento}
-                </figcaption>
-              </figure>
-            ))}
-          </div>
+          /* El visor a pantalla completa: targets grandes para el capataz en
+             el celular, sin abrir pestañas. */
+          <GaleriaFotos fotos={fotos} miniAlto={96} miniAncho={128} className="mt-2 flex gap-2 overflow-x-auto pb-1" />
         )}
       </div>
     </details>
