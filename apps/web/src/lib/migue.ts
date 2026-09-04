@@ -188,6 +188,21 @@ export const HERRAMIENTAS_MIGUE = [
   {
     type: "function",
     function: {
+      name: "resumen_barrio",
+      description:
+        "Todo lo de UN barrio (los 327 están en la base): demandas abiertas, incidentes pendientes, reparaciones e intervenciones con m². Usala para '¿qué hicimos en Villa Alem?', '¿cómo está el barrio Ciudadela?'. Busca por nombre aproximado.",
+      parameters: {
+        type: "object",
+        properties: {
+          barrio: { type: "string", description: "Nombre (o parte) del barrio, ej: 'Villa Alem'" },
+        },
+        required: ["barrio"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "accionar_mapa",
       description:
         "Ejecuta una acción VISUAL en el mapa comando: marca con anillo los puntos que coinciden con la frase, vuela a la zona y ajusta las capas — lo mismo que el buscador inteligente del mapa. Usala cuando el usuario pida VER algo ('mostrame', 'marcá', 'llevame a', 'dónde están'). Si el usuario no está en el mapa, la app lo lleva sola.",
@@ -468,6 +483,54 @@ export async function ejecutarHerramientaMigue(
       };
     }
 
+    case "resumen_barrio": {
+      const nombre = typeof args.barrio === "string" ? args.barrio.trim().slice(0, 60) : "";
+      if (nombre.length < 3) return { error: "decime el nombre del barrio" };
+      const candidatos = await ejecutar(sesion, sql`
+        select id, nombre from barrios
+        where unaccent(lower(nombre)) like '%' || unaccent(lower(${nombre})) || '%'
+        order by length(nombre) limit 5
+      `).catch(async () =>
+        // sin extensión unaccent: caer a like plano
+        ejecutar(sesion, sql`
+          select id, nombre from barrios
+          where lower(nombre) like '%' || lower(${nombre}) || '%'
+          order by length(nombre) limit 5
+        `),
+      );
+      const barrio = candidatos[0];
+      if (!barrio) return { error: `no encontré ningún barrio parecido a "${nombre}" (hay 327 cargados)` };
+      const [resumen, ultimas] = await Promise.all([
+        ejecutar(sesion, sql`
+          select
+            (select count(*)::int from demandas d where d.barrio_id = ${barrio.id}
+               and d.estado in ('recibida','en_validacion')) as pedidos_abiertos,
+            (select count(*)::int from incidentes i where i.barrio_id = ${barrio.id}
+               and i.estado in ('detectado','priorizado','programado','en_ejecucion')) as problemas_pendientes,
+            (select count(*)::int from incidentes i where i.barrio_id = ${barrio.id}
+               and i.estado in ('reparado','verificado')) as reparados,
+            (select round(coalesce(sum(v.superficie_m2), 0))::int from intervenciones v
+               join incidentes i on i.id = v.incidente_id
+               where i.barrio_id = ${barrio.id} and v.estado = 'finalizada') as m2_ejecutados
+        `),
+        ejecutar(sesion, sql`
+          select i.id, i.tipo, i.estado, i.direccion, i.cerrado_en::date as cerrado,
+                 v.tipo_intervencion, v.metadata->>'contratista' as contratista
+          from incidentes i
+          left join intervenciones v on v.incidente_id = i.id and v.estado = 'finalizada'
+          where i.barrio_id = ${barrio.id}
+          order by coalesce(i.cerrado_en, i.detectado_en) desc
+          limit 8
+        `),
+      ]);
+      return {
+        barrio: barrio.nombre,
+        otros_candidatos: candidatos.slice(1).map((c) => c.nombre),
+        ...resumen[0],
+        ultimos_movimientos: ultimas,
+      };
+    }
+
     case "accionar_mapa": {
       // La ejecución real ocurre en el navegador (el mapa marca y vuela);
       // acá solo se confirma para que Migue redacte su respuesta.
@@ -505,6 +568,9 @@ Glosario CIMBA (explicalo con tus palabras cuando te pregunten):
 - CAPAS VIALES NUEVAS del mapa: jerarquía vial (avenidas primarias y secundarias), pavimento/ripio/cordón cuneta por cuadra, sectores de licitación (la zonificación real: 11 sectores de paños de hormigón con su empresa + 4 cuadrantes con doble adjudicataria hormigón/asfalto y n° de licitación) y recorridos de colectivos (sensibilidad por transporte).
 - VISTA ESPEJO: admin y planificación pueden abrir el portal de una empresa tal como lo ve la empresa (/empresa?empresa=N o el link en /ordenes/empresas), para verificar qué le llegó.
 - TEMA: la interfaz tiene tema claro (default) y oscuro; se alterna con el botón de luna/sol del encabezado y el mapa acompaña.
+- TIPO DE INTERVENCIÓN: cada trabajo declara CÓMO se resolvió — bacheo, cambio de paño de hormigón, carpeta (repavimentación) o enripiado. La empresa lo elige al reportar y Bacheo lo puede corregir. Es distinto del DESTINO (quién debe resolver): destino se clasifica al pedir, tipo se declara al resolver.
+- PROPUESTOS: la cuadrilla puede proponer baches que encontró en la calle y no estaban en la orden; NO cuentan hasta que Bacheo los valida en /ordenes. También puede marcar "ya estaba resuelto" (con foto): cierra el incidente sin sumar m² de la empresa.
+- BARRIOS: los 327 barrios están en la base; usá resumen_barrio para responder por barrio ("¿qué hicimos en Villa Alem?").
 
 Sos también EL GUÍA EXPERTO DEL MAPA COMANDO (/mapa). Estas son todas sus funciones — cuando pregunten "¿para qué sirve X?" o "¿cómo hago Y en el mapa?", explicalas con esto, corto y práctico:
 ${guiaParaPrompt()}

@@ -8,7 +8,11 @@ import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
+import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
+import { ResolverPropuesto } from "./resolver-propuesto";
+import { SelectTipoIntervencion } from "./select-tipo-intervencion";
+import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
 import {
   COLOR_ESTADO_ITEM,
   COLOR_ESTADO_ORDEN,
@@ -54,6 +58,20 @@ function tiempoReporte(iso: string | null): number {
   return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
 }
 
+/** Quién y cuándo propuso el item (metadata.propuesto, lo escribe proponerItem). */
+function datosPropuesto(metadata: Record<string, unknown>): { por: string | null; en: string | null } {
+  const p = metadata.propuesto as { por?: unknown; en?: unknown } | undefined;
+  return {
+    por: typeof p?.por === "string" ? p.por : null,
+    en: typeof p?.en === "string" ? p.en : null,
+  };
+}
+
+/** Ruta en Storage de la foto que mandó la cuadrilla al proponer (si mandó). */
+function fotoPropuesta(metadata: Record<string, unknown>): string | null {
+  return typeof metadata.foto_propuesta === "string" ? metadata.foto_propuesta : null;
+}
+
 export default async function PaginaOrden({ params }: { params: Promise<{ id: string }> }) {
   const sesion = (await leerSesion())!;
   const { id } = await params;
@@ -62,8 +80,15 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   if (!o) notFound();
 
   const puedePlanificar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "planificacion";
+  // Supervisión también valida propuestos (resolverPropuesto lo permite); la
+  // corrección del tipo de intervención queda para admin/planificación.
+  const puedeSupervisar = puedePlanificar || sesion.rol_cimba === "supervision";
   const noEncontrados = o.itemsDetalle.filter((i) => i.estado === "no_encontrado").length;
-  const pct = o.items > 0 ? Math.round((100 * o.hechos) / o.items) : 0;
+  const propuestos = o.itemsDetalle.filter((i) => i.estado === "propuesto");
+  // El plan real de la orden: lo propuesto sin validar (y lo rechazado) no es
+  // trabajo encargado — ni infla el % de avance ni sale en la hoja impresa.
+  const itemsPapel = o.itemsDetalle.filter((i) => i.estado !== "propuesto" && i.estado !== "rechazado");
+  const pct = itemsPapel.length > 0 ? Math.round((100 * o.hechos) / itemsPapel.length) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
 
   // ── Evidencia para papel ────────────────────────────────────────────────
@@ -71,7 +96,8 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   // cronológicos por reportado_en. El número de item es el de la tabla de
   // arriba (posición en la orden), para que el pie de cada foto se pueda
   // cruzar a mano con la planilla.
-  const posicionItem = new Map(o.itemsDetalle.map((it, i) => [it.id, i + 1]));
+  // Posición sobre la hoja impresa (itemsPapel), que es donde se cruza a mano.
+  const posicionItem = new Map(itemsPapel.map((it, i) => [it.id, i + 1]));
   const evidencia = o.itemsDetalle
     .filter((it) => it.estado === "hecho")
     .map((it) => ({
@@ -121,6 +147,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             <h1 className="num text-3xl font-extrabold tracking-tight">{o.numero}</h1>
             <p className="mt-1 text-sm text-texto-2">
               {o.titulo ?? "Orden de trabajo"} · <b>{o.empresaNombre}</b>
+              {o.contratoDecreto && <> · Contrato/Decreto {o.contratoDecreto}</>}
             </p>
             <p className="num mt-1 text-xs text-texto-3">
               Creada {fechaCorta(o.creadoEn)}
@@ -144,7 +171,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             <div>
               <p className="num text-2xl font-extrabold">
                 <span style={{ color: "#199e70" }}>{numero(o.hechos)}</span>
-                <span className="text-texto-3"> / {numero(o.items)}</span>
+                <span className="text-texto-3"> / {numero(itemsPapel.length)}</span>
               </p>
               <p className="text-[11px] text-texto-3">items hechos</p>
             </div>
@@ -169,6 +196,64 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
           </div>
         </Panel>
 
+        {/* Bandeja de validación: lo que la cuadrilla encontró en la calle */}
+        {propuestos.length > 0 && (
+          <>
+            <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
+              Propuestos por la empresa ({numero(propuestos.length)}){" "}
+              <span className="font-normal text-texto-3 normal-case">
+                — baches que la cuadrilla encontró y no estaban en la orden; validado, pasa a pendiente
+              </span>
+            </h2>
+            <div className="mb-6 space-y-3">
+              {propuestos.map((it) => {
+                const prop = datosPropuesto(it.metadata);
+                const ruta = fotoPropuesta(it.metadata);
+                const urlPropuesta = ruta ? urlFoto({ storagePath: ruta, urlExterna: null }) : null;
+                const fotosPropuesto: FotoVisor[] = urlPropuesta
+                  ? [
+                      {
+                        url: urlPropuesta,
+                        alt: "Foto del bache propuesto",
+                        etiqueta: `PROPUESTO · ${it.direccion ?? `Item #${it.id}`}`,
+                      },
+                    ]
+                  : [];
+                return (
+                  <Panel key={it.id} className="border-amarillo/40 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ChipMiniMapa lat={it.lat} lon={it.lon} etiqueta={it.direccion ?? `Item #${it.id}`} />
+                          <span className="font-semibold">{it.direccion ?? "Sin dirección"}</span>
+                          <span className="rounded-md border border-borde-2 px-2 py-0.5 text-[11px] font-semibold text-texto-2">
+                            {ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-texto-3">
+                          Propuesto{prop.por && <> por <b className="text-texto-2">{prop.por}</b></>}
+                          {prop.en && <> el {fechaCorta(prop.en)}</>}
+                        </p>
+                        {it.observaciones && (
+                          <p className="mt-1 text-sm text-texto-2">{it.observaciones}</p>
+                        )}
+                        {puedeSupervisar && (
+                          <div className="mt-3">
+                            <ResolverPropuesto itemId={it.id} />
+                          </div>
+                        )}
+                      </div>
+                      {fotosPropuesto.length > 0 && (
+                        <GaleriaFotos fotos={fotosPropuesto} miniAlto={96} miniAncho={128} className="flex shrink-0 gap-2" />
+                      )}
+                    </div>
+                  </Panel>
+                );
+              })}
+            </div>
+          </>
+        )}
+
         {/* Items */}
         <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
           Los items{" "}
@@ -184,6 +269,9 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 <th className="px-3 py-3">Tipo</th>
                 <th className="num px-3 py-3 text-right" title="Reclamos detrás de este punto">Reclamos</th>
                 <th className="px-3 py-3">Estado</th>
+                <th className="px-3 py-3" title="Cómo se resolvió realmente (lo declara la empresa al reportar)">
+                  Intervención
+                </th>
                 <th className="px-3 py-3" title="Ancho × largo × espesor reportados">Medidas</th>
                 <th className="num px-3 py-3 text-right">m²</th>
                 <th className="px-3 py-3">Reportado</th>
@@ -192,9 +280,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               </tr>
             </thead>
             <tbody>
-              {o.itemsDetalle.map((it) => (
-                <FilaItem key={it.id} item={it} />
-              ))}
+              {/* Los propuestos viven arriba, en la bandeja con sus botones:
+                  acá abajo solo el plan y sus desenlaces (rechazados incluidos). */}
+              {o.itemsDetalle
+                .filter((it) => it.estado !== "propuesto")
+                .map((it) => (
+                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} />
+                ))}
             </tbody>
           </table>
         </Panel>
@@ -235,6 +327,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 <b>Vence:</b> {fechaCorta(o.venceEn)}
               </td>
             </tr>
+            {o.contratoDecreto && (
+              <tr>
+                <td colSpan={4}>
+                  <b>Contrato / Decreto:</b> {o.contratoDecreto}
+                </td>
+              </tr>
+            )}
             {o.titulo && (
               <tr>
                 <td colSpan={4}>
@@ -258,6 +357,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <th style={{ width: 24 }}>#</th>
               <th>Dirección</th>
               <th style={{ width: 60 }}>Tipo</th>
+              <th style={{ width: 80 }} title="Cómo se resolvió realmente">Intervención</th>
               <th style={{ width: 50 }}>Reclamos</th>
               <th style={{ width: 62 }}>Ancho (m)</th>
               <th style={{ width: 62 }}>Largo (m)</th>
@@ -266,14 +366,23 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             </tr>
           </thead>
           <tbody>
-            {o.itemsDetalle.map((it, i) => (
+            {/* Solo el plan real: un propuesto sin validar (o rechazado) no es
+                trabajo encargado y no puede salir en la planilla que se firma. */}
+            {itemsPapel.map((it, i) => (
               <tr key={it.id}>
                 <td>{i + 1}</td>
                 <td>
                   {it.direccion ?? (it.incidenteId != null ? `Incidente #${it.incidenteId}` : "—")}
                   {it.estado === "no_encontrado" && <> — NO ENCONTRADO</>}
+                  {it.estado === "ya_resuelto" && <> — YA ESTABA RESUELTO</>}
                 </td>
                 <td>{ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}</td>
+                {/* Lo pendiente sale en blanco: se completa al reportar */}
+                <td>
+                  {it.tipoIntervencion != null
+                    ? (ETIQUETA_TIPO_INTERVENCION[it.tipoIntervencion as TipoIntervencion] ?? it.tipoIntervencion)
+                    : " "}
+                </td>
                 <td style={{ textAlign: "right" }}>{it.reclamos}</td>
                 {/* Lo pendiente se imprime con las celdas vacías: las medidas
                     se anotan a mano en la calle y se cargan después */}
@@ -287,7 +396,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
         </table>
 
         <p style={{ fontSize: 10, marginTop: 8 }}>
-          {numero(o.items)} items · la empresa carga cada trabajo con medidas y foto en su portal, o completa
+          {numero(itemsPapel.length)} items · la empresa carga cada trabajo con medidas y foto en su portal, o completa
           esta planilla a mano y la carga al volver.
         </p>
 
@@ -368,7 +477,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   );
 }
 
-function FilaItem({ item }: { item: ItemOrden }) {
+function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirTipo: boolean }) {
   const medidas =
     item.anchoM != null && item.largoM != null && item.espesorCm != null
       ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
@@ -416,6 +525,24 @@ function FilaItem({ item }: { item: ItemOrden }) {
         >
           {ETIQUETA_ESTADO_ITEM[item.estado]}
         </span>
+      </td>
+      <td className="px-3 py-2.5">
+        {item.tipoIntervencion != null && item.intervencionId != null ? (
+          puedeCorregirTipo ? (
+            /* "Capaz que empieza como bacheo y al final se ha hecho cambio de
+               paño": el Director lo corrige acá mismo, sin salir de la orden. */
+            <SelectTipoIntervencion
+              intervencionId={item.intervencionId}
+              tipo={item.tipoIntervencion as TipoIntervencion}
+            />
+          ) : (
+            <span className="text-xs whitespace-nowrap text-texto-2">
+              {ETIQUETA_TIPO_INTERVENCION[item.tipoIntervencion as TipoIntervencion] ?? item.tipoIntervencion}
+            </span>
+          )
+        ) : (
+          <span className="text-xs text-texto-3">—</span>
+        )}
       </td>
       <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">{medidas ?? "—"}</td>
       <td className="num px-3 py-2.5 text-right" style={{ color: item.superficieM2 != null ? "#199e70" : "#5c6b84" }}>

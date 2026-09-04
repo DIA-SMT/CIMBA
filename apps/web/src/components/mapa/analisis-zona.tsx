@@ -1,14 +1,21 @@
 "use client";
 
-import { GitCompareArrows, GripVertical, Radar, X } from "lucide-react";
+import { Circle, GitCompareArrows, GripVertical, Hexagon, Radar, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import type { usePanelArrastrable } from "@/lib/arrastrable";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
-import { distanciaM } from "./geo-cliente";
+import { aMetros, distanciaM } from "./geo-cliente";
 
 type FC = FeatureCollection<Point, Record<string, unknown>>;
+
+/** La zona que se está analizando: el círculo clásico o el polígono a mano
+ *  ("analizo estas 8 manzanas"). El polígono vive como lista de vértices
+ *  [lon, lat] y recién mide cuando está cerrado. */
+export type ZonaActiva =
+  | { forma: "circulo"; centro: { lon: number; lat: number }; radio: number }
+  | { forma: "poligono"; vertices: Array<[number, number]>; cerrado: boolean };
 
 export interface StatsZona {
   demandas: number;
@@ -24,18 +31,18 @@ export interface StatsZona {
   hectareas: number;
 }
 
-/** Estadísticas de un círculo, puras: se usan para la zona activa y la comparación A/B. */
-export function statsDeZona(
-  centro: { lon: number; lat: number },
-  radio: number,
+/** Núcleo compartido círculo/polígono: solo cambia el predicado "dentro". */
+function statsConFiltro(
+  dentro: (lon: number, lat: number) => boolean,
+  hectareas: number,
   demandas: FC,
   incidentes: FC,
 ): StatsZona {
-  const dentro = <T extends Feature<Point, Record<string, unknown>>>(f: T) =>
-    distanciaM(f.geometry.coordinates[0] ?? 0, f.geometry.coordinates[1] ?? 0, centro.lon, centro.lat) <= radio;
+  const adentro = <T extends Feature<Point, Record<string, unknown>>>(f: T) =>
+    dentro(f.geometry.coordinates[0] ?? 0, f.geometry.coordinates[1] ?? 0);
 
-  const d = demandas.features.filter(dentro);
-  const i = incidentes.features.filter(dentro);
+  const d = demandas.features.filter(adentro);
+  const i = incidentes.features.filter(adentro);
 
   const cuenta = (fs: typeof d, clave: string) => {
     const m = new Map<string, number>();
@@ -64,20 +71,77 @@ export function statsDeZona(
     resueltos: i.filter((f) => f.properties.macro === "resuelto").length,
     m2: Math.round(m2),
     topCalles: [...porDireccion.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
-    hectareas: (Math.PI * radio * radio) / 10000,
+    hectareas,
   };
 }
 
+/** Estadísticas de un círculo, puras: se usan para la zona activa y la comparación A/B. */
+export function statsDeZona(
+  centro: { lon: number; lat: number },
+  radio: number,
+  demandas: FC,
+  incidentes: FC,
+): StatsZona {
+  return statsConFiltro(
+    (lon, lat) => distanciaM(lon, lat, centro.lon, centro.lat) <= radio,
+    (Math.PI * radio * radio) / 10000,
+    demandas,
+    incidentes,
+  );
+}
+
 /**
- * Analizador de zona: estadísticas instantáneas de un radio elegido con un
- * clic, calculadas en el navegador sobre los datos ya cargados. Con "Fijar
- * como Zona A" se congela el círculo actual y el siguiente se compara contra
- * él, con densidades por hectárea para que radios distintos sean comparables.
+ * Punto en polígono por ray casting, directo sobre lon/lat: a escala de una
+ * ciudad la proyección no cambia de qué lado de una arista cae un punto.
+ */
+export function puntoEnPoligono(lon: number, lat: number, vertices: Array<[number, number]>): boolean {
+  let dentro = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const a = vertices[i];
+    const b = vertices[j];
+    if (!a || !b) continue;
+    const [xi, yi] = a;
+    const [xj, yj] = b;
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) dentro = !dentro;
+  }
+  return dentro;
+}
+
+/** Superficie del polígono en hectáreas (shoelace sobre la proyección local en metros). */
+export function hectareasDePoligono(vertices: Array<[number, number]>): number {
+  if (vertices.length < 3) return 0;
+  const pts = vertices.map(([lon, lat]) => aMetros(lon, lat));
+  let area2 = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i];
+    const b = pts[j];
+    if (!a || !b) continue;
+    area2 += b[0] * a[1] - a[0] * b[1];
+  }
+  return Math.abs(area2 / 2) / 10000;
+}
+
+/** Estadísticas de un polígono cerrado (point-in-polygon en vez de distancia al centro). */
+export function statsDePoligono(vertices: Array<[number, number]>, demandas: FC, incidentes: FC): StatsZona {
+  return statsConFiltro(
+    (lon, lat) => puntoEnPoligono(lon, lat, vertices),
+    hectareasDePoligono(vertices),
+    demandas,
+    incidentes,
+  );
+}
+
+/**
+ * Analizador de zona: estadísticas instantáneas calculadas en el navegador
+ * sobre los datos ya cargados, para un círculo dibujado con un clic o un
+ * polígono a mano ("analizo estas 8 manzanas"). Con "Fijar como Zona A" se
+ * congela el círculo actual y el siguiente se compara contra él, con
+ * densidades por hectárea para que radios distintos sean comparables.
  */
 export function AnalisisZona({
-  centro,
-  radio,
+  zona,
   setRadio,
+  alCambiarForma,
   demandas,
   incidentes,
   alCerrar,
@@ -86,9 +150,9 @@ export function AnalisisZona({
   alQuitarA,
   arr,
 }: {
-  centro: { lon: number; lat: number };
-  radio: number;
+  zona: ZonaActiva;
   setRadio: (r: number) => void;
+  alCambiarForma: (forma: "circulo" | "poligono") => void;
   demandas: FC;
   incidentes: FC;
   alCerrar: () => void;
@@ -97,11 +161,28 @@ export function AnalisisZona({
   alQuitarA?: () => void;
   arr: ReturnType<typeof usePanelArrastrable>;
 }) {
-  const stats = useMemo(() => statsDeZona(centro, radio, demandas, incidentes), [centro, radio, demandas, incidentes]);
+  const esCirculo = zona.forma === "circulo";
+  const poligonoListo = zona.forma === "poligono" && zona.cerrado && zona.vertices.length >= 3;
+
+  const stats = useMemo(() => {
+    if (zona.forma === "circulo") return statsDeZona(zona.centro, zona.radio, demandas, incidentes);
+    if (zona.cerrado && zona.vertices.length >= 3) return statsDePoligono(zona.vertices, demandas, incidentes);
+    return null; // polígono a medio dibujar: todavía no hay nada que medir
+  }, [zona, demandas, incidentes]);
+
   const statsA = useMemo(
     () => (zonaA ? statsDeZona(zonaA.centro, zonaA.radio, demandas, incidentes) : null),
     [zonaA, demandas, incidentes],
   );
+
+  // Street View necesita UN punto: el centro del círculo o el centroide simple
+  // de los vértices (alcanza para caer parado en la zona).
+  const puntoVista = useMemo(() => {
+    if (zona.forma === "circulo") return zona.centro;
+    if (zona.vertices.length === 0) return null;
+    const s = zona.vertices.reduce<[number, number]>((acc, [ln, la]) => [acc[0] + ln, acc[1] + la], [0, 0]);
+    return { lon: s[0] / zona.vertices.length, lat: s[1] / zona.vertices.length };
+  }, [zona]);
 
   return (
     <aside className="panel-vidrio absolute top-28 right-3 bottom-6 z-20 flex w-80 flex-col rounded-xl" style={arr.estilo}>
@@ -120,30 +201,77 @@ export function AnalisisZona({
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-[13px]">
-        <div>
-          <div className="mb-1 flex items-baseline justify-between">
-            <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
-              Radio {statsA ? "de B" : ""}
-            </span>
-            <span className="num text-xs font-bold text-amarillo">{numero(radio)} m</span>
+        {/* Forma de la zona: círculo (arrastre) o polígono (clic a clic).
+            La comparación A/B quedó pensada para círculos: mientras hay una
+            Zona A fijada, el toggle se esconde para no mezclar geometrías. */}
+        {!statsA && (
+          <div className="flex items-center gap-1 rounded-lg border border-borde bg-panel-2/60 p-1">
+            {(
+              [
+                ["circulo", "Círculo", <Circle key="c" size={12} />],
+                ["poligono", "Polígono", <Hexagon key="p" size={12} />],
+              ] as const
+            ).map(([forma, etiqueta, icono]) => (
+              <button
+                key={forma}
+                onClick={() => alCambiarForma(forma)}
+                title={
+                  forma === "circulo"
+                    ? "Mantené clic y arrastrá en el mapa para dibujar un círculo"
+                    : "Clic a clic marcás los vértices; doble clic (o clic en el primero) cierra el polígono"
+                }
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                  zona.forma === forma ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                }`}
+              >
+                {icono}
+                {etiqueta}
+              </button>
+            ))}
           </div>
-          <input
-            type="range"
-            min={60}
-            max={2000}
-            step={50}
-            value={radio}
-            onChange={(e) => setRadio(Number(e.target.value))}
-            className="w-full accent-[#f4dc00]"
-          />
-          <p className="mt-1 text-[10px] text-texto-3">
-            Mantené clic y arrastrá en el mapa para dibujar otro círculo, o afiná el radio acá.
-          </p>
-        </div>
+        )}
 
-        {statsA ? (
-          <ComparacionAB a={statsA} b={stats} />
+        {esCirculo ? (
+          <div>
+            <div className="mb-1 flex items-baseline justify-between">
+              <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                Radio {statsA ? "de B" : ""}
+              </span>
+              <span className="num text-xs font-bold text-amarillo">{numero(zona.radio)} m</span>
+            </div>
+            <input
+              type="range"
+              min={60}
+              max={2000}
+              step={50}
+              value={zona.radio}
+              onChange={(e) => setRadio(Number(e.target.value))}
+              className="w-full accent-[#f4dc00]"
+            />
+            <p className="mt-1 text-[10px] text-texto-3">
+              Mantené clic y arrastrá en el mapa para dibujar otro círculo, o afiná el radio acá.
+            </p>
+          </div>
         ) : (
+          <div>
+            <div className="mb-1 flex items-baseline justify-between">
+              <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Polígono</span>
+              <span className="num text-xs font-bold text-amarillo">
+                {zona.vertices.length} vértice{zona.vertices.length === 1 ? "" : "s"}
+                {poligonoListo && stats ? ` · ${stats.hectareas.toFixed(1)} ha` : ""}
+              </span>
+            </div>
+            <p className="text-[10px] leading-relaxed text-texto-3">
+              {zona.cerrado
+                ? "Polígono cerrado. Un clic en el mapa arranca uno nuevo."
+                : "Clic a clic vas marcando los vértices. Cerralo con doble clic, o con un clic sobre el primer vértice."}
+            </p>
+          </div>
+        )}
+
+        {statsA && stats ? (
+          <ComparacionAB a={statsA} b={stats} />
+        ) : stats ? (
           <>
             <div className="grid grid-cols-2 gap-2">
               <Cifra n={stats.pendientes} etiqueta="pedidos pendientes" color="var(--color-amarillo)" />
@@ -195,9 +323,15 @@ export function AnalisisZona({
             )}
 
             {stats.demandas === 0 && stats.resueltos === 0 && (
-              <p className="py-4 text-center text-texto-3">Nada registrado en este radio. Probá agrandarlo.</p>
+              <p className="py-4 text-center text-texto-3">
+                Nada registrado en esta zona. Probá {esCirculo ? "agrandar el radio" : "un polígono más grande"}.
+              </p>
             )}
           </>
+        ) : (
+          <p className="py-6 text-center text-texto-3">
+            Dibujá el polígono sobre el mapa: las estadísticas aparecen al cerrarlo.
+          </p>
         )}
       </div>
 
@@ -210,6 +344,7 @@ export function AnalisisZona({
             Quitar comparación A/B
           </button>
         ) : (
+          esCirculo &&
           alFijarA && (
             <button
               onClick={alFijarA}
@@ -220,13 +355,15 @@ export function AnalisisZona({
             </button>
           )
         )}
-        <Link
-          href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${centro.lat},${centro.lon}`}
-          target="_blank"
-          className="block rounded-lg border border-borde-2 px-3 py-2 text-center text-xs font-semibold text-texto-2 transition hover:border-celeste hover:text-celeste"
-        >
-          Ver la zona en Street View ↗
-        </Link>
+        {puntoVista && (
+          <Link
+            href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${puntoVista.lat},${puntoVista.lon}`}
+            target="_blank"
+            className="block rounded-lg border border-borde-2 px-3 py-2 text-center text-xs font-semibold text-texto-2 transition hover:border-celeste hover:text-celeste"
+          >
+            Ver la zona en Street View ↗
+          </Link>
+        )}
       </div>
     </aside>
   );

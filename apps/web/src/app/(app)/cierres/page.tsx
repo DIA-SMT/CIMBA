@@ -145,6 +145,16 @@ export default async function PaginaCierres({
               Limpiar
             </Link>
           )}
+          {/* "Yo eso lo filtro y genero el expediente que se va a la SAT… con
+              dirección, tipo y número de ticket, porque si ellos lo devuelven
+              yo lo puedo cerrar" — el CSV de las demandas SAT abiertas. */}
+          <a
+            href="/api/exportar-sat"
+            className="text-xs font-semibold text-celeste hover:underline"
+            title="Descargar el expediente para la SAT: las demandas de agua/tapas/sumideros abiertas, con número de ticket, dirección y barrio"
+          >
+            ⤓ Expediente SAT
+          </a>
         </form>
       </div>
 
@@ -163,6 +173,9 @@ export default async function PaginaCierres({
               <th className="px-4 py-3">Dirección</th>
               <th className="px-4 py-3">Pedido el</th>
               <th className="px-4 py-3">Reparado el</th>
+              <th className="px-4 py-3" title="El tipo de la última intervención finalizada: bacheo, paño de hormigón, carpeta o enripiado">
+                Cómo se resolvió
+              </th>
               <th className="px-4 py-3">m²</th>
               <th className="px-4 py-3">Fotos después</th>
               <th className="px-4 py-3">Incidente</th>
@@ -175,7 +188,7 @@ export default async function PaginaCierres({
             ))}
             {demandas.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-texto-3">
+                <td colSpan={10} className="px-4 py-10 text-center text-texto-3">
                   {hayFiltro
                     ? "No hay reclamos pendientes de cierre con estos filtros."
                     : "No hay reclamos pendientes de cierre: o no hay reparaciones nuevas sobre reclamos abiertos, o ya se respondió todo."}

@@ -255,6 +255,10 @@ export interface ItemOrden {
   espesorCm: number | null;
   superficieM2: number | null;
   intervencionId: number | null;
+  /** Cómo se resolvió (bacheo / pano_hormigon / carpeta / enripiado); null si no se reportó. */
+  tipoIntervencion: string | null;
+  /** propuesto/validación/foto_propuesta y demás rastros del item. */
+  metadata: Record<string, unknown>;
   reportadoEn: string | null;
   observaciones: string | null;
   reclamos: number;
@@ -266,6 +270,8 @@ export interface ItemOrden {
 export interface OrdenDetalle extends OrdenResumen {
   circuitoId: number | null;
   indicaciones: string | null;
+  /** N° de contrato o decreto que respalda la orden (va en la hoja impresa). */
+  contratoDecreto: string | null;
   cerradaEn: string | null;
   itemsDetalle: ItemOrden[];
 }
@@ -292,6 +298,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
 
     const items = (await tx.execute(sql`
       select oi.*, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+             (select v.tipo_intervencion::text from intervenciones v where v.id = oi.intervencion_id) as tipo_intervencion,
         coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos
       from orden_items oi
       where oi.orden_id = ${id}
@@ -331,6 +338,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       espesorCm: f.espesor_cm != null ? Number(f.espesor_cm) : null,
       superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
       intervencionId: f.intervencion_id != null ? Number(f.intervencion_id) : null,
+      tipoIntervencion: (f.tipo_intervencion as string) ?? null,
+      metadata: (f.metadata as Record<string, unknown>) ?? {},
       reportadoEn: f.reportado_en != null ? String(f.reportado_en) : null,
       observaciones: (f.observaciones as string) ?? null,
       reclamos: Number(f.reclamos ?? 0),
@@ -351,6 +360,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       circuitoId: o.circuito_id != null ? Number(o.circuito_id) : null,
       circuitoCodigo: (o.circuito_codigo as string) ?? null,
       indicaciones: (o.indicaciones as string) ?? null,
+      // La cabecera selecciona ot.*: la columna ya viene, solo faltaba mapearla.
+      contratoDecreto: (o.contrato_decreto as string) ?? null,
       items: itemsDetalle.length,
       hechos,
       m2Reportados: Math.round(itemsDetalle.reduce((a, i) => a + (i.superficieM2 ?? 0), 0)),
@@ -405,6 +416,10 @@ export interface DemandaParaCerrar {
   incidenteId: number;
   cerradoEn: string | null;
   m2: number | null;
+  /** Cómo se resolvió: el tipo_intervencion (bacheo/pano_hormigon/carpeta/enripiado)
+   *  de la última intervención finalizada del incidente — para que el cierre le
+   *  diga al vecino si fue bacheo o cambio de paño. */
+  tipoIntervencion: string | null;
   fotosDespues: number;
   /** Punto del incidente reparado, para verificar la dirección en el mini-mapa antes de responder. */
   lat: number | null;
@@ -437,6 +452,11 @@ export async function demandasParaCerrar(
              st_y(i.geom) as lat, st_x(i.geom) as lon,
              (select round(sum(v.superficie_m2))::int from intervenciones v
                 where v.incidente_id = i.id and v.estado = 'finalizada') as m2,
+             (select v.tipo_intervencion::text from intervenciones v
+                where v.incidente_id = i.id and v.estado = 'finalizada'
+                  and v.tipo_intervencion is not null
+                order by v.finalizada_en desc nulls last, v.id desc
+                limit 1) as tipo_intervencion,
              (select count(*) from fotografias fo
                 join intervenciones v on v.id = fo.intervencion_id
                 where v.incidente_id = i.id and fo.momento = 'despues')::int as fotos_despues
@@ -462,9 +482,68 @@ export async function demandasParaCerrar(
       incidenteId: Number(f.incidente_id),
       cerradoEn: f.cerrado_en != null ? String(f.cerrado_en) : null,
       m2: f.m2 != null ? Number(f.m2) : null,
+      tipoIntervencion: (f.tipo_intervencion as string) ?? null,
       fotosDespues: Number(f.fotos_despues ?? 0),
       lat: f.lat != null ? Number(f.lat) : null,
       lon: f.lon != null ? Number(f.lon) : null,
     }));
+  });
+}
+
+// ── Deuda por territorio (barrios y circuitos pintados como los distritos) ───
+
+export interface DeudaTerritorial {
+  id: number;
+  nombre: string;
+  abiertas: number;
+  sinAtencion: number;
+  /** 0..1: proporción de pedidos abiertos sin ninguna reparación cerca. */
+  pct: number;
+}
+
+/**
+ * El mismo "se pinta por deuda" de los distritos, para barrios y circuitos —
+ * "podemos hacer lo mismo para circuito de trabajo y para barrios; eso le va
+ * a hacer feliz a la doctora". Cruce de 40 m idéntico al de la brecha.
+ */
+export async function deudaPorTerritorio(
+  sesion: Sesion,
+  nivel: "barrio" | "circuito",
+): Promise<DeudaTerritorial[]> {
+  const columna = nivel === "barrio" ? sql`barrio_id` : sql`circuito_id`;
+  const tabla = nivel === "barrio" ? sql`barrios` : sql`circuitos`;
+  const nombre = nivel === "barrio" ? sql`t.nombre` : sql`t.codigo`;
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      with d as (
+        select ${columna} as tid,
+          exists (
+            select 1 from incidentes i
+            where i.estado in ('reparado','verificado')
+              and st_dwithin(i.geom::geography, demandas.geom::geography, 40)
+          ) as atendida
+        from demandas
+        where estado in ('recibida','en_validacion') and geom is not null and ${columna} is not null
+      )
+      select t.id, ${nombre} as nombre,
+             count(d.tid)::int as abiertas,
+             count(*) filter (where not d.atendida)::int as sin_atencion
+      from ${tabla} t
+      join d on d.tid = t.id
+      group by t.id, ${nombre}
+      having count(d.tid) > 0
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    return filas.map((f) => {
+      const abiertas = Number(f.abiertas ?? 0);
+      const sinAtencion = Number(f.sin_atencion ?? 0);
+      return {
+        id: Number(f.id),
+        nombre: String(f.nombre),
+        abiertas,
+        sinAtencion,
+        pct: abiertas > 0 ? sinAtencion / abiertas : 0,
+      };
+    });
   });
 }

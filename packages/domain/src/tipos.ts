@@ -89,9 +89,24 @@ export const ESTADOS_ORDEN = [
 export const estadoOrdenSchema = z.enum(ESTADOS_ORDEN);
 export type EstadoOrden = z.infer<typeof estadoOrdenSchema>;
 
-export const ESTADOS_ITEM_ORDEN = ["pendiente", "hecho", "no_encontrado"] as const;
+export const ESTADOS_ITEM_ORDEN = [
+  "pendiente",
+  "hecho",
+  "no_encontrado",
+  // propuesto por la cuadrilla en la calle: espera validación de Bacheo
+  "propuesto",
+  // Bacheo lo descartó (queda la traza)
+  "rechazado",
+  // llegaron y el bache ya estaba hecho: evidencia sin sumar m² de la empresa
+  "ya_resuelto",
+] as const;
 export const estadoItemOrdenSchema = z.enum(ESTADOS_ITEM_ORDEN);
 export type EstadoItemOrden = z.infer<typeof estadoItemOrdenSchema>;
+
+/** Los cuatro modos reales de resolver, en palabras del Director de Bacheo. */
+export const TIPOS_INTERVENCION = ["bacheo", "pano_hormigon", "carpeta", "enripiado"] as const;
+export const tipoIntervencionSchema = z.enum(TIPOS_INTERVENCION);
+export type TipoIntervencion = z.infer<typeof tipoIntervencionSchema>;
 
 // ── Geometría ───────────────────────────────────────────────────────────────
 

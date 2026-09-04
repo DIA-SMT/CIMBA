@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
-import { prioridadVialSchema } from "@cimba/domain";
+import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 
 /**
@@ -32,6 +32,8 @@ export async function crearOrden(entrada: {
   prioridad: string;
   titulo?: string;
   indicaciones?: string;
+  /** N° de contrato o decreto que respalda la orden: sale en la hoja impresa. */
+  contratoDecreto?: string;
   venceEn?: string; // YYYY-MM-DD
   incidenteIds: number[];
   tramos?: Array<z.infer<typeof tramoSchema>>;
@@ -44,6 +46,7 @@ export async function crearOrden(entrada: {
       prioridad: prioridadVialSchema,
       titulo: z.string().max(200).optional(),
       indicaciones: z.string().max(4000).optional(),
+      contratoDecreto: z.string().max(100).optional(),
       venceEn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       incidenteIds: z.array(z.number().int().positive()).max(200),
       tramos: z.array(tramoSchema).max(50).default([]),
@@ -56,11 +59,11 @@ export async function crearOrden(entrada: {
 
   const ordenId = await conRls(claims(sesion), async (tx) => {
     const creada = (await tx.execute(sql`
-      insert into ordenes_trabajo (numero, empresa_id, circuito_id, prioridad, titulo, indicaciones, vence_en, creada_por)
+      insert into ordenes_trabajo (numero, empresa_id, circuito_id, prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por)
       values (
         'OT-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('ordenes_numero_seq')::text, 4, '0'),
         ${datos.empresaId}, ${datos.circuitoId ?? null}, ${datos.prioridad},
-        ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.venceEn ?? null},
+        ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},
         ${sesion.sub}::uuid
       ) returning id
     `)) as unknown as Array<{ id: number }>;
@@ -224,6 +227,9 @@ export async function reportarItemHecho(formData: FormData) {
       lat: z.coerce.number().min(-27.2).max(-26.5).optional(),
       lon: z.coerce.number().min(-65.6).max(-64.9).optional(),
       direccionCorregida: z.string().max(300).optional(),
+      // Cómo se resolvió: bacheo / paño de hormigón / carpeta / enripiado.
+      // Opcional: sin dato, se infiere del tipo de trabajo del item.
+      tipoIntervencion: tipoIntervencionSchema.optional(),
     })
     .parse({
       itemId: formData.get("itemId"),
@@ -234,6 +240,7 @@ export async function reportarItemHecho(formData: FormData) {
       lat: formData.get("lat") || undefined,
       lon: formData.get("lon") || undefined,
       direccionCorregida: formData.get("direccionCorregida") || undefined,
+      tipoIntervencion: formData.get("tipoIntervencion") || undefined,
     });
 
   /**
@@ -401,17 +408,21 @@ export async function reportarItemHecho(formData: FormData) {
       `);
     }
 
-    // La intervención real. Escala: una carpeta es obra de paño completo y no
-    // puede promediarse con baches de 4 m² (misma regla que SIGOV).
-    const esCarpeta = String(item.tipo_trabajo) === "carpeta" || superficie >= 50;
+    // Cómo se resolvió: lo que declaró la empresa, o inferido del item.
+    const tipoIntervencion =
+      datos.tipoIntervencion ?? (String(item.tipo_trabajo) === "carpeta" ? "carpeta" : "bacheo");
+    // Escala: paño de hormigón y carpeta son obra de paño completo y no pueden
+    // promediarse con baches de 4 m² (misma regla que SIGOV).
+    const esObra =
+      tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
     const iv = (await tx.execute(sql`
       insert into intervenciones (
         incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
-        superficie_m2, materiales, observaciones, metadata
+        superficie_m2, tipo_intervencion, materiales, observaciones, metadata
       ) values (
         ${incidenteId}, 'finalizada',
         st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-        now(), now(), ${superficie},
+        now(), now(), ${superficie}, ${tipoIntervencion},
         ${JSON.stringify({ ancho_m: datos.anchoM, largo_m: datos.largoM, espesor_cm: datos.espesorCm })}::jsonb,
         ${datos.observaciones ?? null},
         ${JSON.stringify({
@@ -421,7 +432,7 @@ export async function reportarItemHecho(formData: FormData) {
           // usa SIGOV); `empresa` queda como alias por si algo la busca así.
           contratista: item.empresa_nombre,
           empresa: item.empresa_nombre,
-          escala: esCarpeta ? "obra" : "bache",
+          escala: esObra ? "obra" : "bache",
           ...(datos.direccionCorregida ? { direccion_corregida: datos.direccionCorregida } : {}),
         })}::jsonb
       ) returning id
@@ -702,5 +713,296 @@ export async function actualizarCapacidad(entrada: {
     `);
   });
   revalidatePath("/ordenes");
+  return { ok: true };
+}
+
+// ── La empresa propone, Bacheo valida ────────────────────────────────────────
+
+/**
+ * La cuadrilla encuentra en la calle un bache que no estaba en la orden y lo
+ * propone: entra como item 'propuesto' con punto y foto, y NO cuenta para nada
+ * hasta que Bacheo lo valide ("los confirmás vos", dijo el Director). La foto
+ * se guarda en Storage y su ruta queda en el metadata del item — todavía no
+ * hay intervención de la cual colgarla.
+ */
+export async function proponerItem(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new Error(`Rol ${sesion.rol_cimba} sin permiso para proponer items`);
+  }
+  const datos = z
+    .object({
+      ordenId: z.coerce.number().int().positive(),
+      direccion: z.string().min(4).max(300),
+      tipoTrabajo: z.enum(["bache", "carpeta", "tramo"]).default("bache"),
+      lat: z.coerce.number().min(-27.2).max(-26.5),
+      lon: z.coerce.number().min(-65.6).max(-64.9),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({
+      ordenId: formData.get("ordenId"),
+      direccion: formData.get("direccion"),
+      tipoTrabajo: formData.get("tipoTrabajo") || undefined,
+      lat: formData.get("lat"),
+      lon: formData.get("lon"),
+      observaciones: formData.get("observaciones") || undefined,
+    });
+
+  const { dentroDeSMT } = await import("@cimba/domain");
+  if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+    throw new Error("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+  }
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (foto instanceof File && foto.size > 8 * 1024 * 1024) throw new Error("La foto supera 8 MB");
+  if (foto instanceof File && foto.size > 0 && !TIPOS[foto.type]) {
+    throw new Error("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+  }
+
+  // Propiedad y estado ANTES de subir nada a Storage (misma regla que el reporte).
+  const ordenes = await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select id, estado, empresa_id from ordenes_trabajo where id = ${datos.ordenId}
+    `)) as unknown as Array<{ id: number; estado: string; empresa_id: number }>,
+  );
+  const orden = ordenes[0];
+  if (!orden) throw new Error("La orden no existe o no es de tu empresa");
+  if (!["emitida", "en_ejecucion"].includes(orden.estado)) throw new Error("La orden no está activa");
+  if (sesion.rol_cimba === "empresa" && Number(orden.empresa_id) !== sesion.id_empresa) {
+    throw new Error("La orden no pertenece a tu empresa");
+  }
+
+  let rutaFoto: string | null = null;
+  if (foto instanceof File && foto.size > 0) {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+      process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+    );
+    rutaFoto = `ordenes/propuestos/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
+    const subida = await supabase.storage
+      .from("fotografias")
+      .upload(rutaFoto, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+    if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    await tx.execute(sql`
+      insert into orden_items (orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata)
+      values (
+        ${datos.ordenId}, ${datos.direccion},
+        st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+        ${datos.tipoTrabajo}, 'propuesto', ${datos.observaciones ?? null},
+        ${JSON.stringify({
+          propuesto: { por: sesion.nombre, en: new Date().toISOString() },
+          ...(rutaFoto ? { foto_propuesta: rutaFoto } : {}),
+        })}::jsonb
+      )
+    `);
+  });
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  return { ok: true };
+}
+
+/** Bacheo decide sobre un item propuesto: validado entra al circuito normal. */
+export async function resolverPropuesto(entrada: {
+  itemId: number;
+  decision: "validar" | "rechazar";
+  motivo?: string;
+}) {
+  const sesion = await requerirRol("planificacion", "supervision");
+  const datos = z
+    .object({
+      itemId: z.number().int().positive(),
+      decision: z.enum(["validar", "rechazar"]),
+      motivo: z.string().max(500).optional(),
+    })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const r = (await tx.execute(sql`
+      update orden_items set
+        estado = ${datos.decision === "validar" ? "pendiente" : "rechazado"},
+        metadata = metadata || ${JSON.stringify({
+          validacion: {
+            decision: datos.decision,
+            por: sesion.nombre,
+            en: new Date().toISOString(),
+            ...(datos.motivo ? { motivo: datos.motivo } : {}),
+          },
+        })}::jsonb
+      where id = ${datos.itemId} and estado = 'propuesto'
+      returning orden_id
+    `)) as unknown as Array<{ orden_id: number }>;
+    if (!r[0]) throw new Error("El item no está en estado propuesto");
+  });
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  return { ok: true };
+}
+
+/**
+ * "Llegamos y el bache ya estaba hecho": foto del después obligatoria como
+ * evidencia, el incidente se cierra, pero NO suma m² de la empresa — la
+ * intervención queda con superficie nula y marcada ya_estaba. Es la variante
+ * que pidió el Director para no dejar tickets fantasma abiertos.
+ */
+export async function marcarYaResuelto(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new Error(`Rol ${sesion.rol_cimba} sin permiso`);
+  }
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({ itemId: formData.get("itemId"), observaciones: formData.get("observaciones") || undefined });
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) throw new Error("La foto de cómo está hoy es obligatoria");
+  if (foto.size > 8 * 1024 * 1024) throw new Error("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new Error("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad antes de tocar Storage.
+  const previa = (
+    await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select oi.estado, oi.incidente_id, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+               ot.estado as orden_estado, ot.empresa_id, ot.numero, ot.id as orden_id,
+               e.nombre as empresa_nombre
+        from orden_items oi
+        join ordenes_trabajo ot on ot.id = oi.orden_id
+        join empresas e on e.id = ot.empresa_id
+        where oi.id = ${datos.itemId}
+      `)) as unknown as Array<Record<string, unknown>>,
+    )
+  )[0];
+  if (!previa) throw new Error("El item no existe o no es de tu empresa");
+  if (String(previa.estado) !== "pendiente") throw new Error("Este item ya fue reportado");
+  if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
+    throw new Error("La orden no está activa");
+  }
+  if (sesion.rol_cimba === "empresa" && Number(previa.empresa_id) !== sesion.id_empresa) {
+    throw new Error("El item no pertenece a tu empresa");
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const ruta = `ordenes/${datos.itemId}/ya-resuelto-${Date.now()}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    await conRls(claims(sesion), async (tx) => {
+      // Reclamo atómico, igual que el reporte normal.
+      const reclamo = (await tx.execute(sql`
+        update orden_items set estado = 'ya_resuelto',
+          reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+          observaciones = ${datos.observaciones ?? null}
+        where id = ${datos.itemId} and estado = 'pendiente'
+        returning incidente_id
+      `)) as unknown as Array<{ incidente_id: number | null }>;
+      if (!reclamo[0]) throw new Error("Este item ya fue reportado");
+
+      const lat = previa.lat != null ? Number(previa.lat) : null;
+      const lon = previa.lon != null ? Number(previa.lon) : null;
+      const incidenteId = reclamo[0].incidente_id != null ? Number(reclamo[0].incidente_id) : null;
+
+      if (incidenteId != null && lat != null && lon != null) {
+        // Evidencia colgada de una intervención SIN superficie: cierra el
+        // circuito pero no infla los m² de nadie.
+        const iv = (await tx.execute(sql`
+          insert into intervenciones (
+            incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
+            superficie_m2, tipo_intervencion, materiales, observaciones, metadata
+          ) values (
+            ${incidenteId}, 'finalizada',
+            st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
+            now(), now(), null, null, '{}'::jsonb,
+            ${datos.observaciones ?? "Ya estaba resuelto al llegar la cuadrilla"},
+            ${JSON.stringify({
+              origen: "orden_trabajo",
+              orden: previa.numero,
+              contratista: previa.empresa_nombre,
+              ya_estaba: true,
+              escala: "bache",
+            })}::jsonb
+          ) returning id
+        `)) as unknown as Array<{ id: number }>;
+        const intervencionId = iv[0]?.id;
+        if (intervencionId) {
+          await tx.execute(sql`
+            insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en)
+            values (${intervencionId}, 'despues', ${ruta},
+                    st_setsrid(st_makepoint(${lon}, ${lat}), 4326), now())
+          `);
+          await tx.execute(sql`
+            update orden_items set intervencion_id = ${intervencionId} where id = ${datos.itemId}
+          `);
+        }
+        await tx.execute(sql`
+          update incidentes set estado = 'reparado', cerrado_en = now(),
+            metadata = metadata || '{"resuelto_por": "ya_estaba"}'::jsonb
+          where id = ${incidenteId} and estado <> 'verificado'
+        `);
+      }
+
+      // La orden avanza sola (mismo lock que el reporte normal).
+      await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(previa.orden_id)} for update`);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'en_ejecucion'
+        where id = ${Number(previa.orden_id)} and estado = 'emitida'
+      `);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'completada', cerrada_en = now()
+        where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+          and not exists (
+            select 1 from orden_items oi
+            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado = 'pendiente'
+          )
+      `);
+    });
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  return { ok: true };
+}
+
+// ── Corrección del tipo de intervención (Bacheo) ─────────────────────────────
+
+/** "Capaz que empieza como bacheo y al final se hizo cambio de paño": Bacheo lo corrige. */
+export async function corregirTipoIntervencion(entrada: { intervencionId: number; tipo: string }) {
+  const sesion = await requerirRol("planificacion", "supervision");
+  const datos = z
+    .object({ intervencionId: z.number().int().positive(), tipo: tipoIntervencionSchema })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const r = (await tx.execute(sql`
+      update intervenciones set tipo_intervencion = ${datos.tipo},
+        metadata = metadata || ${JSON.stringify({
+          tipo_corregido: { por: sesion.nombre, en: new Date().toISOString() },
+        })}::jsonb
+      where id = ${datos.intervencionId}
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    if (!r[0]) throw new Error("La intervención no existe");
+  });
+  revalidatePath("/ordenes");
+  revalidatePath("/intervenciones");
+  revalidatePath("/incidentes");
   return { ok: true };
 }

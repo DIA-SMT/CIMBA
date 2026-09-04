@@ -1,6 +1,6 @@
 import { conRls, getDb, sql } from "@cimba/db";
 import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain";
-import { ESTADOS_DEMANDA, FUENTES_DEMANDA } from "@cimba/domain";
+import { ESTADOS_DEMANDA, FUENTES_DEMANDA, TIPOS_INTERVENCION } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 
@@ -367,6 +367,8 @@ export interface IntervencionResumen {
   estado: string;
   cuadrilla: string | null;
   tipo: TipoProblema | null;
+  /** Cómo se resolvió: bacheo | pano_hormigon | carpeta | enripiado (null si no se declaró). */
+  tipoIntervencion: string | null;
   direccion: string | null;
   lat: number | null;
   lon: number | null;
@@ -379,16 +381,20 @@ export interface IntervencionResumen {
 
 export async function listarIntervenciones(
   sesion: Sesion,
-  filtros: { estado?: string; ejecutor?: string; q?: string; limite?: number; pagina?: number },
+  filtros: { estado?: string; ejecutor?: string; tipoIntervencion?: string; q?: string; limite?: number; pagina?: number },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
   const estado = filtro(filtros.estado);
   const ejecutor = filtro(filtros.ejecutor);
+  // Contra la lista cerrada del enum: un ?tipo_intervencion=xxx tipeado en la
+  // URL no puede reventar el cast (22P02) — se ignora, como el resto de filtros.
+  const tipoIntervencion = filtroEnum(filtros.tipoIntervencion, TIPOS_INTERVENCION);
   const q = filtro(filtros.q);
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${estado}::text is null or iv.estado = (${estado})::estado_intervencion)
+        and (${tipoIntervencion}::text is null or iv.tipo_intervencion = (${tipoIntervencion})::tipo_intervencion)
         and (${q}::text is null or i.direccion ilike '%' || ${q ?? ""} || '%')
         and (${ejecutor}::text is null
              or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
@@ -397,6 +403,7 @@ export async function listarIntervenciones(
     `;
     const filas = (await tx.execute(sql`
       select iv.id, iv.incidente_id, iv.estado, c.nombre as cuadrilla,
+             iv.tipo_intervencion::text as tipo_intervencion,
              i.direccion, i.tipo,
              st_y(coalesce(iv.geom_ejecucion, i.geom)) as lat,
              st_x(coalesce(iv.geom_ejecucion, i.geom)) as lon,
@@ -421,6 +428,7 @@ export async function listarIntervenciones(
         estado: String(f.estado),
         cuadrilla: (f.cuadrilla as string) ?? null,
         tipo: (f.tipo as TipoProblema) ?? null,
+        tipoIntervencion: (f.tipo_intervencion as string) ?? null,
         direccion: (f.direccion as string) ?? null,
         lat: f.lat != null ? Number(f.lat) : null,
         lon: f.lon != null ? Number(f.lon) : null,
@@ -444,6 +452,8 @@ export interface ResumenIntervenciones {
   m2: number;
   contratadas: number;
   municipales: number;
+  /** Conteo por cómo se resolvió (bacheo/pano_hormigon/carpeta/enripiado), para los chips de filtro. */
+  porTipoIntervencion: Record<string, number>;
 }
 
 export async function resumenIntervenciones(sesion: Sesion): Promise<ResumenIntervenciones> {
@@ -461,6 +471,15 @@ export async function resumenIntervenciones(sesion: Sesion): Promise<ResumenInte
       from intervenciones
     `)) as unknown as Array<Record<string, string | number>>;
     const f = filas[0] ?? {};
+    // Cuenta TODO (no solo finalizadas): el mismo universo que filtra
+    // listarIntervenciones, así el conteo del chip coincide con la lista.
+    const tipos = (await tx.execute(sql`
+      select tipo_intervencion::text as tipo, count(*)::int as n
+      from intervenciones where tipo_intervencion is not null
+      group by 1
+    `)) as unknown as Array<{ tipo: string; n: string | number }>;
+    const porTipoIntervencion: Record<string, number> = {};
+    for (const t of tipos) porTipoIntervencion[t.tipo] = Number(t.n);
     return {
       total: Number(f.total ?? 0),
       finalizadas: Number(f.finalizadas ?? 0),
@@ -469,6 +488,7 @@ export async function resumenIntervenciones(sesion: Sesion): Promise<ResumenInte
       m2: Math.round(Number(f.m2 ?? 0)),
       contratadas: Number(f.contratadas ?? 0),
       municipales: Number(f.municipales ?? 0),
+      porTipoIntervencion,
     };
   });
 }
@@ -506,6 +526,8 @@ export interface HistoriaIncidente {
     ejecutor: string;
     contratada: boolean;
     deCuadrilla: boolean;
+    /** Cómo se resolvió: bacheo | pano_hormigon | carpeta | enripiado (null si no se declaró). */
+    tipoIntervencion: string | null;
     iniciadaEn: string | null;
     finalizadaEn: string | null;
     superficieM2: number | null;
@@ -549,6 +571,7 @@ export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Prom
              coalesce(c.nombre, iv.metadata->>'contratista', 'Sin asignar') as ejecutor,
              (iv.metadata->>'contratista' is not null or iv.metadata->>'obra_id' is not null) as contratada,
              (iv.cuadrilla_id is not null) as de_cuadrilla,
+             iv.tipo_intervencion::text as tipo_intervencion,
              iv.iniciada_en, iv.finalizada_en, iv.superficie_m2,
              (select count(*) from fotografias fo where fo.intervencion_id = iv.id) as fotos
       from intervenciones iv
@@ -596,6 +619,7 @@ export async function obtenerHistoriaIncidente(sesion: Sesion, id: number): Prom
         ejecutor: String(v.ejecutor),
         contratada: Boolean(v.contratada),
         deCuadrilla: Boolean(v.de_cuadrilla),
+        tipoIntervencion: (v.tipo_intervencion as string) ?? null,
         iniciadaEn: v.iniciada_en != null ? String(v.iniciada_en) : null,
         finalizadaEn: v.finalizada_en != null ? String(v.finalizada_en) : null,
         superficieM2: v.superficie_m2 != null ? Number(v.superficie_m2) : null,

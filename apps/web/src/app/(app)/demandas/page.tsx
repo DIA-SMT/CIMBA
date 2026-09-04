@@ -195,6 +195,18 @@ export default async function PaginaDemandas({
         >
           ⤓ CSV
         </a>
+        {/* El expediente que se va a la SAT, solo cuando se está mirando lo de
+            la SAT: las demandas abiertas de agua/tapas/sumideros con su número
+            de ticket, para que si lo devuelven resuelto AC pueda cerrar. */}
+        {filtros.destino === "sat" && (
+          <a
+            href="/api/exportar-sat"
+            className="text-xs font-semibold text-celeste hover:underline"
+            title="Descargar el expediente para la SAT: las demandas abiertas de este destino, con número de ticket, dirección y barrio"
+          >
+            ⤓ Expediente SAT
+          </a>
+        )}
       </form>
 
       <Panel className="overflow-x-auto">

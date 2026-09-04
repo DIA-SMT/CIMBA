@@ -11,6 +11,15 @@ import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeFuente, BadgeTipo } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 
+/** Cómo se resolvió (intervenciones.tipo_intervencion). Etiquetas locales:
+ *  formato.ts no es de esta tarea. */
+const ETIQUETA_TIPO_INTERVENCION: Record<string, string> = {
+  bacheo: "Bacheo",
+  pano_hormigon: "Paño de hormigón",
+  carpeta: "Carpeta",
+  enripiado: "Enripiado",
+};
+
 /**
  * Fila de la bandeja de cierre, con su botón "Cerrar" que expande la
  * respuesta al vecino.
@@ -76,6 +85,17 @@ export function FilaCierre({
         </td>
         <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(demanda.creadoEn)}</td>
         <td className="num px-4 py-2.5 font-semibold text-resuelto">{fechaCorta(demanda.cerradoEn)}</td>
+        <td className="px-4 py-2.5">
+          {/* Cómo se resolvió: para que la respuesta al vecino diga "bacheo" o
+              "cambio de paño" — el reclamo original del Director. */}
+          {demanda.tipoIntervencion ? (
+            <span className="rounded-md border border-borde-2 px-1.5 py-0.5 text-[11px] font-semibold text-texto-2">
+              {ETIQUETA_TIPO_INTERVENCION[demanda.tipoIntervencion] ?? demanda.tipoIntervencion}
+            </span>
+          ) : (
+            <span className="text-[11px] text-texto-3">sin dato</span>
+          )}
+        </td>
         <td className="num px-4 py-2.5 text-texto-2">{demanda.m2 != null ? numero(demanda.m2) : "—"}</td>
         <td className="px-4 py-2.5">
           {demanda.fotosDespues > 0 ? (
@@ -118,7 +138,7 @@ export function FilaCierre({
 
       {abierto && (
         <tr className="border-b border-borde/60 bg-panel-2/60">
-          <td colSpan={9} className="px-4 py-3">
+          <td colSpan={10} className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <input
                 value={respuesta}

@@ -26,7 +26,7 @@ export async function middleware(req: NextRequest) {
   if (PUBLICAS.some((p) => pathname.startsWith(p))) return NextResponse.next();
 
   // Cron: se autentica con CRON_SECRET, no con sesión
-  if (pathname.startsWith("/api/sync")) return NextResponse.next();
+  if (pathname.startsWith("/api/sync") || pathname.startsWith("/api/cron")) return NextResponse.next();
 
   const token = req.cookies.get("cimba_sesion")?.value;
   if (token) {

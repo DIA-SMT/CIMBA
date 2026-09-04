@@ -28,6 +28,7 @@ export async function completarJson<T>(
   sistema: string,
   usuario: string,
   schema: { parse: (v: unknown) => T },
+  maxTokens = 900,
 ): Promise<T> {
   const { apiKey, modelo } = configuracion();
   const res = await fetch(URL_OPENROUTER, {
@@ -39,7 +40,7 @@ export async function completarJson<T>(
     },
     body: JSON.stringify({
       model: modelo,
-      max_tokens: 900,
+      max_tokens: maxTokens,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
@@ -134,16 +135,39 @@ Respondé SOLO un objeto JSON con: tipo_sugerido, confianza_tipo (0-1), duplicad
 
 const recortar = (max: number) => z.string().transform((s) => (s.length > max ? `${s.slice(0, max - 1)}…` : s));
 
+/** Si el modelo se entusiasma y manda bullets de más, se recortan en vez de
+ *  tirar el informe entero (un .max() acá haría fallar todo el pedido). */
+const bullets = (max: number) => z.array(recortar(300)).transform((a) => a.slice(0, max));
+
 export const informeSchema = z.object({
   titulo: recortar(120),
   resumen: recortar(1200),
-  focos: z.array(recortar(300)).max(5),
-  recomendaciones: z.array(recortar(300)).max(4),
+  focos: bullets(6),
+  recomendaciones: bullets(4),
 });
 export type InformeIA = z.infer<typeof informeSchema>;
 
-export async function generarInformeIA(agregados: Record<string, unknown>): Promise<InformeIA> {
-  const sistema = `Sos el analista territorial de CIMBA (bacheo, San Miguel de Tucumán). Recibís agregados del estado actual del territorio (conteos por estado, tipo, fuente, zonas calientes). Escribí un informe ejecutivo corto en español rioplatense, tono profesional municipal, sin inventar números que no estén en los datos.
-Respondé SOLO JSON: { "titulo", "resumen" (2-4 frases), "focos" (hasta 5 bullets de UNA frase corta cada uno), "recomendaciones" (hasta 4 acciones concretas de una frase) }.`;
-  return completarJson(sistema, JSON.stringify(agregados), informeSchema);
+/** Segmento opcional del informe: en vez de informar TODO el territorio,
+ *  recorta a una fuente, un distrito, un destino de resolución o un tipo. */
+export interface SegmentoInforme {
+  dimension: "fuente" | "distrito" | "destino" | "tipo";
+  valor: string;
+}
+
+export async function generarInformeIA(
+  agregados: Record<string, unknown>,
+  segmento?: SegmentoInforme | null,
+): Promise<InformeIA> {
+  const sistema = `Sos el analista territorial de CIMBA (bacheo, San Miguel de Tucumán). Recibís agregados del territorio: los visibles en el mapa y los calculados en el servidor (deuda_que_quema, deuda_por_destino, pedidos por origen, trabajo_hecho). Escribí un informe ejecutivo corto en español rioplatense, tono profesional municipal.
+
+REGLAS (en orden de importancia):
+1. DEUDA QUE QUEMA: los focos salen de "deuda_que_quema", que ya viene ordenada por score_prioridad (pondera antigüedad del pedido, reclamos detrás y si está sobre avenida primaria/secundaria o corredor de colectivos). NUNCA priorices por cantidad bruta de veces pedido: un bache de 300 días sobre una avenida quema más que diez pedidos nuevos en una cortada. En cada foco decí POR QUÉ quema (días abierto, reclamos, corredor).
+2. SEPARAR POR DESTINO: cada foco empieza con su etiqueta entre corchetes: [BACHEO], [SAT], [INGENIERÍA] o [GENERAL] si aplica a todo (destino null o sin_clasificar cuenta como [BACHEO] salvo dato en contra). La deuda de la SAT o de ingeniería NO es deuda de bacheo: si hay volumen que pertenece a otra área, decilo explícito en el resumen para que no se le impute al área equivocada.
+3. VECINAL vs INTERNO: el resumen SIEMPRE informa los dos totales de "pedidos" — vecinales (atención ciudadana, redes, HCD, SAT) e internos (cuadrilla, secretaría, carga manual, BachIA) — y cuánto del trabajo terminado se hizo SIN denuncia vecinal ("trabajo_hecho.sin_pedido_vecinal"): ese número muestra el volumen de trabajo de oficio.
+4. Si viene "segmento", el informe es SOLO de ese recorte: el título lo nombra y no saques conclusiones de datos de afuera del segmento ("contexto_global" es solo para dimensionar, no para focos).
+5. No inventes números que no estén en los datos. Si un agregado viene vacío, decilo sin dramatizar.
+
+Respondé SOLO JSON: { "titulo", "resumen" (3-5 frases), "focos" (hasta 6 bullets de UNA frase corta cada uno, etiquetados por destino), "recomendaciones" (hasta 4 acciones concretas de una frase) }.`;
+  const datos = segmento ? { segmento, ...agregados } : agregados;
+  return completarJson(sistema, JSON.stringify(datos), informeSchema, 1400);
 }

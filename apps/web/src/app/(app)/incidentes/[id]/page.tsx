@@ -24,6 +24,15 @@ const ETIQUETA_IV: Record<string, string> = {
   anulada: "Anulada",
 };
 
+/** Cómo se resolvió (intervenciones.tipo_intervencion). Etiquetas locales:
+ *  formato.ts no es de esta tarea. */
+const ETIQUETA_TIPO_INTERVENCION: Record<string, string> = {
+  bacheo: "Bacheo",
+  pano_hormigon: "Paño de hormigón",
+  carpeta: "Carpeta",
+  enripiado: "Enripiado",
+};
+
 interface Evento {
   fecha: string | null;
   titulo: string;
@@ -267,6 +276,15 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
                   <span className="rounded-md px-2 py-0.5 text-[11px] font-bold" style={{ background: `${color}22`, color }}>
                     {ETIQUETA_IV[iv.estado] ?? iv.estado}
                   </span>
+                  {/* Cómo se resolvió: "¿por bacheo o por cambio de paño?" */}
+                  {iv.tipoIntervencion && (
+                    <span
+                      className="rounded-md border border-borde-2 px-1.5 py-0.5 text-[10px] font-semibold text-texto-2"
+                      title="Cómo se resolvió este trabajo"
+                    >
+                      {ETIQUETA_TIPO_INTERVENCION[iv.tipoIntervencion] ?? iv.tipoIntervencion}
+                    </span>
+                  )}
                   <span className="rounded border border-borde-2 px-1.5 py-0.5 text-[10px] text-texto-3">
                     {iv.contratada ? "Obra contratada (SIGOV)" : iv.deCuadrilla ? "Cuadrilla municipal" : "Sin datos del ejecutor"}
                   </span>

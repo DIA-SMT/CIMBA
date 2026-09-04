@@ -22,6 +22,8 @@ export function CortinaComparar({
   espejoRef,
   alCambiarCorte,
   balance,
+  periodo,
+  alCambiarPeriodo,
 }: {
   vistaMapa: ViewState;
   demandas: FC;
@@ -31,6 +33,9 @@ export function CortinaComparar({
   /** La brecha en números, de lo que hay en pantalla en este momento — para
    *  que no haya que interpretar la densidad de puntos a ojo. */
   balance?: { pend: number; sinAt: number; m2: number } | null;
+  /** Período aplicado a AMBOS lados de la cortina (null = todo el historial). */
+  periodo?: number | null;
+  alCambiarPeriodo?: (dias: number | null) => void;
 }) {
   const [corte, setCorte] = useState(50);
   const arrastrando = useRef(false);
@@ -119,6 +124,44 @@ export function CortinaComparar({
           ⇔
         </div>
       </div>
+
+      {/* Selector propio del modo comparar — "no me deja cambiar el filtro en
+          comparar": las DOS dimensiones que tienen sentido acá, sin abrir el
+          panel de capas (que sigue congelado para no desincronizar la cortina):
+          qué se compara (hoy una sola comparación posible) y el período,
+          aplicado a los dos lados a la vez. Va abajo al centro, donde en modo
+          normal vive el balance (acá oculto). */}
+      {alCambiarPeriodo && (
+        <div className="pointer-events-auto absolute bottom-7 left-1/2 z-10 -translate-x-1/2">
+          <div className="panel-vidrio flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl px-3 py-1.5 text-[11px]">
+            <span className="flex items-center gap-1.5">
+              <span className="font-semibold tracking-wider text-texto-3 uppercase">Comparar</span>
+              <span className="rounded-md bg-azul px-2 py-0.5 font-semibold text-white">Pedidos vs. hechos</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="font-semibold tracking-wider text-texto-3 uppercase">Período</span>
+              {(
+                [
+                  [null, "Todo"],
+                  [90, "90d"],
+                  [30, "30d"],
+                ] as const
+              ).map(([d, etiqueta]) => (
+                <button
+                  key={etiqueta}
+                  onClick={() => alCambiarPeriodo(d)}
+                  title={d ? `Solo lo pedido y lo hecho de los últimos ${d} días, en los dos lados` : "Todo el historial, en los dos lados"}
+                  className={`rounded-md px-2 py-0.5 font-semibold transition ${
+                    periodo === d ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                  }`}
+                >
+                  {etiqueta}
+                </button>
+              ))}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Etiquetas de lectura: el número sale de lo que hay en pantalla en
           este momento, para no tener que interpretar la densidad de puntos

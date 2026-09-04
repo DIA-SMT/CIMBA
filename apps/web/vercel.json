@@ -1,9 +1,15 @@
 {
-  "regions": ["gru1"],
+  "regions": [
+    "gru1"
+  ],
   "crons": [
     {
       "path": "/api/sync/atencion-ciudadana",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/vencimientos",
+      "schedule": "0 11 * * *"
     }
   ]
 }

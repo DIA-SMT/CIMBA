@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { TIPOS_INTERVENCION } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
-import { listarEjecutores, listarIntervenciones, resumenIntervenciones } from "@/lib/consultas";
+import { filtroEnum, listarEjecutores, listarIntervenciones, resumenIntervenciones } from "@/lib/consultas";
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
@@ -16,19 +17,38 @@ const ETIQUETA: Record<string, string> = {
   anulada: "Anulada",
 };
 
+/** Los cuatro modos reales de resolver, en palabras del Director. Etiquetas
+ *  locales: formato.ts no es de esta tarea. */
+const ETIQUETA_TIPO_INTERVENCION: Record<string, string> = {
+  bacheo: "Bacheo",
+  pano_hormigon: "Paño de hormigón",
+  carpeta: "Carpeta",
+  enripiado: "Enripiado",
+};
+
 /** Paleta funcional (la misma del mapa y de Brecha). */
 const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70" } as const;
 
 export default async function PaginaIntervenciones({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string; ejecutor?: string; q?: string; pagina?: string }>;
+  searchParams: Promise<{ estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
+  // Validado acá también (además de en la consulta) para que los chips y los
+  // links no arrastren un valor inventado de la URL.
+  const tipoIntervencion = filtroEnum(filtros.tipo_intervencion, TIPOS_INTERVENCION) ?? undefined;
   const [{ filas, total }, ejecutores, resumen] = await Promise.all([
-    listarIntervenciones(sesion, { estado: filtros.estado, ejecutor: filtros.ejecutor, q: filtros.q, pagina, limite: 50 }),
+    listarIntervenciones(sesion, {
+      estado: filtros.estado,
+      ejecutor: filtros.ejecutor,
+      tipoIntervencion,
+      q: filtros.q,
+      pagina,
+      limite: 50,
+    }),
     listarEjecutores(sesion),
     resumenIntervenciones(sesion),
   ]);
@@ -60,8 +80,34 @@ export default async function PaginaIntervenciones({
         inicial={filtros.q ?? ""}
       />
 
+      {/* Cómo se resolvió — la pregunta que más repitió el Director: "¿por
+          bacheo o por cambio de paño?". Cada chip filtra; otro clic lo saca. */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Cómo se resolvió:</span>
+        {TIPOS_INTERVENCION.map((t) => {
+          const n = resumen.porTipoIntervencion[t] ?? 0;
+          const activo = tipoIntervencion === t;
+          return (
+            <Link
+              key={t}
+              href={urlFiltros({ ...filtros, tipo_intervencion: activo ? undefined : t, pagina: undefined })}
+              title={`Ver solo los trabajos resueltos por ${(ETIQUETA_TIPO_INTERVENCION[t] ?? t).toLowerCase()}`}
+              className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                activo
+                  ? "border-celeste/60 bg-celeste/10 font-semibold text-celeste"
+                  : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"
+              }`}
+            >
+              {ETIQUETA_TIPO_INTERVENCION[t]} <span className="num text-texto-3">{numero(n)}</span>
+            </Link>
+          );
+        })}
+      </div>
+
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/intervenciones" method="get">
         {filtros.q && <input type="hidden" name="q" value={filtros.q} />}
+        {/* El filtro de tipo vive en los chips: se preserva al re-filtrar por acá */}
+        {tipoIntervencion && <input type="hidden" name="tipo_intervencion" value={tipoIntervencion} />}
         <select name="estado" defaultValue={filtros.estado ?? ""} className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm">
           <option value="">Todos los estados</option>
           {Object.entries(ETIQUETA).map(([v, e]) => (
@@ -77,7 +123,7 @@ export default async function PaginaIntervenciones({
         <button className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">
           Filtrar
         </button>
-        {(filtros.estado || filtros.ejecutor) && (
+        {(filtros.estado || filtros.ejecutor || tipoIntervencion) && (
           <Link href="/intervenciones" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
         <span className="ml-auto text-xs text-texto-3">{numero(total)} trabajos con estos filtros</span>
@@ -116,8 +162,16 @@ export default async function PaginaIntervenciones({
                 <tr key={iv.id} className="border-b border-borde/60 transition hover:bg-panel-2">
                   <td className="max-w-60 px-4 py-2.5">
                     <p className="truncate font-medium" title={iv.direccion ?? ""}>{iv.direccion ?? "—"}</p>
-                    <div className="mt-0.5 flex items-center gap-1.5">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                       <BadgeTipo tipo={iv.tipo} />
+                      {iv.tipoIntervencion && (
+                        <span
+                          className="rounded-md border border-borde-2 px-1.5 py-0.5 text-[10px] font-semibold text-texto-2"
+                          title="Cómo se resolvió (lo declara la empresa al reportar; Bacheo lo puede corregir)"
+                        >
+                          {ETIQUETA_TIPO_INTERVENCION[iv.tipoIntervencion] ?? iv.tipoIntervencion}
+                        </span>
+                      )}
                       {iv.fotos > 0 && <span className="num text-[10px] text-texto-3">📷 {iv.fotos}</span>}
                     </div>
                   </td>
@@ -184,13 +238,19 @@ export default async function PaginaIntervenciones({
   );
 }
 
-function urlPagina(filtros: { estado?: string; ejecutor?: string; q?: string }, pagina: number): string {
+type Filtros = { estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; pagina?: string };
+
+function urlFiltros(filtros: Filtros): string {
   const p = new URLSearchParams();
-  if (filtros.estado) p.set("estado", filtros.estado);
-  if (filtros.ejecutor) p.set("ejecutor", filtros.ejecutor);
-  if (filtros.q) p.set("q", filtros.q);
-  p.set("pagina", String(pagina));
-  return `/intervenciones?${p.toString()}`;
+  for (const k of ["estado", "ejecutor", "tipo_intervencion", "q", "pagina"] as const) {
+    if (filtros[k]) p.set(k, filtros[k]);
+  }
+  const qs = p.toString();
+  return qs ? `/intervenciones?${qs}` : "/intervenciones";
+}
+
+function urlPagina(filtros: Filtros, pagina: number): string {
+  return urlFiltros({ ...filtros, pagina: String(pagina) });
 }
 
 /** El recorrido asignada → en curso → finalizada como tres puntos conectados. */

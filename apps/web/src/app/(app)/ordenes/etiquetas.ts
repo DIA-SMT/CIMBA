@@ -55,10 +55,16 @@ export const ETIQUETA_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
   pendiente: "Pendiente",
   hecho: "Hecho",
   no_encontrado: "No encontrado",
+  propuesto: "Propuesto por la empresa",
+  rechazado: "Rechazado",
+  ya_resuelto: "Ya estaba resuelto",
 };
 
 export const COLOR_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
   pendiente: "#3987e5",
   hecho: "#199e70",
   no_encontrado: "#8b94a3",
+  propuesto: "#b48f00",
+  rechazado: "#8b94a3",
+  ya_resuelto: "#5c8a76",
 };

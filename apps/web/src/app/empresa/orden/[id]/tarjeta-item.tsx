@@ -3,8 +3,8 @@
 import { Camera, Check, LocateFixed, MapPin, Mic, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import { dentroDeSMT } from "@cimba/domain";
-import { reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
+import { dentroDeSMT, type TipoIntervencion } from "@cimba/domain";
+import { marcarYaResuelto, reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
@@ -15,6 +15,14 @@ const ETIQUETA_TRABAJO: Record<string, string> = {
   carpeta: "Carpeta",
   tramo: "Tramo",
 };
+
+/** Los cuatro modos reales de resolver, con la etiqueta que usa la cuadrilla. */
+const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }> = [
+  { valor: "bacheo", etiqueta: "Bacheo" },
+  { valor: "pano_hormigon", etiqueta: "Cambio de paño de hormigón" },
+  { valor: "carpeta", etiqueta: "Carpeta (repavimentación)" },
+  { valor: "enripiado", etiqueta: "Enripiado" },
+];
 
 /** El teclado del teléfono mete coma decimal: se normaliza antes de parsear. */
 const aNumero = (s: string) => Number(s.trim().replace(",", "."));
@@ -68,6 +76,19 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const [largo, setLargo] = useState("");
   const [espesor, setEspesor] = useState("");
   const [obs, setObs] = useState("");
+  // Cómo se resolvió: arranca en lo que pedía la orden (carpeta → carpeta,
+  // el resto → bacheo) y el capataz lo corrige si en la calle terminó siendo
+  // otra cosa ("empieza como bacheo y al final se ha hecho cambio de paño").
+  const [tipoIntervencion, setTipoIntervencion] = useState<TipoIntervencion>(
+    item.tipoTrabajo === "carpeta" ? "carpeta" : "bacheo",
+  );
+
+  // "ya estaba hecho": mini-form aparte, con su propia foto obligatoria
+  const [yaAbierto, setYaAbierto] = useState(false);
+  const refFotoHoy = useRef<HTMLInputElement>(null);
+  const [fotoHoy, setFotoHoy] = useState<File | null>(null);
+  const [previewHoy, setPreviewHoy] = useState<string | null>(null);
+  const [obsYa, setObsYa] = useState("");
 
   // fotos
   const refDespues = useRef<HTMLInputElement>(null);
@@ -208,6 +229,7 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
     fd.set("anchoM", String(anchoN));
     fd.set("largoM", String(largoN));
     fd.set("espesorCm", String(aNumero(espesor)));
+    fd.set("tipoIntervencion", tipoIntervencion);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     // Solo se manda ubicación si es una corrección: si es la de la orden,
     // la acción ya la toma del propio item.
@@ -230,15 +252,42 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
     });
   };
 
-  const noEncontrado = () => {
-    const motivo = window.prompt(
-      "¿Por qué no se encontró? (ej.: ya estaba tapado, la dirección no existe)",
-    );
-    if (!motivo || motivo.trim().length < 3) return;
+  /**
+   * Motivo inline y no window.prompt(): el diálogo nativo no anda en webviews
+   * embebidos, corta el flujo táctil, y con guantes es imposible — el input
+   * grande con confirmar es el mismo patrón del resto de la tarjeta.
+   */
+  const [noEncAbierto, setNoEncAbierto] = useState(false);
+  const [motivoNoEnc, setMotivoNoEnc] = useState("");
+  const enviarNoEncontrado = () => {
+    if (motivoNoEnc.trim().length < 3) {
+      setError("Contá en una frase por qué no se encontró (ej.: ya estaba tapado, la dirección no existe).");
+      return;
+    }
     setError(null);
     startTransition(async () => {
       try {
-        await reportarItemNoEncontrado({ itemId: item.id, motivo: motivo.trim() });
+        await reportarItemNoEncontrado({ itemId: item.id, motivo: motivoNoEnc.trim() });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo reportar: probá de nuevo.");
+      }
+    });
+  };
+
+  const enviarYaResuelto = () => {
+    setError(null);
+    if (!fotoHoy) {
+      setError("Sacale una foto a cómo está hoy: es la evidencia de que ya estaba hecho.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("itemId", String(item.id));
+    fd.set("foto", fotoHoy);
+    if (obsYa.trim()) fd.set("observaciones", obsYa.trim());
+    startTransition(async () => {
+      try {
+        await marcarYaResuelto(fd);
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "No se pudo reportar: probá de nuevo.");
@@ -278,18 +327,107 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
       {!abierto ? (
         <div className="mt-3 space-y-2">
           <button
-            onClick={() => setAbierto(true)}
+            onClick={() => {
+              setAbierto(true);
+              setYaAbierto(false);
+            }}
             className="w-full rounded-xl bg-azul px-4 py-4 text-base font-bold text-white transition active:scale-[0.99]"
           >
             REPORTAR HECHO
           </button>
-          <button
-            onClick={noEncontrado}
-            disabled={pendiente}
-            className="w-full rounded-lg px-3 py-2 text-sm text-texto-3 transition hover:text-texto-2 disabled:opacity-50"
-          >
-            No lo encontré
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setYaAbierto((v) => !v)}
+              disabled={pendiente}
+              className={`rounded-lg border px-3 py-2 text-sm font-semibold transition disabled:opacity-50 ${
+                yaAbierto
+                  ? "border-celeste/60 bg-celeste/10 text-celeste"
+                  : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+              }`}
+            >
+              Ya estaba hecho
+            </button>
+            <button
+              onClick={() => setNoEncAbierto((v) => !v)}
+              disabled={pendiente}
+              className={`rounded-lg px-3 py-2 text-sm transition disabled:opacity-50 ${
+                noEncAbierto ? "text-texto" : "text-texto-3 hover:text-texto-2"
+              }`}
+            >
+              No lo encontré
+            </button>
+          </div>
+
+          {noEncAbierto && (
+            <div className="space-y-2 rounded-xl border border-borde-2 bg-panel-2 p-3">
+              <input
+                value={motivoNoEnc}
+                onChange={(e) => setMotivoNoEnc(e.target.value)}
+                placeholder="¿Por qué? Ej.: ya estaba tapado, la dirección no existe"
+                className="w-full rounded-lg border border-borde-2 bg-panel px-3 py-3 text-sm outline-none placeholder:text-texto-3 focus:border-celeste/50"
+              />
+              <button
+                onClick={enviarNoEncontrado}
+                disabled={pendiente || motivoNoEnc.trim().length < 3}
+                className="w-full rounded-lg border border-borde-2 px-3 py-3 text-sm font-semibold text-texto-2 transition hover:text-texto disabled:opacity-50"
+              >
+                {pendiente ? "Enviando…" : "Confirmar: no se encontró"}
+              </button>
+            </div>
+          )}
+
+          {/* "Llegamos y ya estaba tapado": evidencia de hoy, sin sumar m². */}
+          {yaAbierto && (
+            <div className="space-y-2 rounded-xl border border-celeste/40 bg-celeste/5 p-3">
+              <p className="text-sm leading-relaxed text-texto-2">
+                Si al llegar el bache ya estaba reparado, sacale una foto de cómo está hoy. No suma
+                m² de tu empresa: solo cierra el punto con evidencia.
+              </p>
+              <input
+                ref={refFotoHoy}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => elegirFoto(e.target.files?.[0], setFotoHoy, setPreviewHoy, previewHoy)}
+              />
+              <button
+                onClick={() => refFotoHoy.current?.click()}
+                className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
+                  fotoHoy ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
+                }`}
+              >
+                {previewHoy ? (
+                  <>
+                    <img src={previewHoy} alt="Foto de cómo está hoy" loading="lazy" className="h-full w-full object-cover" />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                      CÓMO ESTÁ HOY ✓ — tocá para cambiar
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                    <Camera size={22} className="text-celeste" />
+                    Foto de cómo está hoy
+                    <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
+                  </span>
+                )}
+              </button>
+              <textarea
+                value={obsYa}
+                onChange={(e) => setObsYa(e.target.value)}
+                rows={2}
+                placeholder="Observaciones (opcional): quién lo habrá tapado, cómo quedó…"
+                className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+              />
+              <button
+                onClick={enviarYaResuelto}
+                disabled={pendiente}
+                className="w-full rounded-xl bg-celeste px-4 py-3.5 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
+              >
+                {pendiente ? "Subiendo foto…" : "CONFIRMAR: YA ESTABA HECHO"}
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="mt-4 space-y-4">
@@ -345,6 +483,30 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
             )}
             <p className="mt-1 text-xs leading-relaxed text-texto-3">
               Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero.
+            </p>
+          </div>
+
+          {/* Qué se hizo al final: pills grandes (guantes), no un select chico */}
+          <div>
+            <p className="mb-1.5 text-xs font-semibold text-texto-2">¿Qué trabajo se hizo?</p>
+            <div className="grid grid-cols-2 gap-2">
+              {OPCIONES_INTERVENCION.map((op) => (
+                <button
+                  key={op.valor}
+                  type="button"
+                  onClick={() => setTipoIntervencion(op.valor)}
+                  className={`min-h-14 rounded-xl border-2 px-3 py-2.5 text-sm leading-snug font-bold transition active:scale-[0.99] ${
+                    tipoIntervencion === op.valor
+                      ? "border-azul bg-azul/15 text-celeste"
+                      : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
+                  }`}
+                >
+                  {op.etiqueta}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-texto-3">
+              Si empezó como bacheo pero terminaron cambiando el paño, marcá lo que realmente se hizo.
             </p>
           </div>
 

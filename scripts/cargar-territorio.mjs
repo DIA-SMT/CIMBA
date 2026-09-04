@@ -1,8 +1,9 @@
 /**
  * Carga (o recarga) las capas territoriales pesadas a la base: la RED VIAL
- * (10.392 cuadras) y los SECTORES DE LICITACIÓN, leyendo los GeoJSON ya
- * convertidos de apps/web/public/data. Después reclasifica el destino de
- * TODAS las demandas (bacheo / sat / ingeniería) con la red recién cargada.
+ * (10.392 cuadras), los SECTORES DE LICITACIÓN y los 327 BARRIOS, leyendo los
+ * GeoJSON ya convertidos de apps/web/public/data. Después backfillea barrio_id
+ * y reclasifica el destino de TODAS las demandas (bacheo / sat / ingeniería)
+ * con la red recién cargada.
  *
  *   node scripts/cargar-territorio.mjs
  *
@@ -76,6 +77,42 @@ await sql.begin(async (tx) => {
   }
 });
 console.log(`sectores_licitacion: ${sectores.length} cargados`);
+
+// ── Barrios ───────────────────────────────────────────────────────────────────
+const barrios = leer("barrios.json");
+await sql.begin(async (tx) => {
+  await tx.unsafe("delete from barrios");
+  const LOTE_B = 50;
+  for (let i = 0; i < barrios.length; i += LOTE_B) {
+    const trozo = barrios.slice(i, i + LOTE_B);
+    const valores = trozo
+      .map((f) => {
+        const g = JSON.stringify(
+          f.geometry.type === "MultiPolygon"
+            ? f.geometry
+            : { type: "MultiPolygon", coordinates: [f.geometry.coordinates] },
+        ).replace(/'/g, "''");
+        // El id del shapefile va aparte (viene vacío o repetido en un tercio): la PK es propia.
+        const idShape = f.properties.id != null && Number(f.properties.id) > 0 ? Number(f.properties.id) : "null";
+        return `(${idShape}, '${String(f.properties.nombre).replace(/'/g, "''")}', st_multi(st_setsrid(st_geomfromgeojson('${g}'), 4326)))`;
+      })
+      .join(",\n");
+    await tx.unsafe(`insert into barrios (id_shape, nombre, geom) values ${valores}`);
+    process.stdout.write(`\rbarrios: ${Math.min(i + LOTE_B, barrios.length)}/${barrios.length}`);
+  }
+});
+console.log();
+
+// Backfill de barrio en lo ya cargado (el trigger cubre lo nuevo).
+await sql.unsafe(`
+  update demandas d set barrio_id = b.id from barrios b
+  where d.barrio_id is null and d.geom is not null and st_contains(b.geom, d.geom)
+`);
+await sql.unsafe(`
+  update incidentes i set barrio_id = b.id from barrios b
+  where i.barrio_id is null and i.geom is not null and st_contains(b.geom, i.geom)
+`);
+console.log("barrio_id backfilleado en demandas e incidentes");
 
 // ── Reclasificación de destino ────────────────────────────────────────────────
 // Con la red cargada, TODAS las demandas se reclasifican (menos las corregidas

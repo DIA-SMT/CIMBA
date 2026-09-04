@@ -41,18 +41,18 @@ import {
   type MapRef,
   type ViewState,
 } from "react-map-gl/maplibre";
-import type { FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
+import type { Feature, FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
 import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
-import type { CircuitoResumen } from "@/lib/ordenes";
+import type { CircuitoResumen, DeudaTerritorial } from "@/lib/ordenes";
 import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 import { vincularDemanda } from "@/lib/acciones";
 import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
-import { AnalisisZona } from "./analisis-zona";
+import { AnalisisZona, type ZonaActiva } from "./analisis-zona";
 import { ComparadorObra } from "./comparador-obra";
 import { CortinaComparar } from "./cortina-comparar";
 import { GuiaMapa } from "./guia-mapa";
@@ -476,6 +476,63 @@ const capaBarriosNombre = (p: Paleta): LayerProps => ({
   },
   paint: { "text-color": p.barrios, "text-halo-color": p.halo, "text-halo-width": 1.4 },
 });
+
+// ── Deuda territorial: barrios y circuitos pintados como los distritos ──────
+// "Esto se pinta por deuda… podemos hacer lo mismo para circuito de trabajo y
+// para barrios; eso le va a hacer feliz a la doctora." MISMA rampa y semántica
+// que capaDistritosRelleno: verde = atendido, rojo = abandonado; pct_deuda -1
+// (sin pedidos abiertos) queda sin pintar — no es "cero deuda", es "nada que
+// medir". Los datos llegan de /api/deuda-territorial y se juntan client-side
+// contra los geojson estáticos (ver los memos barriosConDeuda/circuitosConDeuda).
+const capaBarriosDeuda: LayerProps = {
+  // Mismo id que el relleno clásico de "problemas": las dos variantes se
+  // intercambian sin tocar el orden de capas ni el tooltip.
+  id: "barrios-relleno",
+  type: "fill",
+  source: "barrios",
+  paint: {
+    "fill-color": [
+      "case",
+      ["<", ["get", "pct_deuda"], 0], "rgba(0,0,0,0)",
+      ["interpolate", ["linear"], ["get", "pct_deuda"],
+        0, "#199e70", 50, "#f4dc00", 75, "#d95926", 100, "#ff3b30"],
+    ],
+    // Un toque más opaco que los distritos: los polígonos de barrio son chicos
+    // y al 0.22 el tinte se pierde entre las líneas del fondo.
+    "fill-opacity": ["case", ["<", ["get", "pct_deuda"], 0], 0, 0.3],
+  },
+};
+const capaCircuitosDeuda: LayerProps = {
+  // Mismo id que el relleno por empresa: el clic (detalle del circuito) y el
+  // tooltip siguen funcionando igual con cualquiera de las dos pinturas.
+  id: "circuitos-empresa-relleno",
+  type: "fill",
+  source: "circuitos",
+  paint: {
+    "fill-color": [
+      "case",
+      ["<", ["get", "pct_deuda"], 0], "rgba(0,0,0,0)",
+      ["interpolate", ["linear"], ["get", "pct_deuda"],
+        0, "#199e70", 50, "#f4dc00", 75, "#d95926", 100, "#ff3b30"],
+    ],
+    "fill-opacity": ["case", ["<", ["get", "pct_deuda"], 0], 0, 0.25],
+  },
+};
+
+/**
+ * Clave del join de barrios por NOMBRE normalizado (minúsculas, sin acentos,
+ * espacios colapsados). Se joinea así A PROPÓSITO: el properties.id de
+ * public/data/barrios.json viene roto del shapefile original y NO coincide
+ * con la PK de la tabla barrios — el nombre es lo único que ambos comparten.
+ */
+function nombreNormalizado(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 // ── Capas viales nuevas (GeoJSON municipales estáticos, fetch lazy) ─────────
 
@@ -1020,6 +1077,12 @@ function MapaInterno({
     inicial?.zona ? { lon: inicial.zona.lon, lat: inicial.zona.lat } : null,
   );
   const [radioZona, setRadioZona] = useState(inicial?.zona?.radio ?? 250);
+  // Forma de la zona: círculo (mantener y arrastrar) o polígono clic a clic
+  // ("analizo estas 8 manzanas"). Los vértices son [lon, lat]; recién cerrado
+  // (doble clic o clic sobre el primer vértice) el polígono mide.
+  const [formaZona, setFormaZona] = useState<"circulo" | "poligono">("circulo");
+  const [vertsZona, setVertsZona] = useState<Array<[number, number]>>([]);
+  const [zonaCerrada, setZonaCerrada] = useState(false);
   // Densidad 3D en hexágonos
   const [verHex, setVerHex] = useState(inicial?.hex ?? false);
   // Línea de tiempo
@@ -1044,6 +1107,38 @@ function MapaInterno({
   const barraEstadoRef = useRef<HTMLDivElement>(null);
   const modoAnalisisRef = useRef(false);
   modoAnalisisRef.current = modoAnalisis;
+  // Espejos para alClick (useCallback sin dependencias): el dibujo del
+  // polígono necesita leer el estado vivo, no el del cierre del callback.
+  const formaZonaRef = useRef(formaZona);
+  formaZonaRef.current = formaZona;
+  const vertsZonaRef = useRef(vertsZona);
+  vertsZonaRef.current = vertsZona;
+  const zonaCerradaRef = useRef(zonaCerrada);
+  zonaCerradaRef.current = zonaCerrada;
+  // ?zp=lon,lat;lon,lat;… reproduce un polígono compartido con "Copiar link".
+  // Se parsea en el cliente: el círculo (zlat/zlon/zr) ya viaja por la page,
+  // pero el polígono es una herramienta de esta isla — no hace falta tocar el
+  // server component para llevarle una lista de vértices.
+  useEffect(() => {
+    try {
+      const zp = new URLSearchParams(window.location.search).get("zp");
+      if (!zp) return;
+      const verts = zp
+        .split(";")
+        .slice(0, 100)
+        .map((par) => par.split(",").map(Number))
+        .filter((c): c is [number, number] => c.length === 2 && c.every((n) => Number.isFinite(n)));
+      if (verts.length >= 3) {
+        setFormaZona("poligono");
+        setVertsZona(verts);
+        setZonaCerrada(true);
+        setZona(null);
+      }
+    } catch {
+      // URL rota: el mapa abre normal, sin polígono
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Gesto de dibujo del círculo: mousedown fija el centro, arrastrar agranda
   // el radio con las estadísticas recalculándose en vivo, mouseup lo suelta.
   const dibujandoRef = useRef(false);
@@ -1085,6 +1180,34 @@ function MapaInterno({
       })
       .catch(() => {});
   }, [verCircuitos, circuitosOp]);
+  // ── Deuda territorial: pintar barrios y circuitos por deuda ─────────────
+  // Se pide al prender la capa (y con el sub-toggle activo); es OPCIONAL como
+  // lo operativo: si falla, los límites se dibujan igual, solo sin tinte.
+  // El rol empresa ni intenta el fetch: /api/deuda-territorial le da 403.
+  const puedeVerDeuda = rol !== "empresa";
+  const [verDeudaBarrios, setVerDeudaBarrios] = useState(true);
+  const [verDeudaCircuitos, setVerDeudaCircuitos] = useState(true);
+  const [deudaBarrios, setDeudaBarrios] = useState<DeudaTerritorial[] | null>(null);
+  const [deudaCircuitos, setDeudaCircuitos] = useState<DeudaTerritorial[] | null>(null);
+  useEffect(() => {
+    if (!verBarrios || !verDeudaBarrios || deudaBarrios || !puedeVerDeuda) return;
+    fetch("/api/deuda-territorial?nivel=barrio")
+      .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
+      .then((datos) => {
+        if (Array.isArray(datos)) setDeudaBarrios(datos as DeudaTerritorial[]);
+      })
+      .catch(() => {});
+  }, [verBarrios, verDeudaBarrios, deudaBarrios, puedeVerDeuda]);
+  useEffect(() => {
+    if (!verCircuitos || !verDeudaCircuitos || deudaCircuitos || !puedeVerDeuda) return;
+    fetch("/api/deuda-territorial?nivel=circuito")
+      .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
+      .then((datos) => {
+        if (Array.isArray(datos)) setDeudaCircuitos(datos as DeudaTerritorial[]);
+      })
+      .catch(() => {});
+  }, [verCircuitos, verDeudaCircuitos, deudaCircuitos, puedeVerDeuda]);
+
   // Popup del circuito clickeado (código, empresa, prioridad, carga pendiente)
   const [circuitoSel, setCircuitoSel] = useState<Record<string, unknown> | null>(null);
 
@@ -1120,10 +1243,69 @@ function MapaInterno({
       }),
     };
   }, [circuitosGeo, circuitosOp]);
+
+  /**
+   * Deuda por circuito, encima de lo operativo. El join va por CÓDIGO: el
+   * geojson estático no trae el id de la base, pero deudaPorTerritorio
+   * devuelve como nombre el codigo del circuito ("15B"), que es exactamente
+   * el properties.circuito del geojson — el mismo criterio que ya usa el
+   * join de /api/circuitos-operativos.
+   */
+  const circuitosConDeuda = useMemo<FCPoligono | null>(() => {
+    const base = circuitosConOperativa;
+    if (!base) return null;
+    if (!verDeudaCircuitos || !deudaCircuitos || deudaCircuitos.length === 0) return base;
+    const porCodigo = new Map(deudaCircuitos.map((d) => [d.nombre, d]));
+    return {
+      type: "FeatureCollection",
+      features: base.features.map((f) => {
+        const deuda = porCodigo.get(String(f.properties.circuito ?? ""));
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            deuda_abiertas: deuda?.abiertas ?? 0,
+            deuda_sin: deuda?.sinAtencion ?? 0,
+            // -1 = sin pedidos abiertos: la rampa lo deja sin pintar.
+            pct_deuda: deuda && deuda.abiertas > 0 ? Math.round(100 * deuda.pct) : -1,
+          },
+        };
+      }),
+    };
+  }, [circuitosConOperativa, deudaCircuitos, verDeudaCircuitos]);
   useEffect(() => {
     if (!verBarrios || barriosGeo) return;
     fetch("/data/barrios.json").then((r) => r.json()).then(setBarriosGeo).catch(() => {});
   }, [verBarrios, barriosGeo]);
+
+  /**
+   * Deuda por barrio. OJO con el join: el properties.id de barrios.json NO es
+   * la PK de la tabla barrios (viene roto del shapefile), así que acá se
+   * joinea por NOMBRE normalizado (minúsculas, sin acentos, espacios
+   * colapsados) — es lo único que el geojson y la base comparten de verdad.
+   * Un barrio de la base cuyo nombre no matchee ningún polígono simplemente
+   * no se pinta (y viceversa): preferible a pintar el barrio equivocado.
+   */
+  const barriosConDeuda = useMemo<FCPoligono | null>(() => {
+    if (!barriosGeo) return null;
+    if (!verDeudaBarrios || !deudaBarrios || deudaBarrios.length === 0) return barriosGeo;
+    const porNombre = new Map(deudaBarrios.map((d) => [nombreNormalizado(d.nombre), d]));
+    return {
+      type: "FeatureCollection",
+      features: barriosGeo.features.map((f) => {
+        const deuda = porNombre.get(nombreNormalizado(String(f.properties.nombre ?? "")));
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            deuda_abiertas: deuda?.abiertas ?? 0,
+            deuda_sin: deuda?.sinAtencion ?? 0,
+            pct_deuda: deuda && deuda.abiertas > 0 ? Math.round(100 * deuda.pct) : -1,
+          },
+        };
+      }),
+    };
+  }, [barriosGeo, deudaBarrios, verDeudaBarrios]);
 
   // ── Capas viales nuevas: apagadas por defecto, fetch lazy al prenderlas ──
   // (mismo patrón que circuitos/barrios: nadie paga el JSON sin pedirlo —
@@ -1492,12 +1674,44 @@ function MapaInterno({
   }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor, distritoFoco]);
 
   // Memoizados: sin esto, cada render (uno por frame al panear con Comparar
-  // activo) recalcula el polígono del círculo entero para nada.
-  const circuloZona = useMemo(() => (zona ? crearCirculo(zona.lon, zona.lat, radioZona) : null), [zona, radioZona]);
+  // activo) recalcula el polígono de la zona entero para nada. La geometría
+  // de la zona es el círculo O el polígono cerrado: mismas capas de relleno.
+  const geometriaZona = useMemo<Feature<Polygon> | null>(() => {
+    if (formaZona === "circulo") return zona ? crearCirculo(zona.lon, zona.lat, radioZona) : null;
+    if (zonaCerrada && vertsZona.length >= 3) {
+      const primero = vertsZona[0];
+      if (!primero) return null;
+      return {
+        type: "Feature",
+        geometry: { type: "Polygon", coordinates: [[...vertsZona, primero]] },
+        properties: {},
+      };
+    }
+    return null;
+  }, [formaZona, zona, radioZona, zonaCerrada, vertsZona]);
   const circuloZonaA = useMemo(
     () => (zonaA ? crearCirculo(zonaA.centro.lon, zonaA.centro.lat, zonaA.radio) : null),
     [zonaA],
   );
+
+  // El polígono a medio dibujar: la línea entre vértices y los vértices en sí
+  // (el primero, más grande, funciona además como botón de cierre).
+  const dibujoPoligono = useMemo<FeatureCollection<LineString | Point, Record<string, unknown>> | null>(() => {
+    if (formaZona !== "poligono" || zonaCerrada || vertsZona.length === 0) return null;
+    const features: Array<Feature<LineString | Point, Record<string, unknown>>> = vertsZona.map((v, i) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: v },
+      properties: { primero: i === 0 },
+    }));
+    if (vertsZona.length >= 2) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: vertsZona },
+        properties: {},
+      });
+    }
+    return { type: "FeatureCollection", features };
+  }, [formaZona, zonaCerrada, vertsZona]);
 
   /**
    * Versión de los datos para MÉTRICAS (balance, Top 20, cifras de deuda):
@@ -2110,14 +2324,77 @@ function MapaInterno({
     }
   };
 
+  // La zona activa del analizador, en un solo valor para el panel: círculo
+  // con centro, o polígono (aunque esté a medio dibujar, para que el panel
+  // muestre las instrucciones y el conteo de vértices en vivo).
+  const zonaActiva = useMemo<ZonaActiva | null>(() => {
+    if (formaZona === "circulo") return zona ? { forma: "circulo", centro: zona, radio: radioZona } : null;
+    if (modoAnalisis || zonaCerrada || vertsZona.length > 0)
+      return { forma: "poligono", vertices: vertsZona, cerrado: zonaCerrada };
+    return null;
+  }, [formaZona, zona, radioZona, modoAnalisis, zonaCerrada, vertsZona]);
+
+  const cambiarFormaZona = (f: "circulo" | "poligono") => {
+    if (f === formaZona) return;
+    setFormaZona(f);
+    setVertsZona([]);
+    setZonaCerrada(false);
+    setZonaA(null);
+    setModoAnalisis(true);
+    if (f === "poligono") {
+      setZona(null); // el mapa queda en modo dibujo: clic a clic
+    } else {
+      // Que el panel no desaparezca al volver: un círculo cómodo en el centro
+      // actual, listo para arrastrar otro donde haga falta.
+      const c = mapRef.current?.getMap()?.getCenter();
+      if (c) setZona({ lon: c.lng, lat: c.lat });
+      setRadioZona(250);
+    }
+  };
+
+  const cerrarAnalisis = () => {
+    setZona(null);
+    setZonaA(null);
+    setModoAnalisis(false);
+    setVertsZona([]);
+    setZonaCerrada(false);
+    setFormaZona("circulo");
+  };
+
   const alClick = useCallback((e: MapLayerMouseEvent) => {
     if (modoAnalisisRef.current) {
-      // el centro lo fija onMouseDown; acá solo evitamos abrir el detalle
+      if (formaZonaRef.current === "poligono") {
+        // Dibujo clic a clic. Un clic con el polígono ya cerrado arranca uno
+        // nuevo; si no, agrega vértice — y sobre el PRIMER vértice, cierra.
+        const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        if (zonaCerradaRef.current) {
+          setVertsZona([pt]);
+          setZonaCerrada(false);
+          return;
+        }
+        const verts = vertsZonaRef.current;
+        const primero = verts[0];
+        if (verts.length >= 3 && primero) {
+          const px = mapRef.current?.getMap()?.project({ lng: primero[0], lat: primero[1] });
+          if (px && Math.hypot(px.x - e.point.x, px.y - e.point.y) <= 12) {
+            setZonaCerrada(true);
+            return;
+          }
+        }
+        // El doble clic dispara antes dos clics en el mismo punto: el segundo
+        // se descarta acá para no duplicar el vértice.
+        const ultimo = verts[verts.length - 1];
+        if (ultimo && distanciaM(ultimo[0], ultimo[1], pt[0], pt[1]) < 1) return;
+        setVertsZona([...verts, pt]);
+        return;
+      }
+      // círculo: el centro lo fija onMouseDown; acá solo evitamos abrir el detalle
       return;
     }
-    // Las líneas de colectivos son solo informativas (tooltip): un clic sobre
-    // ellas no debe abrir ni cerrar nada — se busca el siguiente feature útil.
-    const feature = e.features?.find((f) => f.layer.id !== "colectivos-linea");
+    // Las líneas de colectivos y los barrios son solo informativos (tooltip):
+    // un clic sobre ellos no debe abrir ni cerrar nada — se busca el siguiente
+    // feature útil.
+    const feature = e.features?.find((f) => f.layer.id !== "colectivos-linea" && f.layer.id !== "barrios-relleno");
     if (!feature) {
       setSeleccion(null);
       setCotejo(null);
@@ -2225,7 +2502,9 @@ function MapaInterno({
           "clusters",
           "incidentes-punto",
           "demandas-punto",
-          ...(verCircuitos && circuitosConOperativa ? ["circuitos-empresa-relleno"] : []),
+          ...(verCircuitos && circuitosConDeuda ? ["circuitos-empresa-relleno"] : []),
+          // Barrios: solo tooltip (deuda al pasar el mouse); el clic no abre nada.
+          ...(verBarrios && barriosConDeuda ? ["barrios-relleno"] : []),
           ...(verSectores && sectoresGeo ? ["sectores-hormigon-relleno", "sectores-cuadrante-relleno"] : []),
           ...(verColectivos && colectivosGeo ? ["colectivos-linea"] : []),
         ]}
@@ -2242,8 +2521,15 @@ function MapaInterno({
           // Un estilo o capa inválidos dejarían el mapa en negro sin avisar.
           console.error("[mapa] error de MapLibre:", e.error?.message ?? e);
         }}
+        onDblClick={(e) => {
+          // Cerrar el polígono con doble clic (los dos clics previos ya
+          // cayeron en alClick; el segundo se descartó como duplicado).
+          if (!modoAnalisisRef.current || formaZonaRef.current !== "poligono") return;
+          e.preventDefault(); // sin esto el doble clic además haría zoom
+          if (!zonaCerradaRef.current && vertsZonaRef.current.length >= 3) setZonaCerrada(true);
+        }}
         onMouseDown={(e) => {
-          if (!modoAnalisisRef.current) return;
+          if (!modoAnalisisRef.current || formaZonaRef.current !== "circulo") return;
           e.preventDefault(); // suspende el paneo del mapa durante el dibujo
           dibujandoRef.current = true;
           arrastroRef.current = false;
@@ -2257,7 +2543,7 @@ function MapaInterno({
           if (!arrastroRef.current) setRadioZona(250);
         }}
         onTouchStart={(e) => {
-          if (!modoAnalisisRef.current) return;
+          if (!modoAnalisisRef.current || formaZonaRef.current !== "circulo") return;
           e.preventDefault();
           dibujandoRef.current = true;
           arrastroRef.current = false;
@@ -2325,12 +2611,31 @@ function MapaInterno({
                 (p.score != null ? " · score " + Number(p.score).toFixed(0) : ""),
             ];
           } else if (f.layer.id === "circuitos-empresa-relleno") {
+            // Con la deuda cargada, la segunda línea es la cifra que pinta el
+            // polígono: "N abiertos · M sin atención (P%)".
+            const pctDeuda = Number(p.pct_deuda ?? -1);
             lineas = [
               "Circuito " + String(p.circuito ?? ""),
-              p.op
-                ? (p.empresa ? String(p.empresa) : "sin asignar") +
-                  " · " + numero(Number(p.pendientes ?? 0)) + " pendientes · clic para el detalle"
-                : "clic para el detalle",
+              pctDeuda >= 0
+                ? numero(Number(p.deuda_abiertas ?? 0)) + " abiertos · " +
+                  numero(Number(p.deuda_sin ?? 0)) + " sin atención (" + pctDeuda + "%) · clic para el detalle"
+                : p.op
+                  ? (p.empresa ? String(p.empresa) : "sin asignar") +
+                    " · " + numero(Number(p.pendientes ?? 0)) + " pendientes · clic para el detalle"
+                  : "clic para el detalle",
+            ];
+          } else if (f.layer.id === "barrios-relleno") {
+            const pctDeuda = Number(p.pct_deuda ?? -1);
+            lineas = [
+              "Barrio " + String(p.nombre ?? ""),
+              pctDeuda >= 0
+                ? numero(Number(p.deuda_abiertas ?? 0)) + " abiertos · " +
+                  numero(Number(p.deuda_sin ?? 0)) + " sin atención (" + pctDeuda + "%)"
+                : p.pct_deuda != null
+                  ? "sin pedidos abiertos"
+                  : p.problemas
+                    ? "con problemas reportados"
+                    : "sin problemas reportados",
             ];
           } else if (f.layer.id === "colectivos-linea") {
             // "L4 · MERCOFRUT": la sensibilidad por transporte del ingeniero
@@ -2418,16 +2723,28 @@ function MapaInterno({
         )}
 
         {/* Límites territoriales de referencia — igual, debajo de los datos */}
-        {verBarrios && barriosGeo && (
-          <Source id="barrios" type="geojson" data={barriosGeo}>
-            <Layer {...capaBarriosRelleno} />
+        {verBarrios && barriosConDeuda && (
+          <Source id="barrios" type="geojson" data={barriosConDeuda}>
+            {/* Con la deuda cargada se pinta la coropleta (misma rampa que los
+                distritos); sin datos, el tinte rojo clásico de "problemas". */}
+            {verDeudaBarrios && deudaBarrios && deudaBarrios.length > 0 ? (
+              <Layer {...capaBarriosDeuda} />
+            ) : (
+              <Layer {...capaBarriosRelleno} />
+            )}
             <Layer {...capas.barriosLinea} />
             <Layer {...capas.barriosNombre} />
           </Source>
         )}
-        {verCircuitos && circuitosConOperativa && (
-          <Source id="circuitos" type="geojson" data={circuitosConOperativa}>
-            <Layer {...capas.circuitosEmpresa} />
+        {verCircuitos && circuitosConDeuda && (
+          <Source id="circuitos" type="geojson" data={circuitosConDeuda}>
+            {/* Deuda y empresa comparten id de capa: el clic y el tooltip del
+                circuito funcionan igual con cualquiera de las dos pinturas. */}
+            {verDeudaCircuitos && deudaCircuitos && deudaCircuitos.length > 0 ? (
+              <Layer {...capaCircuitosDeuda} />
+            ) : (
+              <Layer {...capas.circuitosEmpresa} />
+            )}
             <Layer {...capas.circuitosLinea} />
             <Layer {...capas.circuitosPrioridad} />
             <Layer {...capas.circuitosNombre} />
@@ -2456,10 +2773,33 @@ function MapaInterno({
           </Source>
         )}
 
-        {zona && circuloZona && (
-          <Source id="zona" type="geojson" data={circuloZona}>
+        {geometriaZona && (
+          <Source id="zona" type="geojson" data={geometriaZona}>
             <Layer {...capas.zonaRelleno} />
             <Layer {...capas.zonaBorde} />
+          </Source>
+        )}
+
+        {dibujoPoligono && (
+          <Source id="zona-dibujo" type="geojson" data={dibujoPoligono}>
+            <Layer
+              id="zona-dibujo-linea"
+              type="line"
+              filter={["==", ["geometry-type"], "LineString"]}
+              paint={{ "line-color": pal.acento, "line-width": 2, "line-dasharray": [2, 1.5] }}
+            />
+            <Layer
+              id="zona-dibujo-vertice"
+              type="circle"
+              filter={["==", ["geometry-type"], "Point"]}
+              paint={{
+                // El primer vértice es más grande: es el "botón" que cierra.
+                "circle-radius": ["case", ["boolean", ["get", "primero"], false], 7, 4.5],
+                "circle-color": pal.acento,
+                "circle-stroke-color": pal.tinta,
+                "circle-stroke-width": 2,
+              }}
+            />
           </Source>
         )}
 
@@ -3214,6 +3554,13 @@ function MapaInterno({
                 página; el trazado del circuito no depende de esto.
               </p>
             )}
+            {Number(circuitoSel.pct_deuda ?? -1) >= 0 && (
+              <p className="border-t border-borde pt-2.5 text-[11px] leading-relaxed text-texto-2">
+                Deuda: <b className="num">{numero(Number(circuitoSel.deuda_sin ?? 0))}</b> de{" "}
+                <b className="num">{numero(Number(circuitoSel.deuda_abiertas ?? 0))}</b> pedidos abiertos sin
+                ninguna reparación cerca (<b className="num">{String(circuitoSel.pct_deuda)}%</b>).
+              </p>
+            )}
           </div>
         </aside>
       )}
@@ -3384,12 +3731,12 @@ function MapaInterno({
         </div>
       )}
 
-      {/* Analizador de zona */}
-      {zona && (
+      {/* Analizador de zona: círculo o polígono (zonaActiva discrimina) */}
+      {zonaActiva && (
         <AnalisisZona
-          centro={zona}
-          radio={radioZona}
+          zona={zonaActiva}
           setRadio={setRadioZona}
+          alCambiarForma={cambiarFormaZona}
           demandas={demandasFiltradas}
           incidentes={incidentesFiltrados}
           zonaA={zonaA}
@@ -3398,6 +3745,8 @@ function MapaInterno({
           alCerrar={() => {
             setZona(null);
             setZonaA(null);
+            setVertsZona([]);
+            setZonaCerrada(false);
             setModoAnalisis(false);
           }}
           arr={arrAnalisis}
@@ -3806,13 +4155,40 @@ function MapaInterno({
               <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.circuitos }} />
               <span className="min-w-0 truncate">Circuitos de trabajo</span>
             </label>
-            {verCircuitos && circuitosOp && (
+            {verCircuitos && puedeVerDeuda && (
+              <label
+                className="mb-2 ml-5 flex cursor-pointer items-center gap-2 text-[13px]"
+                title="Tiñe cada circuito según qué porcentaje de sus pedidos abiertos no tiene ninguna reparación cerca: verde atendido, rojo abandonado. Apagalo para volver al tinte por empresa asignada."
+              >
+                <input
+                  type="checkbox"
+                  checked={verDeudaCircuitos}
+                  onChange={(e) => setVerDeudaCircuitos(e.target.checked)}
+                  className="accent-[#0066ff]"
+                />
+                <span
+                  className="inline-block h-2.5 w-4 shrink-0 rounded-sm"
+                  style={{ background: "linear-gradient(90deg,#199e70,#f4dc00,#ff3b30)" }}
+                />
+                <span className="min-w-0 truncate">Pintar por deuda</span>
+              </label>
+            )}
+            {verCircuitos && circuitosOp && !(verDeudaCircuitos && deudaCircuitos) && (
               <p className="mb-2 ml-5 flex items-center gap-1.5 text-[10px] text-texto-3">
                 <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(79,156,249,0.45)" }} />
                 relleno = empresa ·
                 <span className="inline-block h-0.5 w-3 rounded" style={{ background: "#d95926" }} />
                 <span className="inline-block h-0.5 w-3 rounded" style={{ background: "var(--color-amarillo)" }} />
                 borde = prioridad
+              </p>
+            )}
+            {verCircuitos && verDeudaCircuitos && deudaCircuitos && (
+              <p className="mb-2 ml-5 flex items-center gap-1.5 text-[10px] text-texto-3">
+                <span
+                  className="inline-block h-2 w-8 rounded-sm"
+                  style={{ background: "linear-gradient(90deg,#199e70,#f4dc00,#d95926,#ff3b30)" }}
+                />
+                relleno = % de pedidos sin atención
               </p>
             )}
             <label
@@ -3828,6 +4204,24 @@ function MapaInterno({
               <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.barrios }} />
               <span className="min-w-0 truncate">Barrios</span>
             </label>
+            {verBarrios && puedeVerDeuda && (
+              <label
+                className="mb-2 ml-5 flex cursor-pointer items-center gap-2 text-[13px]"
+                title="Tiñe cada barrio según qué porcentaje de sus pedidos abiertos no tiene ninguna reparación cerca: verde atendido, rojo abandonado. Pasá el mouse por un barrio para ver sus números."
+              >
+                <input
+                  type="checkbox"
+                  checked={verDeudaBarrios}
+                  onChange={(e) => setVerDeudaBarrios(e.target.checked)}
+                  className="accent-[#0066ff]"
+                />
+                <span
+                  className="inline-block h-2.5 w-4 shrink-0 rounded-sm"
+                  style={{ background: "linear-gradient(90deg,#199e70,#f4dc00,#ff3b30)" }}
+                />
+                <span className="min-w-0 truncate">Pintar por deuda</span>
+              </label>
+            )}
             </>)}
 
             <Seccion titulo="Fondo" abierta={secciones.fondo ?? false}

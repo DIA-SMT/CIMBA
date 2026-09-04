@@ -67,6 +67,7 @@ export function FormularioOrden({
   const [prioridad, setPrioridad] = useState<PrioridadVial>("primaria");
   const [titulo, setTitulo] = useState("");
   const [indicaciones, setIndicaciones] = useState("");
+  const [contratoDecreto, setContratoDecreto] = useState("");
   const [venceEn, setVenceEn] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creando, startTransition] = useTransition();
@@ -168,6 +169,7 @@ export function FormularioOrden({
           prioridad,
           titulo: titulo.trim() || undefined,
           indicaciones: indicaciones.trim() || undefined,
+          contratoDecreto: contratoDecreto.trim() || undefined,
           venceEn: venceEn || undefined,
           incidenteIds: [...seleccion],
           tramos: tramosValidos.map((t) => ({
@@ -489,6 +491,16 @@ export function FormularioOrden({
               rows={3}
               placeholder="Horarios, cortes, tipo de mezcla, con quién coordinar…"
               className={`${claseInput} mt-1 w-full resize-y`}
+            />
+          </label>
+          <label className="block text-[11px] text-texto-2">
+            N° de contrato / decreto (opcional)
+            <input
+              value={contratoDecreto}
+              onChange={(e) => setContratoDecreto(e.target.value)}
+              maxLength={100}
+              placeholder="p. ej. Decreto 1234/26"
+              className={`${claseInput} mt-1 w-full`}
             />
           </label>
           <label className="block text-[11px] text-texto-2">

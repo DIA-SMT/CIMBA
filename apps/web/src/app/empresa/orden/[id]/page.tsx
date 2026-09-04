@@ -7,6 +7,7 @@ import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { resolverVistaPortal } from "../../vista";
+import { ProponerItem } from "./proponer-item";
 import { TarjetaItem } from "./tarjeta-item";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,18 @@ const PRIORIDAD: Record<string, { etiqueta: string; clase: string }> = {
 
 const m2 = (v: number | null) =>
   v != null ? new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 }).format(v) : "—";
+
+const ETIQUETA_TRABAJO: Record<string, string> = {
+  bache: "Bache",
+  carpeta: "Carpeta",
+  tramo: "Tramo",
+};
+
+/** Motivo del rechazo que dejó Bacheo en metadata.validacion (resolverPropuesto). */
+function motivoRechazo(metadata: Record<string, unknown>): string | null {
+  const v = metadata.validacion as { motivo?: unknown } | undefined;
+  return typeof v?.motivo === "string" ? v.motivo : null;
+}
 
 /** El trabajo del día: lo pendiente arriba y grande, lo hecho abajo como confirmación. */
 export default async function PaginaOrdenEmpresa({
@@ -64,7 +77,13 @@ export default async function PaginaOrdenEmpresa({
   const pendientes = orden.itemsDetalle.filter((i) => i.estado === "pendiente");
   const hechos = orden.itemsDetalle.filter((i) => i.estado === "hecho");
   const noEncontrados = orden.itemsDetalle.filter((i) => i.estado === "no_encontrado");
-  const pct = orden.items > 0 ? Math.round((100 * orden.hechos) / orden.items) : 0;
+  const yaResueltos = orden.itemsDetalle.filter((i) => i.estado === "ya_resuelto");
+  const propuestos = orden.itemsDetalle.filter((i) => i.estado === "propuesto");
+  const rechazados = orden.itemsDetalle.filter((i) => i.estado === "rechazado");
+  // El progreso se mide sobre el plan real: un propuesto sin validar (o
+  // rechazado) no es trabajo encargado y no puede inflar el denominador.
+  const enPlan = orden.items - propuestos.length - rechazados.length;
+  const pct = enPlan > 0 ? Math.round((100 * orden.hechos) / enPlan) : 0;
 
   return (
     <div className="mx-auto max-w-xl p-4 pb-16">
@@ -108,7 +127,7 @@ export default async function PaginaOrdenEmpresa({
         )}
         <div className="mt-3 flex items-baseline justify-between text-sm">
           <span>
-            <b className="num">{numero(orden.hechos)}</b> de <b className="num">{numero(orden.items)}</b> hechos
+            <b className="num">{numero(orden.hechos)}</b> de <b className="num">{numero(enPlan)}</b> hechos
           </span>
           <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
         </div>
@@ -141,6 +160,51 @@ export default async function PaginaOrdenEmpresa({
         </p>
       )}
 
+      {/* La calle manda: lo que la cuadrilla encuentra y no estaba en el papel */}
+      {activa && (
+        <div className="mt-4">
+          <ProponerItem ordenId={orden.id} />
+        </div>
+      )}
+
+      {(propuestos.length > 0 || rechazados.length > 0) && (
+        <>
+          <h2 className="mt-8 mb-2 text-xs font-bold tracking-wider text-texto-3 uppercase">
+            Propuestos por ustedes ({numero(propuestos.length + rechazados.length)})
+          </h2>
+          <div className="space-y-2">
+            {propuestos.map((item) => (
+              <Panel key={item.id} className="px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                  <span className="rounded bg-amarillo/15 px-2 py-1 text-[11px] font-bold text-amarillo">
+                    Esperando validación
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-texto-3">
+                  {ETIQUETA_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo} · Bacheo lo está revisando: si
+                  lo valida, aparece en los pendientes.
+                </p>
+              </Panel>
+            ))}
+            {rechazados.map((item) => {
+              const motivo = motivoRechazo(item.metadata);
+              return (
+                <Panel key={item.id} className="px-4 py-3 text-sm opacity-80">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                    <span className="rounded bg-panel-3 px-2 py-1 text-[11px] font-bold text-texto-2">
+                      Rechazado
+                    </span>
+                  </div>
+                  {motivo && <p className="mt-0.5 text-xs text-texto-3">Motivo: {motivo}</p>}
+                </Panel>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       {/* Lo hecho, colapsado: sirve de confirmación de lo que ya se cargó */}
       {hechos.length > 0 && (
         <>
@@ -150,6 +214,29 @@ export default async function PaginaOrdenEmpresa({
           <div className="space-y-2">
             {hechos.map((item) => (
               <ItemHecho key={item.id} item={item} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {yaResueltos.length > 0 && (
+        <>
+          <h2 className="mt-8 mb-2 text-xs font-bold tracking-wider text-texto-3 uppercase">
+            Ya estaban hechos ({numero(yaResueltos.length)})
+          </h2>
+          <div className="space-y-2">
+            {yaResueltos.map((item) => (
+              <Panel key={item.id} className="px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                  <span className="rounded px-2 py-1 text-[11px] font-bold" style={{ background: "#5c8a7622", color: "#5c8a76" }}>
+                    Ya estaba resuelto
+                  </span>
+                </div>
+                {item.observaciones && (
+                  <p className="mt-0.5 text-xs text-texto-3">{item.observaciones}</p>
+                )}
+              </Panel>
             ))}
           </div>
         </>
