@@ -1,4 +1,4 @@
-import { conRls, sql } from "@cimba/db";
+import { conRls, sql, getDb } from "@cimba/db";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { filtroEnum } from "./consultas";
@@ -277,6 +277,11 @@ export interface OrdenDetalle extends OrdenResumen {
 }
 
 export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDetalle | null> {
+  // La RLS está escrita pero hoy no se aplica (la app corre como dueño de
+  // las tablas): el enforcement de que un ejecutor (empresa contratista o
+  // cuadrilla propia) solo vea SUS órdenes tiene que estar acá, o
+  // /empresa/orden/[id] es un IDOR.
+  const empresaEjecutora = await empresaDelEjecutor(sesion);
   return conRls(claims(sesion), async (tx) => {
     const cab = (await tx.execute(sql`
       select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo
@@ -285,11 +290,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       left join circuitos c on c.id = ot.circuito_id
       where ot.id = ${id}
         ${
-          // La RLS está escrita pero hoy no se aplica (la app corre como dueño
-          // de las tablas): el enforcement de que una empresa solo vea SUS
-          // órdenes tiene que estar acá, o /empresa/orden/[id] es un IDOR.
-          sesion.rol_cimba === "empresa"
-            ? sql`and ot.empresa_id = ${sesion.id_empresa ?? -1} and ot.estado <> 'borrador'`
+          empresaEjecutora != null
+            ? sql`and ot.empresa_id = ${empresaEjecutora} and ot.estado <> 'borrador'`
             : sql``
         }
     `)) as unknown as Array<Record<string, unknown>>;
@@ -376,14 +378,41 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
   });
 }
 
+/** Slug de la empresa que representa a las cuadrillas propias del municipio. */
+const SLUG_ADMINISTRACION = "administracion";
+
+/**
+ * La empresa que EJECUTA con esta sesión, o null si la sesión no es un
+ * ejecutor (staff). Es LA pieza de la unificación Campo ↔ Órdenes:
+ *  - rol empresa   → su propia empresa (del JWT, fijada al loguear por slug);
+ *  - rol cuadrilla → la empresa "Administración (cuadrillas propias)": las
+ *    cuadrillas municipales son un ejecutor más y reportan por el mismo
+ *    portal y las mismas acciones que las contratistas.
+ * Como la RLS está escrita pero NO se aplica, todo filtro de propiedad de
+ * órdenes/items debe salir de acá — nunca de un parámetro del cliente.
+ */
+export async function empresaDelEjecutor(sesion: Sesion): Promise<number | null> {
+  if (sesion.rol_cimba === "empresa") return sesion.id_empresa ?? null;
+  if (sesion.rol_cimba === "cuadrilla") {
+    if (sesion.id_empresa) return sesion.id_empresa;
+    // JWT viejo sin empresa: se resuelve por slug (consulta puntual).
+    const filas = (await getDb().execute(sql`
+      select id from empresas where slug = ${SLUG_ADMINISTRACION} and activa
+    `)) as unknown as Array<{ id: number }>;
+    return filas[0] ? Number(filas[0].id) : null;
+  }
+  return null;
+}
+
 /**
  * Las órdenes de la empresa del portal /empresa. El staff (vista espejo)
- * puede pasar cualquier `empresaId`; para el rol empresa el parámetro se
- * IGNORA y siempre manda sesion.id_empresa — la RLS está escrita pero no
- * se aplica, así que esta línea es el único filtro real entre contratistas.
+ * puede pasar cualquier `empresaId`; para los EJECUTORES (rol empresa y
+ * rol cuadrilla) el parámetro se IGNORA y manda empresaDelEjecutor — la
+ * RLS está escrita pero no se aplica, así que esta línea es el único
+ * filtro real entre contratistas.
  */
 export async function ordenesDeEmpresa(sesion: Sesion, empresaId?: number): Promise<OrdenResumen[]> {
-  const efectiva = sesion.rol_cimba === "empresa" ? sesion.id_empresa : empresaId;
+  const efectiva = (await empresaDelEjecutor(sesion)) ?? empresaId;
   if (!efectiva) return [];
   const ordenes = await listarOrdenes(sesion, { empresaId: efectiva });
   // El borrador es planificación interna: el formulario promete "la empresa no

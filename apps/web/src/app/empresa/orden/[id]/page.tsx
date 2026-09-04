@@ -47,7 +47,7 @@ export default async function PaginaOrdenEmpresa({
   if (!Number.isInteger(idOrden) || idOrden <= 0) notFound();
 
   const sesion = (await leerSesion())!;
-  const resuelta = resolverVistaPortal(sesion, await searchParams);
+  const resuelta = await resolverVistaPortal(sesion, await searchParams);
   // obtenerOrden filtra por empresa cuando el rol es 'empresa' (y excluye
   // borradores): si el id es de otra empresa, vuelve null y esto es un 404, no
   // una fuga. El filtro vive en la consulta porque la RLS hoy no se aplica.
@@ -60,7 +60,7 @@ export default async function PaginaOrdenEmpresa({
    * dueña de la orden.
    */
   const vista =
-    sesion.rol_cimba === "empresa"
+    sesion.rol_cimba === "empresa" || sesion.rol_cimba === "cuadrilla"
       ? resuelta
       : { empresaId: resuelta.empresaId ?? orden.empresaId, esVistaEspejo: true };
   // Coherencia de la vista espejo: si el staff está mirando el portal de la

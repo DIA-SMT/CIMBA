@@ -12,9 +12,10 @@ import { BotonTema } from "@/components/boton-tema";
 export default async function LayoutEmpresa({ children }: { children: React.ReactNode }) {
   const sesion = await leerSesion();
   if (!sesion) redirect("/acceso");
+  // Las cuadrillas propias reportan acá (ejecutan como "Administración");
   // admin y planificacion (el Director) entran para soporte y vista espejo;
-  // cualquier otro rol tiene su propio portal
-  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) redirect("/mapa");
+  // cualquier otro rol tiene su propio portal.
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) redirect("/mapa");
 
   return (
     <div className="min-h-screen bg-fondo">

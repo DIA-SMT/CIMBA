@@ -6,6 +6,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
+import { empresaDelEjecutor } from "./ordenes";
 
 /**
  * Acciones del ciclo de la orden de trabajo. El principio rector: cuando la
@@ -235,7 +236,7 @@ export async function asignarCircuito(entrada: {
  */
 export async function reportarItemHecho(formData: FormData) {
   const sesion = await requerirSesion();
-  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
     throw new Error(`Rol ${sesion.rol_cimba} sin permiso para reportar items`);
   }
 
@@ -316,8 +317,12 @@ export async function reportarItemHecho(formData: FormData) {
   if (!previa) throw new Error("El item no existe o no es de tu empresa");
   if (previa.estado !== "pendiente") throw new Error("Este item ya fue reportado");
   if (!["emitida", "en_ejecucion"].includes(previa.orden_estado)) throw new Error("La orden no está activa");
-  if (sesion.rol_cimba === "empresa" && Number(previa.empresa_id) !== sesion.id_empresa) {
-    throw new Error("El item no pertenece a tu empresa");
+  {
+    // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new Error("El item no pertenece a tu empresa");
+    }
   }
 
   /**
@@ -376,8 +381,12 @@ export async function reportarItemHecho(formData: FormData) {
     if (!["emitida", "en_ejecucion"].includes(String(item.orden_estado))) {
       throw new Error("La orden no está activa");
     }
-    if (sesion.rol_cimba === "empresa" && Number(item.empresa_id) !== sesion.id_empresa) {
-      throw new Error("El item no pertenece a tu empresa");
+    {
+      // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
+      const empresaEjecutora = await empresaDelEjecutor(sesion);
+      if (empresaEjecutora != null && Number(item.empresa_id) !== empresaEjecutora) {
+        throw new Error("El item no pertenece a tu empresa");
+      }
     }
 
     /**
@@ -546,12 +555,13 @@ export async function reportarItemHecho(formData: FormData) {
 
 export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo: string }) {
   const sesion = await requerirSesion();
-  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
     throw new Error(`Rol ${sesion.rol_cimba} sin permiso`);
   }
   const datos = z
     .object({ itemId: z.number().int().positive(), motivo: z.string().min(3).max(500) })
     .parse(entrada);
+  const empresaEjecutora = await empresaDelEjecutor(sesion);
 
   await conRls(claims(sesion), async (tx) => {
     const r = (await tx.execute(sql`
@@ -566,8 +576,8 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
             -- esto (y con la RLS sin aplicar hoy) una empresa podría marcar
             -- 'no encontrado' —y hasta cerrar— órdenes de otra iterando itemId.
             ${
-              sesion.rol_cimba === "empresa"
-                ? sql`and ot.empresa_id = ${sesion.id_empresa ?? -1}`
+              empresaEjecutora != null
+                ? sql`and ot.empresa_id = ${empresaEjecutora}`
                 : sql``
             }
         )
@@ -749,7 +759,7 @@ export async function actualizarCapacidad(entrada: {
  */
 export async function proponerItem(formData: FormData) {
   const sesion = await requerirSesion();
-  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
     throw new Error(`Rol ${sesion.rol_cimba} sin permiso para proponer items`);
   }
   const datos = z
@@ -791,8 +801,12 @@ export async function proponerItem(formData: FormData) {
   const orden = ordenes[0];
   if (!orden) throw new Error("La orden no existe o no es de tu empresa");
   if (!["emitida", "en_ejecucion"].includes(orden.estado)) throw new Error("La orden no está activa");
-  if (sesion.rol_cimba === "empresa" && Number(orden.empresa_id) !== sesion.id_empresa) {
-    throw new Error("La orden no pertenece a tu empresa");
+  {
+    // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(orden.empresa_id) !== empresaEjecutora) {
+      throw new Error("La orden no pertenece a tu empresa");
+    }
   }
 
   let rutaFoto: string | null = null;
@@ -880,7 +894,7 @@ export async function resolverPropuesto(entrada: {
  */
 export async function marcarYaResuelto(formData: FormData) {
   const sesion = await requerirSesion();
-  if (!["empresa", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
     throw new Error(`Rol ${sesion.rol_cimba} sin permiso`);
   }
   const datos = z
@@ -915,8 +929,12 @@ export async function marcarYaResuelto(formData: FormData) {
   if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
     throw new Error("La orden no está activa");
   }
-  if (sesion.rol_cimba === "empresa" && Number(previa.empresa_id) !== sesion.id_empresa) {
-    throw new Error("El item no pertenece a tu empresa");
+  {
+    // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new Error("El item no pertenece a tu empresa");
+    }
   }
 
   const { createClient } = await import("@supabase/supabase-js");

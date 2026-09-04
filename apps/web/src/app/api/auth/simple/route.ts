@@ -106,11 +106,22 @@ export async function POST(req: NextRequest) {
   if (local && local.clave_hash === sha256(clave)) {
     const rechazo = perfilSuspendido(local);
     if (rechazo) return rechazo;
+    // La cuadrilla propia ejecuta como la empresa "Administración": su
+    // empresa viaja en el JWT para que el portal y las acciones de items
+    // no tengan que resolverla en cada pedido.
+    let idEmpresaCuadrilla: number | undefined;
+    if (local.rol === "cuadrilla") {
+      const adm = (await getDb().execute(sql`
+        select id from empresas where slug = 'administracion' and activa
+      `)) as unknown as Array<{ id: number }>;
+      if (adm[0]) idEmpresaCuadrilla = Number(adm[0].id);
+    }
     const jwt = await firmarSesion({
       sub: local.id,
       rol_cimba: local.rol as never,
       id_persona: Number(local.id_persona),
       nombre: local.nombre,
+      ...(idEmpresaCuadrilla ? { id_empresa: idEmpresaCuadrilla } : {}),
       // Con clave temporal, el middleware no lo deja salir de /clave: el
       // "destino" de abajo era solo una sugerencia que se podía ignorar.
       ...(local.clave_temporal ? { ct: true } : {}),
@@ -124,7 +135,9 @@ export async function POST(req: NextRequest) {
         ? "/cierres"
         : local.rol === "planificacion"
           ? "/ordenes"
-          : "/mapa";
+          : local.rol === "cuadrilla"
+            ? "/empresa"
+            : "/mapa";
     return NextResponse.json({ ok: true, destino });
   }
 

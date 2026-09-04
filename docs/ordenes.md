@@ -128,3 +128,17 @@ el cron diario de vencimientos y cada bache propuesto.
   escritura de CIDITUC que hoy no tenemos (la API que conocemos es de lectura).
 - **Zonas de Ingeco**: el Director las va a pasar; se cargan asignando
   circuitos, sin código nuevo.
+
+## Las cuadrillas propias son un ejecutor más (unificación Campo ↔ Órdenes)
+
+La empresa `administracion` ("ADMINISTRACIÓN (cuadrillas propias)") representa a las
+cuadrillas municipales. El Director le emite órdenes igual que a una contratista, y el
+rol `cuadrilla` entra al MISMO portal `/empresa` (resuelve siempre a esa empresa,
+ignora `?empresa=`) y reporta items con la misma mecánica: medidas + foto + tipo de
+intervención + propuestos. La propiedad se resuelve en `empresaDelEjecutor()`
+(`lib/ordenes.ts`): empresa → su `id_empresa` del JWT; cuadrilla → la empresa
+`administracion` (del JWT al loguear, o por slug si el JWT es viejo). Todos los
+chequeos de propiedad de órdenes/items pasan por ahí — la RLS sigue sin aplicarse.
+
+`/campo` queda para las intervenciones programadas directas (flujo previo a las
+órdenes) con un acceso visible al portal.

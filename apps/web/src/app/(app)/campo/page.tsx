@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarIntervenciones } from "@/lib/consultas";
 import { TituloPagina } from "@/components/ui";
@@ -21,6 +22,25 @@ export default async function PaginaCampo() {
   return (
     <div className="mx-auto max-w-xl p-4 sm:p-6">
       <TituloPagina titulo="Trabajo en campo" sub="Antes / después georreferenciado. Sin planillas." />
+
+      {/* La unificación Campo ↔ Órdenes: las cuadrillas propias son un
+          ejecutor más. Sus órdenes de trabajo se reportan en el portal de la
+          Administración, con la misma mecánica que las empresas (medidas +
+          foto + tipo de intervención). Esta pantalla queda para las
+          intervenciones programadas directas. */}
+      <Link
+        href="/empresa"
+        className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-celeste/40 bg-celeste/10 px-4 py-3 text-sm transition hover:border-celeste"
+      >
+        <span>
+          <b className="text-celeste">Órdenes de trabajo de la Administración</b>
+          <span className="mt-0.5 block text-xs text-texto-2">
+            Las cuadrillas propias también trabajan por órdenes: se reportan con medidas, foto y tipo
+            de intervención, igual que las empresas.
+          </span>
+        </span>
+        <span className="shrink-0 text-celeste">→</span>
+      </Link>
       {trabajos.length === 0 ? (
         <p className="rounded-xl border border-borde bg-panel px-4 py-10 text-center text-sm text-texto-3">
           No hay intervenciones asignadas ni en curso.

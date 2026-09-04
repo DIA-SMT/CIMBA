@@ -39,10 +39,10 @@ export default async function PaginaEmpresa({
   searchParams: Promise<{ empresa?: string }>;
 }) {
   const sesion = (await leerSesion())!;
-  const vista = resolverVistaPortal(sesion, await searchParams);
+  const vista = await resolverVistaPortal(sesion, await searchParams);
 
   // Staff sin empresa elegida: primero decir el portal de quién quiere ver.
-  if (!vista.empresaId && sesion.rol_cimba !== "empresa") {
+  if (!vista.empresaId && !["empresa", "cuadrilla"].includes(sesion.rol_cimba)) {
     const empresas = await listarEmpresas(sesion);
     return (
       <div className="mx-auto max-w-xl p-4 pb-10">

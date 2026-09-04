@@ -1,14 +1,18 @@
 import "server-only";
 import type { Sesion } from "@/lib/auth";
+import { empresaDelEjecutor } from "@/lib/ordenes";
 
 /**
  * Resolución de la empresa efectiva del portal /empresa.
  *
- * El rol empresa SIEMPRE ve la suya (sesion.id_empresa) y cualquier
- * ?empresa= de la URL se ignora: como la RLS está escrita pero NO se
- * aplica, este helper es la única barrera contra que una contratista
- * espíe el portal de otra. Para admin/planificacion, ?empresa=N habilita
- * la "vista espejo": ver el portal exactamente como lo ve esa empresa.
+ * Los EJECUTORES ven siempre lo suyo y cualquier ?empresa= de la URL se
+ * ignora: el rol empresa, su empresa (sesion.id_empresa); el rol cuadrilla,
+ * la empresa "Administración (cuadrillas propias)" — la unificación
+ * Campo ↔ Órdenes: las cuadrillas municipales son un ejecutor más, con el
+ * mismo portal y las mismas acciones. Como la RLS está escrita pero NO se
+ * aplica, este helper es la única barrera contra que un ejecutor espíe el
+ * portal de otro. Para admin/planificacion, ?empresa=N habilita la "vista
+ * espejo": ver el portal exactamente como lo ve esa empresa.
  */
 export interface VistaPortal {
   /** Empresa cuyo portal se muestra; null si el staff todavía no eligió una. */
@@ -17,12 +21,12 @@ export interface VistaPortal {
   esVistaEspejo: boolean;
 }
 
-export function resolverVistaPortal(
+export async function resolverVistaPortal(
   sesion: Sesion,
   searchParams: { empresa?: string } | undefined,
-): VistaPortal {
-  if (sesion.rol_cimba === "empresa") {
-    return { empresaId: sesion.id_empresa ?? null, esVistaEspejo: false };
+): Promise<VistaPortal> {
+  if (sesion.rol_cimba === "empresa" || sesion.rol_cimba === "cuadrilla") {
+    return { empresaId: await empresaDelEjecutor(sesion), esVistaEspejo: false };
   }
   const elegida = Number(searchParams?.empresa);
   if (Number.isInteger(elegida) && elegida > 0) {
