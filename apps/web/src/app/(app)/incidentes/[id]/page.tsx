@@ -159,7 +159,7 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
       </div>
 
       {/* La cadena pedido → problema → trabajo, en números */}
-      <div className="mb-6 grid grid-cols-3 gap-2 sm:gap-3">
+      <div className="mb-6 grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
         <Cadena n={h.demandas.length} etiqueta={h.demandas.length === 1 ? "pedido recibido" : "pedidos recibidos"}
           color={C.pedido} icono={<Inbox size={16} />}
           nota={h.demandas.length === 0 ? "nadie lo reclamó: se detectó trabajando" : null} />

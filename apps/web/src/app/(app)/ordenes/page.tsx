@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import { ESTADOS_ORDEN, type EstadoOrden } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, listarOrdenes, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
@@ -58,6 +59,12 @@ export default async function PaginaOrdenes({
         sub="El circuito como unidad de planificación: qué se releva, quién lo trabaja y con qué prioridad."
         extra={
           <div className="flex items-center gap-3">
+            <Link
+              href="/ordenes/avisos"
+              className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
+            >
+              <Bell size={14} /> Avisos
+            </Link>
             <Link
               href="/ordenes/empresas"
               className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
@@ -147,7 +154,7 @@ export default async function PaginaOrdenes({
                             : "/mapa"
                         }
                         title={`Ver la zona del circuito ${c.codigo} en el mapa`}
-                        className="text-xs font-semibold whitespace-nowrap text-celeste hover:underline"
+                        className="inline-block py-2 text-xs font-semibold whitespace-nowrap text-celeste hover:underline sm:py-0"
                       >
                         ver en mapa →
                       </Link>

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb, sql } from "@cimba/db";
-import { notificarRoles } from "@/lib/push";
+import { notificarEvento } from "@/lib/notificar";
 
 export const maxDuration = 60;
 
@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
   let avisadas = 0;
   for (const o of ordenes) {
     const vencida = o.vence < new Date().toISOString().slice(0, 10);
-    await notificarRoles(["planificacion", "supervision", "admin"], {
+    // A quién le llega lo decide el Director en /ordenes/avisos.
+    await notificarEvento("orden_vencida", {
       titulo: vencida ? `⚠ ${o.numero} VENCIDA` : `${o.numero} vence HOY`,
       cuerpo: `${o.empresa} · ${o.pendientes} item(s) sin reportar · vencía el ${o.vence}`,
       url: `/ordenes/${o.id}`,

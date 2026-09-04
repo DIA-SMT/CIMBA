@@ -64,32 +64,21 @@ import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
 
 /**
  * Vistas del mapa: la respuesta a "es muchísima información y no se entiende".
- * Cada vista prende solo las capas que sirven para esa tarea.
+ * Cada vista prende solo las capas que sirven para esa tarea. Quedaron TRES
+ * (pedido del Director: "no es tan claro qué ofrece cada cosa; simplificalo"):
+ * HOY (lo que hay que resolver), BRECHA (lo pedido vs. lo hecho) e HISTORIAL
+ * (todo el trabajo hecho). Las viejas ANÁLISIS y TODO desaparecieron: el mapa
+ * de calor de Análisis ahora es la capa "Densidad de demanda" (grupo Lo
+ * pedido, disponible en cualquier vista) y Todo era ruido — el panel de capas
+ * ya deja prender lo que quieras desde cualquier vista.
  */
 const VISTAS = {
-  operativo: {
-    etiqueta: "Operativo",
-    descripcion: "Lo que hay que resolver HOY: problemas abiertos/en curso y pedidos aún sin cotejar.",
+  hoy: {
+    etiqueta: "Hoy",
+    descripcion: "Lo que hay que resolver: problemas abiertos o en curso y pedidos aún pendientes.",
     macro: { abierto: true, en_curso: true, resuelto: false, inactivo: false },
     demandasAbiertas: true,
     verDemandas: true,
-    calor: false,
-  },
-  historico: {
-    etiqueta: "Histórico",
-    descripcion: "El trabajo hecho: reparaciones y obras finalizadas.",
-    macro: { abierto: false, en_curso: true, resuelto: true, inactivo: false },
-    demandasAbiertas: false,
-    verDemandas: false,
-    calor: false,
-  },
-  analisis: {
-    etiqueta: "Análisis",
-    descripcion: "Densidad de demanda (mapa de calor) sobre todo el historial.",
-    macro: { abierto: true, en_curso: true, resuelto: false, inactivo: false },
-    demandasAbiertas: false,
-    verDemandas: true,
-    calor: true,
   },
   brecha: {
     etiqueta: "Brecha",
@@ -98,18 +87,32 @@ const VISTAS = {
     macro: { abierto: false, en_curso: false, resuelto: false, inactivo: false },
     demandasAbiertas: true,
     verDemandas: true,
-    calor: false,
   },
-  completo: {
-    etiqueta: "Todo",
-    descripcion: "Todas las capas a la vez (puede ser mucho).",
-    macro: { abierto: true, en_curso: true, resuelto: true, inactivo: false },
+  historial: {
+    etiqueta: "Historial",
+    descripcion: "Todo el trabajo hecho: reparaciones y obras finalizadas.",
+    macro: { abierto: false, en_curso: true, resuelto: true, inactivo: false },
     demandasAbiertas: false,
-    verDemandas: true,
-    calor: false,
+    verDemandas: false,
   },
 } as const;
 type Vista = keyof typeof VISTAS;
+
+/** Claves viejas de vista (links guardados, la page todavía las valida):
+ *  caen con gracia sobre las tres nuevas. "analisis" además prende la capa
+ *  Densidad de demanda, que era lo único que esa vista aportaba. */
+type VistaLegado = "operativo" | "historico" | "analisis" | "completo";
+const VISTA_LEGADO: Record<VistaLegado, Vista> = {
+  operativo: "hoy",
+  historico: "historial",
+  analisis: "hoy",
+  completo: "hoy",
+};
+const normalizarVista = (v: string | null | undefined): Vista | undefined =>
+  v == null ? undefined
+    : Object.hasOwn(VISTAS, v) ? (v as Vista)
+    : Object.hasOwn(VISTA_LEGADO, v) ? (VISTA_LEGADO as Record<string, Vista>)[v]
+    : undefined;
 
 const AYUDA_KPI = {
   demandas: "Pedidos visibles con la vista y filtros actuales: reclamos de vecinos (AC), pedidos del Concejo, intimaciones SAT, redes y secretarías.",
@@ -901,7 +904,9 @@ export interface FocoMapa {
 }
 
 export interface InicialMapa {
-  vista?: Vista;
+  /** Acepta también las claves viejas (operativo/historico/analisis/completo)
+   *  para que ningún deep-link guardado se rompa: se normalizan al entrar. */
+  vista?: Vista | VistaLegado;
   brecha?: string;
   fuente?: string;
   tipo?: string;
@@ -1055,13 +1060,15 @@ function MapaInterno({
   const [generandoInforme, setGenerandoInforme] = useState(false);
   const [errorInforme, setErrorInforme] = useState<string | null>(null);
 
-  // Estado de capas y filtros — arranca en vista OPERATIVA (lo accionable)
-  const vistaInicial: Vista = inicial?.vista ?? "operativo";
+  // Estado de capas y filtros — arranca en vista HOY (lo accionable)
+  const vistaInicial: Vista = normalizarVista(inicial?.vista) ?? "hoy";
   const [vista, setVista] = useState<Vista>(vistaInicial);
   const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS[vistaInicial].macro });
   const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(VISTAS[vistaInicial].demandasAbiertas);
   const [verDemandas, setVerDemandas] = useState(VISTAS[vistaInicial].verDemandas);
-  const [verCalor, setVerCalor] = useState(inicial?.calor ?? VISTAS[vistaInicial].calor);
+  // La densidad de demanda (ex vista Análisis) es una capa más: arranca
+  // apagada salvo pedido explícito (?calor=1) o un link viejo de esa vista.
+  const [verCalor, setVerCalor] = useState(inicial?.calor ?? inicial?.vista === "analisis");
   const [fuentes, setFuentes] = useState<Record<string, boolean>>({});
   const [tipos, setTipos] = useState<Record<string, boolean>>(() => {
     // ?tipo=bache aísla ese tipo (los demás quedan apagados)
@@ -1136,6 +1143,20 @@ function MapaInterno({
       }
     } catch {
       // URL rota: el mapa abre normal, sin polígono
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // ?vista=hoy|historial escrito a mano: la page todavía valida las claves
+  // viejas y descarta las nuevas, así que se rescatan acá en el cliente
+  // (mismo patrón que ?zp=). Los links que genera el propio mapa viajan con
+  // clave vieja y entran por la page, sin pasar por acá.
+  useEffect(() => {
+    if (inicial?.vista) return; // la page ya trajo una vista válida
+    try {
+      const v = normalizarVista(new URLSearchParams(window.location.search).get("vista"));
+      if (v && v !== vistaInicial) aplicarVista(v);
+    } catch {
+      // URL rota: queda la vista por defecto
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1463,12 +1484,14 @@ function MapaInterno({
     for (const p of [arrCapas, arrZonas, arrInforme, arrAnalisis, arrHerr]) p.reubicar();
   };
 
+  /** Cambiar de vista ajusta incidentes y pedidos, nada más: las capas
+   *  transversales (densidad de demanda, 3D, satélite, límites) son del
+   *  usuario y sobreviven al cambio, como cualquier toggle del panel. */
   const aplicarVista = (v: Vista) => {
     setVista(v);
     setVerMacro({ ...VISTAS[v].macro });
     setSoloDemandasAbiertas(VISTAS[v].demandasAbiertas);
     setVerDemandas(VISTAS[v].verDemandas);
-    setVerCalor(VISTAS[v].calor);
   };
 
   const { data } = useQuery<GeoDatos>({
@@ -1880,7 +1903,10 @@ function MapaInterno({
       p.set("clon", c.lng.toFixed(6));
       p.set("cz", mapa.getZoom().toFixed(2));
     }
-    p.set("vista", vista);
+    // La URL viaja con la clave vieja (hoy→operativo, historial→historico):
+    // la page valida ?vista= contra la lista histórica, así el mismo link
+    // funciona hoy y seguirá funcionando cuando la page acepte las nuevas.
+    p.set("vista", vista === "hoy" ? "operativo" : vista === "historial" ? "historico" : vista);
     if (vista === "brecha" && filtroBrecha) p.set("brecha", filtroBrecha);
     if (vista === "brecha" && modoBrecha === "antiguedad") p.set("modoBrecha", "antiguedad");
     const tiposActivos = Object.keys(ETIQUETA_TIPO).filter((t) => tipos[t] !== false);
@@ -1888,8 +1914,8 @@ function MapaInterno({
     const fuentesActivas = fuentesPresentes.filter((fu) => fuentes[fu] !== false);
     if (fuentesActivas.length === 1 && fuentesActivas[0] && fuentesPresentes.length > 1) p.set("fuente", fuentesActivas[0]);
     if (dias) p.set("dias", String(dias));
-    // calor tiene default distinto por vista (prendido en Análisis): hay que
-    // decir explícitamente 0 o 1 siempre, "ausente" no alcanza para saber cuál.
+    // La densidad de demanda arranca apagada en toda vista, pero un link con
+    // vista=analisis (legado) la prendería solo: 0/1 explícito evita dudas.
     p.set("calor", verCalor ? "1" : "0");
     if (verHex) p.set("hex", "1");
     if (verSatelite) p.set("sat", "1");
@@ -2659,14 +2685,14 @@ function MapaInterno({
             type="raster"
             tiles={["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}
             tileSize={256}
-            // EL BUG DEL "MAPA QUE COLAPSA" CON MUCHO ZOOM: Esri no tiene
-            // imágenes de SMT más allá de z19 — para z20+ responde 200 con un
-            // placeholder gris liso (~2,5 KB), y como esta fuente no declaraba
-            // maxzoom, MapLibre pedía esos tiles (con tileSize 256 ya desde
-            // ~z18.5 de cámara) y tapaba TODO el mapa de gris. Con maxzoom 19
-            // los tiles reales de z19 se sobre-escalan y el zoom máximo
-            // (19.5) queda usable.
-            maxzoom={19}
+            // EL BUG DEL "MAPA QUE COLAPSA" / "Map data not yet available":
+            // Esri no cubre SMT completo en z19 (el microcentro devuelve el
+            // cartel impreso en el tile) y z20+ es un placeholder gris liso.
+            // Se sondeó tile por tile: z18 tiene imagen REAL en toda la
+            // ciudad, z19 es mixto. La fuente queda en 18 y MapLibre
+            // sobre-escala hasta el zoom máximo de cámara: borroso de cerca
+            // antes que un cartel gris tapando el mapa.
+            maxzoom={18}
             attribution="Esri, Maxar, Earthstar Geographics"
           >
             {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
@@ -2760,10 +2786,15 @@ function MapaInterno({
           </Source>
         )}
 
-        {verDemandas && (
+        {/* La densidad de demanda vive en la misma fuente que los puntos pero
+            se prende sola: tiene que funcionar aun en vistas sin pedidos
+            visibles (Historial) — es una capa transversal, no parte de una vista. */}
+        {(verDemandas || verCalor) && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capas.calor} />}
-            <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha) : capas.demandas)} />
+            {verDemandas && (
+              <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha) : capas.demandas)} />
+            )}
           </Source>
         )}
 
@@ -3990,9 +4021,12 @@ function MapaInterno({
               />
               <span className="min-w-0 truncate">Solo pendientes</span>
             </label>
-            <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]">
+            <label
+              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Mapa de calor de los pedidos: dónde se concentra la demanda. Disponible en cualquier vista (era la vieja vista Análisis)."
+            >
               <input type="checkbox" checked={verCalor} onChange={(e) => setVerCalor(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="min-w-0 truncate">Mapa de calor</span>
+              <span className="min-w-0 truncate">Densidad de demanda</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"

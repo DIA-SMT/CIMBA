@@ -43,8 +43,10 @@ export default async function PaginaMapa({
   const calor = sp.calor === "1" ? true : sp.calor === "0" ? false : undefined;
 
   const inicial = {
-    vista: ["operativo", "historico", "analisis", "brecha", "completo"].includes(sp.vista ?? "")
-      ? (sp.vista as "operativo" | "historico" | "analisis" | "brecha" | "completo")
+    // Claves nuevas (hoy/brecha/historial) + las viejas por compatibilidad de
+    // links guardados: el mapa las normaliza al entrar.
+    vista: ["hoy", "historial", "operativo", "historico", "analisis", "brecha", "completo"].includes(sp.vista ?? "")
+      ? (sp.vista as "hoy" | "historial" | "operativo" | "historico" | "analisis" | "brecha" | "completo")
       : undefined,
     brecha: ["sin_atencion", "en_cola", "posible_resuelta"].includes(sp.brecha ?? "") ? sp.brecha : undefined,
     modoBrecha: sp.modoBrecha === "antiguedad" ? ("antiguedad" as const) : undefined,

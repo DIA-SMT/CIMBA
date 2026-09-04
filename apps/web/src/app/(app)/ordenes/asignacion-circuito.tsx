@@ -41,7 +41,7 @@ export function AsignacionCircuito({
   };
 
   const claseSelect =
-    "w-full max-w-36 rounded-md border border-borde-2 bg-panel-2 px-2 py-1 text-xs disabled:opacity-50";
+    "w-full max-w-36 rounded-md border border-borde-2 bg-panel-2 px-2 py-2 text-xs disabled:opacity-50 sm:py-1";
 
   return (
     <>

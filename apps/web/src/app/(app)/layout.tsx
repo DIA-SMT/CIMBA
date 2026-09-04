@@ -28,7 +28,7 @@ const NAV = [
   { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
   { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
   { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
-  { href: "/calidad", etiqueta: "Calidad", icono: ShieldCheck },
+  { href: "/calidad", etiqueta: "Tratamiento", icono: ShieldCheck },
   { href: "/cargar", etiqueta: "Cargar", icono: Upload },
   { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
   { href: "/campo", etiqueta: "Campo", icono: Smartphone },

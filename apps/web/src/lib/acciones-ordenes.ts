@@ -138,6 +138,28 @@ export async function emitirOrden(entrada: { ordenId: number }) {
         and incidentes.estado in ('detectado','priorizado')
     `);
   });
+
+  // El aviso viaja después del commit y jamás rompe la emisión: si esta
+  // lectura o el despacho fallan, la orden IGUAL quedó emitida.
+  try {
+    const datosOt = (await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select ot.numero, e.nombre as empresa,
+          (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items
+        from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id where ot.id = ${ordenId}
+      `)) as unknown as Array<{ numero: string; empresa: string; items: number }>,
+    ))[0];
+    if (datosOt) {
+      const { notificarEvento } = await import("./notificar");
+      await notificarEvento("orden_emitida", {
+        titulo: `${datosOt.numero} emitida a ${datosOt.empresa}`,
+        cuerpo: `${datosOt.items} item(s) para trabajar`,
+        url: `/ordenes/${ordenId}`,
+      });
+    }
+  } catch {
+    // sin aviso, pero emitida: el tablero de avisos muestra el estado real
+  }
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
   return { ok: true };
@@ -800,6 +822,13 @@ export async function proponerItem(formData: FormData) {
         })}::jsonb
       )
     `);
+  });
+
+  const { notificarEvento } = await import("./notificar");
+  await notificarEvento("item_propuesto", {
+    titulo: "La cuadrilla propuso un bache nuevo",
+    cuerpo: `${datos.direccion} — espera validación de Bacheo`,
+    url: `/ordenes/${datos.ordenId}`,
   });
   revalidatePath("/empresa");
   revalidatePath("/ordenes");

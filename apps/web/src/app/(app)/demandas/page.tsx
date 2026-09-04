@@ -196,15 +196,15 @@ export default async function PaginaDemandas({
           ⤓ CSV
         </a>
         {/* El expediente que se va a la SAT, solo cuando se está mirando lo de
-            la SAT: las demandas abiertas de agua/tapas/sumideros con su número
-            de ticket, para que si lo devuelven resuelto AC pueda cerrar. */}
+            la SAT: la nota administrativa con los reclamos de agua abiertos,
+            georreferencia y fotos — previsualizable y con registro numerado. */}
         {filtros.destino === "sat" && (
           <a
-            href="/api/exportar-sat"
+            href="/expedientes/sat"
             className="text-xs font-semibold text-celeste hover:underline"
-            title="Descargar el expediente para la SAT: las demandas abiertas de este destino, con número de ticket, dirección y barrio"
+            title="Previsualizar la nota administrativa a la SAT (Dr. Caponio) con los reclamos abiertos de este destino"
           >
-            ⤓ Expediente SAT
+            Nota a la SAT →
           </a>
         )}
       </form>

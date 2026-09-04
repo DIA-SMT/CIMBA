@@ -145,15 +145,14 @@ export default async function PaginaCierres({
               Limpiar
             </Link>
           )}
-          {/* "Yo eso lo filtro y genero el expediente que se va a la SAT… con
-              dirección, tipo y número de ticket, porque si ellos lo devuelven
-              yo lo puedo cerrar" — el CSV de las demandas SAT abiertas. */}
+          {/* "Lo de SAT no es un CSV": es una NOTA administrativa al Director
+              de la SAT, con previsualización y registro numerado. */}
           <a
-            href="/api/exportar-sat"
+            href="/expedientes/sat"
             className="text-xs font-semibold text-celeste hover:underline"
-            title="Descargar el expediente para la SAT: las demandas de agua/tapas/sumideros abiertas, con número de ticket, dirección y barrio"
+            title="Previsualizar la nota administrativa a la SAT con los reclamos de agua abiertos, su georreferencia y sus fotos"
           >
-            ⤓ Expediente SAT
+            Nota a la SAT →
           </a>
         </form>
       </div>

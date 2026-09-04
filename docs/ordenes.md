@@ -99,6 +99,25 @@ prioridad vial (primaria/secundaria/terciaria) y empresa asignada. Todo
 incidente y demanda con geometría sabe su circuito (trigger + backfill), así
 que "programar por circuito" es un `where circuito_id = …`, no un cálculo.
 
+## Avisos: quién se entera de qué
+
+El Director gestiona las notificaciones en `/ordenes/avisos`: por cada evento
+(orden emitida, orden vencida, bache propuesto por la cuadrilla, aviso
+general) define destinatarios por dos canales:
+
+- **Push (VAPID)**: a un rol del sistema — le llega a todo el personal de ese
+  rol que haya activado la campanita en su dispositivo.
+- **Email (Resend)**: a direcciones concretas. Necesita `RESEND_API_KEY` en el
+  entorno; sin la key, el canal figura apagado en la página y los push siguen
+  andando. El remitente por defecto es el de prueba de Resend
+  (`onboarding@resend.dev`); con un dominio municipal verificado se cambia por
+  `RESEND_FROM`.
+
+El **aviso general** es un mensaje que el Director redacta y manda en el
+momento; la página muestra el resultado real (cuántos push, cuántos emails,
+qué se salteó). Los eventos automáticos ya están enganchados: emitir una orden,
+el cron diario de vencimientos y cada bache propuesto.
+
 ## Lo que falta (a propósito)
 
 - **Aviso push a la empresa al emitir la orden**: la infraestructura de push

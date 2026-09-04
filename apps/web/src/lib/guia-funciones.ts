@@ -34,7 +34,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "vistas",
     titulo: "Vistas del mapa",
-    desc: "Cinco miradas prearmadas: OPERATIVO (lo que hay que resolver hoy), HISTÓRICO (el trabajo ya hecho), ANÁLISIS (mapa de calor de demanda), BRECHA (lo pedido vs. lo hecho, cada pedido coloreado según si nadie lo tocó, está en cola o parece resuelto) y TODO (todas las capas juntas).",
+    desc: "Tres miradas, cada una con un para qué claro: HOY (lo que hay que resolver: pendientes y en curso), BRECHA (lo pedido vs. lo hecho — la medición central, cada pedido coloreado según si nadie lo tocó, está en cola o parece resuelto) e HISTORIAL (todo el trabajo hecho). El mapa de calor pasó a ser la capa «Densidad de demanda» en el panel de Capas: se prende en cualquier vista.",
     tour: "vistas",
   },
   {
