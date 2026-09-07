@@ -27,6 +27,7 @@ import {
   Satellite,
   Send,
   Sparkles,
+  MonitorPlay,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -1209,6 +1210,8 @@ export function MapaCimba(props: {
   iaHabilitada: boolean;
   foco?: FocoMapa | null;
   inicial?: InicialMapa;
+  /** Modo pantalla de comando (/tv): mapa pelado, sin controles. */
+  pantalla?: boolean;
 }) {
   return (
     <QueryClientProvider client={clienteQuery}>
@@ -1234,12 +1237,14 @@ function MapaInterno({
   iaHabilitada,
   foco,
   inicial,
+  pantalla = false,
 }: {
   kpisIniciales: Kpis;
   rol: RolUsuario;
   iaHabilitada: boolean;
   foco?: FocoMapa | null;
   inicial?: InicialMapa;
+  pantalla?: boolean;
 }) {
   const mapRef = useRef<MapRef>(null);
   // Tema reactivo: cambia el estilo base (positron/dark-matter) y la paleta
@@ -1824,7 +1829,7 @@ function MapaInterno({
    * el chip "Mostrar paneles" mueven este estado, y todo el render que ya
    * miraba `despejado` sigue funcionando igual.
    */
-  const [detalle, setDetalle] = useState<Detalle>("esencial");
+  const [detalle, setDetalle] = useState<Detalle>(pantalla ? "limpio" : "esencial");
   const despejado = detalle === "limpio";
   /** A qué escalón volver al salir de "limpio" (el ojo es un ida y vuelta). */
   const detalleAntesDeLimpiar = useRef<Detalle>("esencial");
@@ -1836,6 +1841,7 @@ function MapaInterno({
    * el ojo —, así que salir despejado y volver mañana abre donde se estaba.
    */
   useEffect(() => {
+    if (pantalla) return;
     try {
       const v = localStorage.getItem("cimba:mapa-detalle");
       if (v === "completo" || v === "esencial") {
@@ -1847,6 +1853,7 @@ function MapaInterno({
     }
   }, []);
   useEffect(() => {
+    if (pantalla) return;
     try {
       localStorage.setItem("cimba:mapa-detalle", detalle === "limpio" ? detalleAntesDeLimpiar.current : detalle);
     } catch {
@@ -3955,6 +3962,15 @@ function MapaInterno({
                       }}
                     />
                   )}
+                  <ItemAccion
+                    icono={<MonitorPlay size={15} />}
+                    titulo="Pantalla de comando"
+                    desc="El mapa vivo + cifras y movimientos, para la pantalla grande"
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      window.open("/tv", "_blank");
+                    }}
+                  />
                   <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
                     Exportar y compartir
                   </p>
@@ -4014,7 +4030,7 @@ function MapaInterno({
           la barra que se esconde, así que al despejarse desaparecía junto con
           todo lo demás y no había forma visible de volver — el ojito se
           esfumaba. Este chip existe SOLO con el mapa despejado. */}
-      {despejado && (
+      {despejado && !pantalla && (
         <button
           onClick={() => setDetalle(detalleAntesDeLimpiar.current)}
           className="panel-vidrio absolute top-3 right-3 z-30 flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-amarillo ring-1 ring-amarillo/60 transition hover:brightness-110"
