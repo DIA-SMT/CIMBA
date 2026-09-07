@@ -1066,6 +1066,9 @@ const capaDemandasDestino = (p: Paleta): LayerProps => ({
   id: "demandas-destino-anillo",
   type: "circle",
   source: "demandas",
+  // De lejos hablan las burbujas contadas por cola; el anillo por punto es
+  // detalle de cerca — sin esto, mil anillos tapaban los conteos.
+  minzoom: 14,
   filter: ["match", ["get", "destino"], ["sat", "ingenieria"], true, false],
   paint: {
     "circle-color": "rgba(0,0,0,0)",
@@ -2159,6 +2162,52 @@ function MapaInterno({
     return c;
   }, [demandasBase, destinos]);
 
+  /**
+   * El contexto del mapa para MIGUE: qué está mirando el operador AHORA
+   * (vista, colas, filtros, y la brecha del encuadre). Migue lo lee al enviar
+   * cada pregunta y contesta sobre ese recorte cuando la pregunta dice
+   * "esto/acá/lo que veo". Vive en window (no en React): cero re-renders,
+   * y se limpia al salir del mapa.
+   */
+  useEffect(() => {
+    const w = window as unknown as { __cimbaContextoMapa?: Record<string, unknown> };
+    w.__cimbaContextoMapa = {
+      vista,
+      colas: DESTINOS.filter((d) => destinos[d] === true),
+      fuentesApagadas: Object.entries(fuentes).filter(([, v]) => v === false).map(([k]) => k),
+      tiposApagados: Object.entries(tipos).filter(([, v]) => v === false).map(([k]) => k),
+      periodoDias: dias ?? null,
+      distritoFoco: distritoFoco ?? null,
+      filtroBrecha: vista === "brecha" ? (filtroBrecha ?? null) : null,
+      riesgoPrendido: verRiesgo,
+      enPantalla: balance ? { pendientes: balance.pend, sinAtencion: balance.sinAt, m2Hechos: balance.m2 } : null,
+    };
+    return () => {
+      delete w.__cimbaContextoMapa;
+    };
+  }, [vista, destinos, fuentes, tipos, dias, distritoFoco, filtroBrecha, verRiesgo, balance]);
+
+  // Las colas ajenas como fuentes PROPIAS con clustering: de lejos se ve
+  // "💧 234" por zona — la comparación real de cuántos son, sin contar puntos
+  // a ojo. De cerca, el emoji individual de siempre.
+  const satGeo = useMemo<FC>(
+    () => ({
+      type: "FeatureCollection",
+      features: destinos.sat === true ? demandasFiltradas.features.filter((f) => f.properties.destino === "sat") : [],
+    }),
+    [demandasFiltradas, destinos.sat],
+  );
+  const ingGeo = useMemo<FC>(
+    () => ({
+      type: "FeatureCollection",
+      features:
+        destinos.ingenieria === true
+          ? demandasFiltradas.features.filter((f) => f.properties.destino === "ingenieria")
+          : [],
+    }),
+    [demandasFiltradas, destinos.ingenieria],
+  );
+
   // Memoizados: sin esto, cada render (uno por frame al panear con Comparar
   // activo) recalcula el polígono de la zona entero para nada. La geometría
   // de la zona es el círculo O el polígono cerrado: mismas capas de relleno.
@@ -2939,9 +2988,11 @@ function MapaInterno({
       setSectorSel(feature.properties ?? {});
       return;
     }
-    if (feature.layer.id === "clusters") {
+    if (feature.layer.id === "clusters" || feature.layer.id === "sat-cluster" || feature.layer.id === "ing-cluster") {
       const mapa = mapRef.current?.getMap();
-      const fuente = mapa?.getSource("incidentes") as { getClusterExpansionZoom?: (id: number) => Promise<number> } | undefined;
+      const idFuente =
+        feature.layer.id === "sat-cluster" ? "cola-sat" : feature.layer.id === "ing-cluster" ? "cola-ing" : "incidentes";
+      const fuente = mapa?.getSource(idFuente) as { getClusterExpansionZoom?: (id: number) => Promise<number> } | undefined;
       const clusterId = feature.properties?.cluster_id as number;
       void fuente?.getClusterExpansionZoom?.(clusterId).then((zoom) => {
         mapa?.easeTo({ center: e.lngLat, zoom: zoom + 0.5, duration: 500 });
@@ -2956,7 +3007,7 @@ function MapaInterno({
     setSectorSel(null);
     if (feature.layer.id === "incidentes-punto") {
       setSeleccion({ capa: "incidente", props: feature.properties ?? {}, lngLat });
-    } else if (feature.layer.id === "demandas-punto") {
+    } else if (feature.layer.id === "demandas-punto" || feature.layer.id === "sat-emoji" || feature.layer.id === "ing-emoji") {
       const props = feature.properties ?? {};
       const brechaProp = String(props.brecha ?? "");
       // Los cuatro pasos del semáforo abren el cotejo: 'en_obra' (la cuadrilla
@@ -3032,6 +3083,8 @@ function MapaInterno({
           ...(verSectores && sectoresGeo ? ["sectores-hormigon-relleno", "sectores-cuadrante-relleno"] : []),
           ...(verColectivos && colectivosGeo ? ["colectivos-linea"] : []),
           ...(verBacheoIntegral && bacheoIntegralGeo ? ["bacheo-integral-relleno"] : []),
+          ...(verDemandas && destinos.sat === true && satGeo.features.length > 0 ? ["sat-cluster", "sat-emoji"] : []),
+          ...(verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 ? ["ing-cluster", "ing-emoji"] : []),
           ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
         ]}
         onClick={alClick}
@@ -3162,6 +3215,11 @@ function MapaInterno({
                   : p.problemas
                     ? "con problemas reportados"
                     : "sin problemas reportados",
+            ];
+          } else if (f.layer.id === "sat-cluster" || f.layer.id === "ing-cluster") {
+            lineas = [
+              numero(Number(p.point_count)) + (f.layer.id === "sat-cluster" ? " reclamos de agua (SAT)" : " pedidos de ripio (Ingeniería)"),
+              "clic para acercar",
             ];
           } else if (f.layer.id === "riesgo-linea") {
             // El porqué del puntaje, en una línea: sin caja negra.
@@ -3353,8 +3411,11 @@ function MapaInterno({
         {(verDemandas || verCalor) && (
           <Source id="demandas" type="geojson" data={demandasFiltradas}>
             {verCalor && <Layer {...capas.calor} />}
+            {/* El semáforo es EL lenguaje también en Hoy: el gris neutro de
+                antes "no se diferenciaba" (el Director, 7/9). Solo la rampa
+                de antigüedad de Brecha es otro código, y lo dice su leyenda. */}
             {verDemandas && (
-              <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha) : capas.demandas)} />
+              <Layer {...(vista === "brecha" && modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha)} />
             )}
             {/* El anillo de destino se monta encima del punto y solo si hay
                 alguna cola ajena prendida: con solo bacheo no dibuja nada. */}
@@ -3363,12 +3424,104 @@ function MapaInterno({
             {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
               <Layer {...capas.demandasDestino} />
             )}
-            {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
-              <Layer {...capaDemandasDestinoEmoji} />
-            )}
             {/* El bache con su emoji recién en zoom de cuadra: de lejos su
                 identidad es el punto del semáforo. */}
             {verDemandas && <Layer {...capaDemandasBacheoEmoji} />}
+          </Source>
+        )}
+
+        {/* Las colas ajenas, CONTADAS desde arriba: cada una con su fuente
+            clusterizada — la burbuja dice 💧 234 por zona (comparación real de
+            cuántos son), y al acercar quedan los emoji individuales. Los
+            anillos de identidad siguen saliendo de la fuente de demandas. */}
+        {verDemandas && destinos.sat === true && satGeo.features.length > 0 && (
+          <Source id="cola-sat" type="geojson" data={satGeo} cluster clusterMaxZoom={15} clusterRadius={46}>
+            <Layer
+              id="sat-cluster"
+              type="circle"
+              filter={["has", "point_count"]}
+              paint={{
+                "circle-color": pal.destinoSat,
+                "circle-opacity": 0.88,
+                "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 80, 22, 200, 27],
+                "circle-stroke-width": 2,
+                "circle-stroke-color": pal.trazoCluster,
+              }}
+            />
+            <Layer
+              id="sat-cluster-n"
+              type="symbol"
+              filter={["has", "point_count"]}
+              layout={{
+                "icon-image": "emoji-sat",
+                "icon-size": 0.3,
+                "icon-offset": [0, -22],
+                "icon-allow-overlap": true,
+                "text-field": ["get", "point_count_abbreviated"],
+                "text-size": 12,
+                "text-font": ["Open Sans Bold"],
+                "text-offset": [0, 0.35],
+                "text-allow-overlap": true,
+              }}
+              paint={{ "text-color": "#ffffff" }}
+            />
+            <Layer
+              id="sat-emoji"
+              type="symbol"
+              filter={["!", ["has", "point_count"]]}
+              layout={{
+                "icon-image": "emoji-sat",
+                "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.34, 15, 0.46, 18, 0.62],
+                "icon-anchor": "bottom",
+                "icon-offset": [0, -4],
+                "icon-allow-overlap": false,
+              }}
+            />
+          </Source>
+        )}
+        {verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 && (
+          <Source id="cola-ing" type="geojson" data={ingGeo} cluster clusterMaxZoom={15} clusterRadius={46}>
+            <Layer
+              id="ing-cluster"
+              type="circle"
+              filter={["has", "point_count"]}
+              paint={{
+                "circle-color": pal.destinoIngenieria,
+                "circle-opacity": 0.88,
+                "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 80, 22, 200, 27],
+                "circle-stroke-width": 2,
+                "circle-stroke-color": pal.trazoCluster,
+              }}
+            />
+            <Layer
+              id="ing-cluster-n"
+              type="symbol"
+              filter={["has", "point_count"]}
+              layout={{
+                "icon-image": "emoji-ingenieria",
+                "icon-size": 0.3,
+                "icon-offset": [0, -22],
+                "icon-allow-overlap": true,
+                "text-field": ["get", "point_count_abbreviated"],
+                "text-size": 12,
+                "text-font": ["Open Sans Bold"],
+                "text-offset": [0, 0.35],
+                "text-allow-overlap": true,
+              }}
+              paint={{ "text-color": "#ffffff" }}
+            />
+            <Layer
+              id="ing-emoji"
+              type="symbol"
+              filter={["!", ["has", "point_count"]]}
+              layout={{
+                "icon-image": "emoji-ingenieria",
+                "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.34, 15, 0.46, 18, 0.62],
+                "icon-anchor": "bottom",
+                "icon-offset": [0, -4],
+                "icon-allow-overlap": false,
+              }}
+            />
           </Source>
         )}
 
@@ -3897,8 +4050,8 @@ function MapaInterno({
                   )}
                   <ItemAccion
                     icono={<Columns2 size={15} />}
-                    titulo={comparar ? "Salir de Comparar" : "Comparar"}
-                    desc="Cortina «Lo pedido | Lo hecho» con sus números"
+                    titulo={comparar ? "Salir de Comparar" : "Comparar: pedido | hecho"}
+                    desc="Parte la pantalla: pendientes a la izquierda, trabajo hecho a la derecha — la brecha, zona por zona"
                     activo={comparar}
                     onClick={() => {
                       setMenuAcciones(false);

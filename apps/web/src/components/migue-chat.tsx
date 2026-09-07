@@ -77,7 +77,12 @@ export function MigueChat() {
       const res = await fetch("/api/migue", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mensajes: nuevos.map(({ rol, contenido }) => ({ rol, contenido })) }),
+        body: JSON.stringify({
+          mensajes: nuevos.map(({ rol, contenido }) => ({ rol, contenido })),
+          // Si el operador está en el mapa, Migue contesta EN FUNCIÓN de los
+          // filtros puestos ("¿cuántos hay acá?" = este recorte, no toda la base).
+          contextoMapa: (window as unknown as { __cimbaContextoMapa?: unknown }).__cimbaContextoMapa ?? null,
+        }),
       });
       const data = (await res.json()) as {
         respuesta?: string;

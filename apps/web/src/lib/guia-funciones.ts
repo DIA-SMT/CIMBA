@@ -88,7 +88,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "comparar",
     titulo: "Comparar: lo pedido | lo hecho",
-    desc: "Divide la pantalla con una cortina arrastrable: a la izquierda LO PEDIDO (reclamos abiertos, en azul) y a la derecha LO HECHO (reparado o en obra). Cada lado muestra su número real en pantalla: pedidos pendientes y m² hechos. El botón Capturar descarga la comparación como imagen.",
+    desc: "Parte la pantalla en dos mapas del MISMO lugar: a la izquierda solo los pedidos pendientes (rojo), a la derecha solo el trabajo hecho (verde). Donde un lado está lleno y el otro vacío, esa es la brecha. Cada lado muestra su cifra real y el botón Capturar baja la comparación como imagen.",
     como: "Arrastrá la línea amarilla para correr la cortina. Movés el mapa y los números se recalculan.",
     tour: "comparar",
   },

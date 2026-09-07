@@ -16,6 +16,48 @@ type FC = FeatureCollection<Point, Record<string, unknown>>;
  * comparación muestra solo lo hecho) queda visible a la derecha de la cortina.
  * La brecha se vuelve una imagen que se recorre arrastrando el divisor.
  */
+function ExplicadorComparar() {
+  // Se muestra hasta que la persona diga "entendido" — después no molesta más.
+  const [visto, setVisto] = useState(() => {
+    try {
+      return localStorage.getItem("cimba:comparar-explicado") === "1";
+    } catch {
+      return true;
+    }
+  });
+  if (visto) return null;
+  return (
+    <div className="pointer-events-auto absolute top-1/2 left-1/2 z-30 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2">
+      <div className="panel-vidrio rounded-2xl p-5 shadow-2xl">
+        <p className="text-sm font-bold">¿Qué estás viendo?</p>
+        <p className="mt-2 text-[13px] leading-relaxed text-texto-2">
+          La pantalla quedó partida en <b className="text-texto">dos mapas del mismo lugar</b>:
+          a la izquierda <b style={{ color: "var(--color-sin-atencion)" }}>solo los pedidos pendientes</b> y
+          a la derecha <b style={{ color: "var(--color-hecho)" }}>solo el trabajo hecho</b>.
+        </p>
+        <p className="mt-2 text-[13px] leading-relaxed text-texto-2">
+          <b className="text-texto">Arrastrá la línea amarilla</b> para correr la cortina y comparar zona
+          por zona: donde un lado está lleno y el otro vacío, <b className="text-texto">esa es la brecha</b>.
+          Los números de abajo lo dicen en cifras.
+        </p>
+        <button
+          onClick={() => {
+            setVisto(true);
+            try {
+              localStorage.setItem("cimba:comparar-explicado", "1");
+            } catch {
+              // sin persistencia, se muestra de nuevo la próxima: no es grave
+            }
+          }}
+          className="mt-3 w-full rounded-xl bg-azul px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
+        >
+          Entendido, a comparar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CortinaComparar({
   vistaMapa,
   demandas,
@@ -163,21 +205,23 @@ export function CortinaComparar({
         </div>
       )}
 
+      <ExplicadorComparar />
+
       {/* Etiquetas de lectura: el número sale de lo que hay en pantalla en
           este momento, para no tener que interpretar la densidad de puntos
           a ojo — la brecha, convertida en una cifra clara. */}
       <div className="absolute bottom-16 z-10 max-w-44 select-none" style={{ left: `max(12px, calc(${corte}% - 170px))` }}>
-        <span className="inline-block rounded-lg bg-[#3987e5] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
-          Lo pedido
+        <span className="inline-block rounded-lg px-3 py-1.5 text-[12px] font-black tracking-wider text-white uppercase shadow" style={{ background: "var(--color-sin-atencion)" }}>
+          ← Lo pedido
         </span>
         <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
-          <p className="num text-2xl font-black" style={{ color: tema === "oscuro" ? "#6fadf5" : "#2f6fd0" }}>{numero(balance?.pend ?? 0)}</p>
+          <p className="num text-2xl font-black" style={{ color: "var(--color-sin-atencion)" }}>{numero(balance?.pend ?? 0)}</p>
           <p className="text-[10px] leading-snug text-texto-2">pedidos pendientes en pantalla</p>
         </div>
       </div>
       <div className="absolute bottom-16 z-10 max-w-44 select-none" style={{ left: `calc(${corte}% + 14px)` }}>
-        <span className="inline-block rounded-lg bg-[#199e70] px-2.5 py-1 text-[11px] font-black tracking-wider text-white uppercase shadow">
-          Lo hecho
+        <span className="inline-block rounded-lg px-3 py-1.5 text-[12px] font-black tracking-wider text-white uppercase shadow" style={{ background: "var(--color-hecho)" }}>
+          Lo hecho →
         </span>
         <div className="mt-1 rounded-md bg-fondo/85 px-2.5 py-1.5">
           <p className="num text-2xl font-black" style={{ color: tema === "oscuro" ? "#3ecb92" : "#0e7f57" }}>{numero(balance?.m2 ?? 0)} m²</p>
