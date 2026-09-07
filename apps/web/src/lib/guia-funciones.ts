@@ -34,19 +34,33 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "vistas",
     titulo: "Vistas del mapa",
-    desc: "Tres miradas, cada una con un para qué claro: HOY (lo que hay que resolver: pendientes y en curso), BRECHA (lo pedido vs. lo hecho — la medición central, cada pedido coloreado según si nadie lo tocó, está en cola o parece resuelto) e HISTORIAL (todo el trabajo hecho). El mapa de calor pasó a ser la capa «Densidad de demanda» en el panel de Capas: se prende en cualquier vista.",
+    desc: "Tres miradas, cada una con un para qué claro: HOY (lo que hay que resolver: pendientes y en curso), BRECHA (lo pedido vs. lo hecho — la medición central) e HISTORIAL (todo el trabajo hecho). En todas manda EL SEMÁFORO, un único lenguaje de color en cuatro pasos hacia resuelto: ROJO nadie lo tocó, NARANJA en cola (hay orden emitida pero no arrancó), ÁMBAR en obra (la cuadrilla está trabajando), VERDE resuelto — y gris para lo desestimado o sin dato. El amarillo ya no es un estado: quedó para las marcas de interacción (círculo del analizador, hilos de cotejo, anillo de selección). El mapa de calor pasó a ser la capa «Densidad de demanda» en el panel de Capas: se prende en cualquier vista.",
     tour: "vistas",
+  },
+  {
+    id: "destinos",
+    titulo: "Quién resuelve (bacheo / SAT / Ingeniería)",
+    desc: "Debajo de las vistas hay tres chips que dicen QUIÉN resuelve cada pedido. Al abrir el mapa solo está prendido BACHEO, que es la cola real de la Dirección: los pedidos de agua (SAT) y los de ripio o traza (Ingeniería) están apagados para que no inflen una deuda que no es suya. Prendelos y sus puntos aparecen marcados con un anillo propio —celeste agua la SAT, marrón ripio Ingeniería— porque su estado no es el del bacheo. Cada chip trae su cuenta, y al prender o apagar uno se recalculan los números de arriba, el balance de abajo y el analizador de zona.",
+    como: "Tocá un chip para sumar o quitar esa cola. La ficha de un pedido que no es de bacheo lleva directo a su bandeja de tratamiento.",
+    tour: "destinos",
   },
   {
     id: "kpis",
     titulo: "Los números de arriba",
-    desc: "Las cifras globales del sistema: demandas totales, sin vincular (pedidos que nadie cotejó todavía), abiertos, en curso, resueltos y m² intervenidos. Dejá el dedo o el mouse sobre cada una y te explica qué mide.",
+    desc: "Las cifras globales del sistema: demandas totales, sin vincular (pedidos que nadie cotejó todavía), abiertos, en curso, resueltos y m² intervenidos. Dejá el dedo o el mouse sobre cada una y te explica qué mide. Cuántas se muestran depende del nivel de detalle: en «Esencial» quedan solo las dos que importan en la vista actual.",
     tour: "kpis",
+  },
+  {
+    id: "detalle",
+    titulo: "Cuánto se muestra (nivel de detalle)",
+    desc: "Tres escalones para limpiar la pantalla sin perder el mapa: TODO (las seis cifras de arriba y las cifras flotantes de deuda por zona), ESENCIAL (el valor de arranque: dos cifras elegidas según la vista y ninguna cifra flotante) y LIMPIO (solo el mapa, que es el viejo «Despejar» del ojo tachado). El balance de abajo y la leyenda del semáforo se mantienen salvo en Limpio. La elección queda guardada en este dispositivo.",
+    como: "Selector de tres posiciones al lado del ojo tachado (en el teléfono, en Acciones → «Cuánto se muestra»).",
+    tour: "detalle",
   },
   {
     id: "capas",
     titulo: "Panel de Capas",
-    desc: "El control fino de qué se ve: vista satelital, avenidas, nombres de calles, límites de distritos/circuitos electorales/barrios (los barrios con problemas reportados se tiñen de rojo), incidentes por estado, puntos de demanda, mapa de calor, densidad 3D, Top 20 urgentes, filtro por quién pide (fuente), por tipo de problema y por período.",
+    desc: "El control fino de qué se ve: vista satelital, avenidas, nombres de calles, límites de distritos/circuitos electorales/barrios (los barrios con problemas reportados se tiñen de rojo), incidentes por estado, puntos de demanda, mapa de calor, densidad 3D, Top 20 urgentes, filtro por quién pide (fuente), por tipo de problema y por período. Las casillas de incidentes muestran el color real del semáforo, y «En curso» es una sola casilla con dos pasos adentro: en cola (naranja) y en obra (ámbar). El anillo celeste de un punto no es un estado: marca la obra contratada por SIGOV. Justo abajo del panel está fija la leyenda del semáforo, con los pasos de la vista actual.",
     como: "Se abre y cierra con el botón de capas (abajo a la izquierda). Cada casilla prende o apaga una capa.",
     tour: "capas",
   },
@@ -63,7 +77,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "cotejo",
     titulo: "Cotejo desde el mapa",
-    desc: "En vista BRECHA, tocá un pedido pendiente y el mapa dibuja hilos amarillos hacia los trabajos que hay a menos de 60 metros: ahí decidís si ya estaba atendido (lo vinculás) o si es brecha real. Es la forma más rápida de bajar la deuda de «sin vincular».",
+    desc: "En vista BRECHA, tocá un pedido pendiente —de cualquiera de los cuatro pasos del semáforo— y el mapa dibuja hilos amarillos hacia los trabajos que hay a menos de 60 metros: ahí decidís si ya estaba atendido (lo vinculás) o si es brecha real. Es la forma más rápida de bajar la deuda de «sin vincular».",
   },
   {
     id: "informe-ia",
@@ -99,7 +113,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "despejar",
     titulo: "Despejar la pantalla",
-    desc: "El botón del ojo tachado esconde todos los paneles y números de un golpe para ver el mapa limpio. Volvés a tocarlo y reaparece todo.",
+    desc: "El botón del ojo tachado esconde todos los paneles y números de un golpe para ver el mapa limpio (es el escalón «Limpio» del nivel de detalle). Volvés a tocarlo —o tocás el chip «Mostrar paneles» que aparece arriba a la derecha— y reaparece todo como estaba.",
     tour: "despejar",
   },
   {

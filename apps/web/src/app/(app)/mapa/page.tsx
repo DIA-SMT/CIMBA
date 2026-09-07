@@ -1,9 +1,30 @@
 import { leerSesion } from "@/lib/auth";
-import { obtenerKpis } from "@/lib/consultas";
+import { DESTINOS_RESOLUCION, obtenerKpis, type DestinoResolucion } from "@/lib/consultas";
 import { iaDisponible } from "@/lib/ia";
-import { MapaCimba } from "@/components/mapa/mapa-cimba";
+import { MapaCimba, type InicialMapa } from "@/components/mapa/mapa-cimba";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * `?destino=` en sus tres formas, todas normalizadas a la misma lista:
+ *   ausente        → sin filtro (el mapa abre con su default: solo bacheo)
+ *   "todos"        → las tres colas — es lo que cuenta /brecha, y sin esto el
+ *                    operador hace clic en "1.845 sin atención" y ve 1.063
+ *   "bacheo,sat"   → esa combinación (el formato que emite "Copiar link")
+ * Se valida contra la lista cerrada del enum: los tokens que no son destino se
+ * descartan, y si no queda ninguno válido el parámetro se ignora entero — un
+ * typo en la URL no puede dejar el mapa sin un solo punto.
+ */
+function destinosDe(valor: string | undefined): DestinoResolucion[] | undefined {
+  const bruto = valor?.trim().toLowerCase();
+  if (!bruto) return undefined;
+  if (bruto === "todos") return [...DESTINOS_RESOLUCION];
+  const pedidos = new Set(bruto.split(",").map((t) => t.trim()));
+  // Se recorre la lista canónica y no lo que vino: así el orden es siempre el
+  // mismo y los duplicados (?destino=sat,sat) se caen solos.
+  const validos = DESTINOS_RESOLUCION.filter((d) => pedidos.has(d));
+  return validos.length > 0 ? validos : undefined;
+}
 
 export default async function PaginaMapa({
   searchParams,
@@ -12,6 +33,7 @@ export default async function PaginaMapa({
     lat?: string; lon?: string; z?: string;
     clat?: string; clon?: string; cz?: string;
     vista?: string; brecha?: string; modoBrecha?: string; fuente?: string; tipo?: string;
+    destino?: string;
     dias?: string; calor?: string; hex?: string; sat?: string; top?: string;
     zlat?: string; zlon?: string; zr?: string;
     buscar?: string; distrito?: string;
@@ -42,16 +64,29 @@ export default async function PaginaMapa({
   // ausente (link viejo) deja que cada vista use el suyo.
   const calor = sp.calor === "1" ? true : sp.calor === "0" ? false : undefined;
 
-  const inicial = {
+  const destinos = destinosDe(sp.destino);
+
+  const inicial: InicialMapa = {
     // Claves nuevas (hoy/brecha/historial) + las viejas por compatibilidad de
     // links guardados: el mapa las normaliza al entrar.
     vista: ["hoy", "historial", "operativo", "historico", "analisis", "brecha", "completo"].includes(sp.vista ?? "")
       ? (sp.vista as "hoy" | "historial" | "operativo" | "historico" | "analisis" | "brecha" | "completo")
       : undefined,
-    brecha: ["sin_atencion", "en_cola", "posible_resuelta"].includes(sp.brecha ?? "") ? sp.brecha : undefined,
+    // Los cuatro pasos del semáforo: 'en_obra' es el que se separó de 'en_cola'
+    // (la cuadrilla ya arrancó). Los links viejos con brecha=en_cola siguen
+    // siendo válidos, solo muestran menos puntos que antes.
+    brecha: ["sin_atencion", "en_cola", "en_obra", "posible_resuelta"].includes(sp.brecha ?? "")
+      ? sp.brecha
+      : undefined,
     modoBrecha: sp.modoBrecha === "antiguedad" ? ("antiguedad" as const) : undefined,
     fuente: sp.fuente,
     tipo: sp.tipo,
+    // Qué colas abre el mapa. Viaja como la lista ya normalizada y separada
+    // por comas: el mapa la parsea igual que la que emite "Copiar link de esta
+    // vista". Mandar solo el primero cuando hay varios silenciaría justo el
+    // caso de /brecha (las tres colas) y el operador vería menos de lo que
+    // acaba de clickear.
+    destino: destinos?.join(","),
     dias: sp.dias && [30, 90, 180].includes(Number(sp.dias)) ? Number(sp.dias) : undefined,
     calor,
     hex: sp.hex === "1" || undefined,

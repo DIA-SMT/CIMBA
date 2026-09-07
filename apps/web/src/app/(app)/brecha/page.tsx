@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { brechaPorDistrito, estadisticasBrecha } from "@/lib/consultas";
-import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, ETIQUETA_TIPO, SEMAFORO, SEMAFORO_HEX, fechaCorta, numero } from "@/lib/formato";
 import type { FuenteDemanda, TipoProblema } from "@cimba/domain";
 import { Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
@@ -10,10 +10,80 @@ import { BotonCotejo } from "./boton-cotejo";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** Paleta funcional validada sobre superficie oscura (misma del mapa). */
-// `obra` es un verde más apagado que `hecho`: es trabajo hecho, pero de otra
-// escala, y no tiene que competir visualmente con el bacheo.
-const C = { pedido: "#3987e5", hecho: "#199e70", obra: "#5c8a76", alerta: "#d95926" } as const;
+/**
+ * Acentos que NO son estado: acá el semáforo no manda. `pedidos` y `hechos` son
+ * las dos series del gráfico mensual — dos cosas que se comparan, no dos pasos
+ * de un mismo avance — y por eso siguen usando el azul y el verde heredados.
+ * `obra` es la escala de obra contratada de SIGOV, que va en su propia columna
+ * para no tapar al bacheo: un verde apagado, deliberadamente a un paso del
+ * verde del semáforo.
+ */
+const SERIE = {
+  pedidos: "var(--color-abierto)",
+  hechos: "var(--color-resuelto)",
+  obra: "var(--color-obra-contratada)",
+} as const;
+
+/**
+ * Los colores que esta página necesita y que no son tokens globales. Viajan
+ * como custom properties porque la página se renderiza en el servidor y no
+ * puede leer el tema: el swap por tema lo hace CSS contra html[data-tema],
+ * igual que el isotipo de la marca.
+ *
+ * `--color-reincidencia`: la reincidencia no es un paso del semáforo, es otra
+ * dimensión (el problema volvió después de una reparación). Con el amarillo de
+ * marca quedaba a 1.16:1 del ámbar de "en obra" — dos dorados idénticos en la
+ * misma barra —, así que sale de la rampa rojo→verde y usa un fucsia propio,
+ * que además queda a ΔE ≈ 28 del violeta con el que el mapa dibuja los
+ * distritos por si algún día conviven.
+ *
+ * `--tinta-*`: el número que va ADENTRO de cada tramo de la barra. Sobre el
+ * juego oscuro (colores claros) siempre entra tinta oscura; sobre el juego
+ * claro el rojo, el verde y el fucsia se oscurecen y piden tinta blanca — con
+ * la tinta oscura fija de antes quedaban en 3.96:1, abajo de AA.
+ */
+const CSS_COLORES = `
+  .brecha {
+    --color-reincidencia: #e879f9;
+    --color-obra-contratada: #8fbfa8;
+    --tinta-sin-atencion: #070a10;
+    --tinta-en-cola: #070a10;
+    --tinta-en-obra: #070a10;
+    --tinta-hecho: #070a10;
+    --tinta-reincidencia: #070a10;
+  }
+  html[data-tema="claro"] .brecha {
+    --color-reincidencia: #a21caf;
+    --color-obra-contratada: #4a7360;
+    --tinta-sin-atencion: #ffffff;
+    --tinta-hecho: #ffffff;
+    --tinta-reincidencia: #ffffff;
+  }
+`;
+
+/** Etiquetas de demandas.destino (enum destino_resolucion). Local, como en /cierres: formato.ts no es de esta tarea. */
+const ETIQUETA_DESTINO: Record<string, string> = {
+  bacheo: "Bacheo",
+  sat: "SAT (Aguas)",
+  ingenieria: "Ingeniería",
+};
+const AYUDA_DESTINO: Record<string, string> = {
+  bacheo: "La cola real de la Dirección: lo que se resuelve con asfalto u hormigón.",
+  sat: "Pérdidas de agua, tapas y sumideros: los resuelve la SAT por expediente, no la cuadrilla de bacheo.",
+  ingenieria: "Lo que no es un bache (calle de ripio, apertura, traza): va a Ingeniería.",
+};
+
+/**
+ * Todo link a /mapa de esta página abre las TRES colas. El mapa arranca
+ * filtrado a bacheo y acá se cuentan los tres destinos: sin `destino=todos`, el
+ * operador hace clic en "1.845 sin atención" y el mapa le muestra 1.063. El
+ * desglose por cola lo pisa pasando su propio `destino`.
+ */
+function enMapa(extra: Record<string, string | number> = {}): string {
+  const p = new URLSearchParams({ vista: "brecha", destino: "todos" });
+  for (const [k, v] of Object.entries(extra)) p.set(k, String(v));
+  return `/mapa?${p.toString()}`;
+}
 
 export default async function PaginaBrecha() {
   const sesion = (await leerSesion())!;
@@ -25,18 +95,24 @@ export default async function PaginaBrecha() {
     sesion.rol_cimba,
   );
 
-  const atendidoDeAlgunModo = b.yaResueltasProbable + b.enCola;
   const pctBrecha = b.totalAbiertas > 0 ? Math.round((100 * b.brechaReal) / b.totalAbiertas) : 0;
   const pctSinPedido = b.trabajoTotal > 0 ? Math.round((100 * b.trabajoSinPedido) / b.trabajoTotal) : 0;
+  // El titular del desglose: cuánto de la deuda sin tocar no le corresponde a
+  // la Dirección de Bacheo. Sale de los mismos conteos, no de otra consulta.
+  const deudaNoBacheo = b.porDestino
+    .filter((d) => d.destino !== "bacheo")
+    .reduce((n, d) => n + d.sinAtencion, 0);
+  const pctNoBacheo = b.brechaReal > 0 ? Math.round((100 * deudaNoBacheo) / b.brechaReal) : 0;
 
   return (
-    <div className="mx-auto max-w-6xl p-6">
+    <div className="brecha mx-auto max-w-6xl p-6">
+      <style>{CSS_COLORES}</style>
       <TituloPagina
         titulo="Brecha: lo pedido vs. lo hecho"
         sub="La medición central de CIMBA. Cada pedido abierto se cruza contra el territorio en un radio de 40 m."
         extra={
           <Link
-            href="/mapa?vista=brecha"
+            href={enMapa()}
             className="rounded-lg border border-celeste/50 bg-celeste/10 px-4 py-2 text-sm font-semibold text-celeste transition hover:bg-celeste/20"
           >
             Verla en el mapa (vista Brecha) →
@@ -56,29 +132,92 @@ export default async function PaginaBrecha() {
           </p>
         </div>
         <div className="flex h-9 w-full overflow-hidden rounded-lg" role="img"
-          aria-label={`Sin atención ${b.brechaReal}, en cola ${b.enCola}, ya resueltos probables ${b.yaResueltasProbable}, reincidencias ${b.reincidencias}`}>
-          <Segmento n={b.brechaReal} total={b.totalAbiertas} color={C.alerta} href="/mapa?vista=brecha&brecha=sin_atencion" />
-          <Segmento n={b.enCola} total={b.totalAbiertas} color={C.pedido} href="/mapa?vista=brecha&brecha=en_cola" />
-          <Segmento n={b.yaResueltasProbable} total={b.totalAbiertas} color={C.hecho} href="/mapa?vista=brecha&brecha=posible_resuelta" />
-          <Segmento n={b.reincidencias} total={b.totalAbiertas} color="var(--color-amarillo)" href="/mapa?vista=brecha&brecha=posible_resuelta" />
+          aria-label={`Sin atención ${b.brechaReal}, en cola ${b.enCola}, en obra ${b.enObra}, ya resueltos probables ${b.yaResueltasProbable}`}>
+          <Segmento n={b.brechaReal} total={b.totalAbiertas} color={SEMAFORO.sin_atencion}
+            tinta="var(--tinta-sin-atencion)" href={enMapa({ brecha: "sin_atencion" })} />
+          <Segmento n={b.enCola} total={b.totalAbiertas} color={SEMAFORO.en_cola}
+            tinta="var(--tinta-en-cola)" href={enMapa({ brecha: "en_cola" })} />
+          <Segmento n={b.enObra} total={b.totalAbiertas} color={SEMAFORO.en_obra}
+            tinta="var(--tinta-en-obra)" href={enMapa({ brecha: "en_obra" })} />
+          <Segmento n={b.yaResueltasProbable} total={b.totalAbiertas} color={SEMAFORO.resuelto}
+            tinta="var(--tinta-hecho)" href={enMapa({ brecha: "posible_resuelta" })} />
         </div>
         <div className="mt-3 grid gap-2 text-[13px] sm:grid-cols-4">
-          <Leyenda color={C.alerta} n={b.brechaReal} titulo="Sin atención (brecha real)"
-            detalle="Nadie los tocó: no hay reparación ni trabajo en curso cerca." href="/mapa?vista=brecha&brecha=sin_atencion" />
-          <Leyenda color={C.pedido} n={b.enCola} titulo="En cola"
-            detalle="Hay un incidente abierto cerca: están en proceso." href="/mapa?vista=brecha&brecha=en_cola" />
-          <Leyenda color={C.hecho} n={b.yaResueltasProbable} titulo="Probablemente ya resueltos"
-            detalle="Hay una reparación posterior al pedido a menos de 40 m: falta cerrar el circuito, no falta obra." href="/mapa?vista=brecha&brecha=posible_resuelta" />
-          <Leyenda color="var(--color-amarillo)" n={b.reincidencias} titulo="Reincidencias"
-            detalle="Se reparó ANTES del pedido y volvieron a reclamar: el problema volvió." href="/mapa?vista=brecha&brecha=posible_resuelta" />
+          <Leyenda color={SEMAFORO.sin_atencion} n={b.brechaReal} titulo="Sin atención (brecha real)"
+            detalle="Nadie los tocó: no hay reparación ni trabajo en curso cerca." href={enMapa({ brecha: "sin_atencion" })} />
+          {/* En cola y en obra son la partición de lo que antes era un solo "en
+              cola": van separados para que cada segmento lleve al mismo conjunto
+              que muestra el mapa, y sumados siguen dando el mismo total. */}
+          <Leyenda color={SEMAFORO.en_cola} n={b.enCola} titulo="En cola"
+            detalle="Hay una orden emitida cerca, pero la cuadrilla todavía no arrancó." href={enMapa({ brecha: "en_cola" })} />
+          <Leyenda color={SEMAFORO.en_obra} n={b.enObra} titulo="En obra"
+            detalle="Hay un incidente en ejecución a menos de 40 m: se está trabajando ahora." href={enMapa({ brecha: "en_obra" })} />
+          <Leyenda color={SEMAFORO.resuelto} n={b.yaResueltasProbable} titulo="Probablemente ya resueltos"
+            detalle="Hay una reparación posterior al pedido a menos de 40 m: falta cerrar el circuito, no falta obra." href={enMapa({ brecha: "posible_resuelta" })} />
         </div>
+        {/* La reincidencia no es un paso más: es una MARCA sobre los de arriba
+            (casi siempre sobre «sin atención», porque desde que el problema
+            volvió nadie lo tocó). Restarla de la barra hacía que este número
+            no cerrara con el del mapa al que linkea cada segmento. */}
+        {b.reincidencias > 0 && (
+          <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-texto-3">
+            <span className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ background: "var(--color-reincidencia)" }} />
+            <span>
+              De esos pedidos, <b className="num text-texto-2">{numero(b.reincidencias)}</b> son{" "}
+              <b className="text-texto-2">reincidencias</b>: ya se había reparado ahí ANTES del reclamo y
+              volvieron a pedir. No son un paso aparte del semáforo — están contados arriba (casi todos en
+              «sin atención», porque desde que el problema volvió nadie lo tocó) —, pero son la señal más
+              fuerte de falla estructural: ahí el bacheo no alcanza.
+            </span>
+          </p>
+        )}
+      </Panel>
+
+      {/* ¿De quién es la deuda? — el desglose que descubrió el Director */}
+      <Panel className="mb-6 p-5">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm font-bold">¿De quién es la deuda?</p>
+          <p className="text-xs text-texto-3">
+            <b className="num text-texto-2">{pctNoBacheo}%</b> de lo que nadie tocó ({numero(deudaNoBacheo)} pedidos)
+            no le corresponde a la Dirección de Bacheo
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {b.porDestino.map((d) => {
+            const pct = d.abiertas > 0 ? Math.round((100 * d.sinAtencion) / d.abiertas) : 0;
+            return (
+              <Link
+                key={d.destino}
+                href={enMapa({ brecha: "sin_atencion", destino: d.destino })}
+                className="rounded-lg border border-borde bg-panel-2 p-3 transition hover:border-borde-2 hover:bg-panel-3"
+                title={`${AYUDA_DESTINO[d.destino] ?? ""} Clic para ver esta cola en el mapa.`}
+              >
+                <p className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                  {ETIQUETA_DESTINO[d.destino] ?? d.destino}
+                </p>
+                <p className="num mt-0.5 text-2xl font-extrabold" style={{ color: SEMAFORO.sin_atencion }}>
+                  {numero(d.sinAtencion)}
+                </p>
+                <p className="text-[11px] leading-snug text-texto-2">
+                  sin atención de {numero(d.abiertas)} abiertos · <b className="num text-texto">{pct}%</b>
+                </p>
+              </Link>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[11px] leading-relaxed text-texto-3">
+          El destino lo clasifica el sistema al ingresar el pedido: una pérdida de agua o un reclamo de ripio
+          nunca fue trabajo de la cuadrilla de bacheo. El mapa abre mostrando solo la cola de bacheo; los links
+          de esta página abren las tres, que es lo que se cuenta acá.
+        </p>
       </Panel>
 
       {/* Los dos números que duelen */}
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
-        <Link href="/mapa?vista=brecha&brecha=sin_atencion" className="block">
-        <Panel className="h-full p-5 transition hover:border-encurso/50">
-          <div className="num text-3xl font-extrabold" style={{ color: C.alerta }}>
+        <Link href={enMapa({ brecha: "sin_atencion" })} className="block">
+        <Panel className="h-full p-5 transition hover:border-sin-atencion/50">
+          <div className="num text-3xl font-extrabold" style={{ color: SEMAFORO.sin_atencion }}>
             {pctBrecha}%
           </div>
           <p className="mt-1 text-sm font-bold">de lo pedido no tiene ninguna respuesta</p>
@@ -113,10 +252,10 @@ export default async function PaginaBrecha() {
         <GraficoMensual datos={b.mensual} />
         <div className="mt-3 flex items-center gap-5 text-[11px] font-medium">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: C.pedido }} /> Pedidos ingresados
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIE.pedidos }} /> Pedidos ingresados
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: C.hecho }} /> Trabajos finalizados
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIE.hechos }} /> Trabajos finalizados
           </span>
           <span className="ml-auto text-texto-3">
             No incluye los {numero(1631)} pedidos del consolidado histórico sin fecha de origen.
@@ -132,7 +271,7 @@ export default async function PaginaBrecha() {
             {b.porFuente.map((f) => {
               const pct = f.abiertas > 0 ? Math.round((100 * f.atendidas) / f.abiertas) : 0;
               return (
-                <Link key={f.fuente} href={`/mapa?vista=brecha&fuente=${f.fuente}`} className="block rounded-md px-1 py-0.5 transition hover:bg-panel-2" title="Ver esta fuente en el mapa">
+                <Link key={f.fuente} href={enMapa({ fuente: f.fuente })} className="block rounded-md px-1 py-0.5 transition hover:bg-panel-2" title="Ver esta fuente en el mapa">
                   <div className="mb-1 flex items-baseline justify-between text-[13px]">
                     <span>{ETIQUETA_FUENTE[f.fuente as FuenteDemanda] ?? f.fuente}</span>
                     <span className="num text-xs text-texto-2">
@@ -140,7 +279,7 @@ export default async function PaginaBrecha() {
                     </span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-panel-3">
-                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.hecho }} />
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: SEMAFORO.resuelto }} />
                   </div>
                 </Link>
               );
@@ -157,7 +296,7 @@ export default async function PaginaBrecha() {
             {b.porTipo.map((t) => {
               const pct = t.abiertas > 0 ? Math.round((100 * t.sinNadaCerca) / t.abiertas) : 0;
               return (
-                <Link key={t.tipo} href={`/mapa?vista=brecha&tipo=${t.tipo}`} className="block rounded-md px-1 py-0.5 transition hover:bg-panel-2" title="Ver este tipo en el mapa">
+                <Link key={t.tipo} href={enMapa({ tipo: t.tipo })} className="block rounded-md px-1 py-0.5 transition hover:bg-panel-2" title="Ver este tipo en el mapa">
                   <div className="mb-1 flex items-baseline justify-between text-[13px]">
                     <span>{ETIQUETA_TIPO[t.tipo as TipoProblema] ?? t.tipo}</span>
                     <span className="num text-xs text-texto-2">
@@ -165,7 +304,7 @@ export default async function PaginaBrecha() {
                     </span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-panel-3">
-                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.alerta }} />
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: SEMAFORO.sin_atencion }} />
                   </div>
                 </Link>
               );
@@ -209,25 +348,25 @@ export default async function PaginaBrecha() {
                       <span className="text-texto-3"> · {(d.abiertas / d.km2).toFixed(0)} por km²</span>
                     )}
                   </span>
-                  <b className="num" style={{ color: pct >= 85 ? C.alerta : "inherit" }}>{pct}%</b>
+                  <b className="num" style={{ color: pct >= 85 ? SEMAFORO.sin_atencion : "inherit" }}>{pct}%</b>
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded-full bg-panel-3">
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.alerta }} />
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: SEMAFORO.sin_atencion }} />
                 </div>
               </div>
-              <span className="num w-16 shrink-0 text-right text-[13px]" style={{ color: C.hecho }}>
+              <span className="num w-16 shrink-0 text-right text-[13px]" style={{ color: SEMAFORO.resuelto }}>
                 {numero(d.reparados)}
               </span>
               <span
                 className="num w-20 shrink-0 text-right text-[13px]"
-                style={{ color: d.m2Bacheo > 0 ? C.hecho : "var(--color-texto-3, #6b7280)" }}
+                style={{ color: d.m2Bacheo > 0 ? SEMAFORO.resuelto : "var(--color-texto-3, #6b7280)" }}
                 title={d.m2Bacheo === 0 ? "Sin un solo m² de bacheo en este distrito" : undefined}
               >
                 {d.m2Bacheo > 0 ? numero(d.m2Bacheo) : "—"}
               </span>
               <span
                 className="num w-24 shrink-0 text-right text-[13px]"
-                style={{ color: d.m2Obra > 0 ? C.obra : "var(--color-texto-3, #6b7280)" }}
+                style={{ color: d.m2Obra > 0 ? SERIE.obra : "var(--color-texto-3, #6b7280)" }}
                 title={
                   d.m2Obra > 0
                     ? `${numero(d.obras)} obras contratadas terminadas`
@@ -246,7 +385,7 @@ export default async function PaginaBrecha() {
           ) : (
             <Link
               key={d.id}
-              href={`/mapa?vista=brecha&brecha=sin_atencion&distrito=${d.id}`}
+              href={enMapa({ brecha: "sin_atencion", distrito: d.id })}
               className="flex items-center gap-3 px-4 py-2.5 transition hover:bg-panel-2"
               title={`Ver la deuda del ${d.nombre} en el mapa`}
             >
@@ -267,7 +406,7 @@ export default async function PaginaBrecha() {
       <Panel className="divide-y divide-borde/60">
         {b.topDeuda.map((d) => (
           <div key={d.direccion} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-            <span className="num w-8 shrink-0 text-center text-lg font-extrabold" style={{ color: C.alerta }}>
+            <span className="num w-8 shrink-0 text-center text-lg font-extrabold" style={{ color: SEMAFORO.sin_atencion }}>
               {d.pedidos}
             </span>
             <div className="min-w-0 flex-1">
@@ -277,7 +416,9 @@ export default async function PaginaBrecha() {
                 {d.desde && <> · el más viejo: {fechaCorta(d.desde)}</>}
               </p>
             </div>
-            <VerEnMapa lat={d.lat} lon={d.lon} etiqueta={d.direccion} color={C.alerta} />
+            {/* Hex crudo del juego claro (el tema por defecto): el mini-mapa
+                concatena alfa sobre el color (`${color}33`) y var() no sirve. */}
+            <VerEnMapa lat={d.lat} lon={d.lon} etiqueta={d.direccion} color={SEMAFORO_HEX.claro.sin_atencion} />
           </div>
         ))}
         {b.topDeuda.length === 0 && (
@@ -296,31 +437,54 @@ export default async function PaginaBrecha() {
   );
 }
 
-function Segmento({ n, total, color, href }: { n: number; total: number; color: string; href: string }) {
+function Segmento({
+  n,
+  total,
+  color,
+  tinta,
+  href,
+  titulo,
+}: {
+  n: number;
+  total: number;
+  color: string;
+  tinta: string;
+  /** Sin href el tramo se dibuja pero no se puede abrir: no hay un conjunto equivalente en el mapa. */
+  href?: string;
+  titulo?: string;
+}) {
   if (n <= 0 || total <= 0) return null;
-  return (
-    <Link
-      href={href}
-      className="flex h-full items-center justify-center overflow-hidden transition hover:brightness-125"
-      style={{ width: `${(100 * n) / total}%`, background: color, marginRight: 2 }}
-      title={`${numero(n)} — clic para verlos en el mapa`}
-    >
-      {(100 * n) / total > 7 && (
-        <span className="num text-[11px] font-bold text-[#070a10]">{numero(n)}</span>
-      )}
+  const estilo = { width: `${(100 * n) / total}%`, background: color, marginRight: 2 };
+  const etiqueta = (100 * n) / total > 7 && (
+    <span className="num text-[11px] font-bold" style={{ color: tinta }}>{numero(n)}</span>
+  );
+  const clase = "flex h-full items-center justify-center overflow-hidden";
+  return href ? (
+    <Link href={href} className={`${clase} transition hover:brightness-125`} style={estilo}
+      title={titulo ?? `${numero(n)} — clic para verlos en el mapa`}>
+      {etiqueta}
     </Link>
+  ) : (
+    <span className={clase} style={estilo} title={titulo ?? numero(n)}>{etiqueta}</span>
   );
 }
 
-function Leyenda({ color, n, titulo, detalle, href }: { color: string; n: number; titulo: string; detalle: string; href: string }) {
-  return (
-    <Link href={href} className="flex items-start gap-2 rounded-md p-1 transition hover:bg-panel-2" title="Ver en el mapa">
+function Leyenda({ color, n, titulo, detalle, href }: { color: string; n: number; titulo: string; detalle: string; href?: string }) {
+  const cuerpo = (
+    <>
       <span className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
       <div>
         <span className="num font-bold">{numero(n)}</span> <span className="font-semibold">{titulo}</span>
         <p className="text-[11px] leading-snug text-texto-3">{detalle}</p>
       </div>
+    </>
+  );
+  return href ? (
+    <Link href={href} className="flex items-start gap-2 rounded-md p-1 transition hover:bg-panel-2" title="Ver en el mapa">
+      {cuerpo}
     </Link>
+  ) : (
+    <div className="flex items-start gap-2 rounded-md p-1">{cuerpo}</div>
   );
 }
 
@@ -344,8 +508,8 @@ function GraficoMensual({ datos }: { datos: Array<{ mes: string; pedidos: number
             <a key={d.mes} href={`/demandas?mes=${d.mes}`}>
             <g style={{ cursor: "pointer" }}>
               <title>{`${d.mes}: ${numero(d.pedidos)} pedidos · ${numero(d.hechos)} trabajos — clic para ver esos pedidos`}</title>
-              <rect x={x} y={alto - hp} width={16} height={hp} rx={3} fill={C.pedido} />
-              <rect x={x + 19} y={alto - hh} width={16} height={hh} rx={3} fill={C.hecho} />
+              <rect x={x} y={alto - hp} width={16} height={hp} rx={3} fill={SERIE.pedidos} />
+              <rect x={x + 19} y={alto - hh} width={16} height={hh} rx={3} fill={SERIE.hechos} />
               <text x={x + 18} y={alto + 14} textAnchor="middle" fontSize={9} fill="var(--color-texto-3)">
                 {d.mes.slice(2).replace("-", "/")}
               </text>

@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { Map as MapaGL, Marker, NavigationControl } from "react-map-gl/maplibre";
+import { type PasoSemaforo, semaforoHex } from "@/lib/formato";
 import { estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /**
@@ -14,17 +15,23 @@ import { estiloMapa, usarTemaMapa } from "./tema-mapa";
 export function MapaPunto({
   lat,
   lon,
-  color = "#f4dc00",
+  paso,
   alto = 260,
   zoom = 16,
 }: {
   lat: number;
   lon: number;
-  color?: string;
+  /** El PASO del semáforo, no un hex: quién llama suele ser un server
+   *  component y no puede saber si el usuario está en claro u oscuro. El juego
+   *  de hex se elige acá, donde el tema ya está resuelto. */
+  paso?: PasoSemaforo;
   alto?: number;
   zoom?: number;
 }) {
   const tema = usarTemaMapa();
+  // Sin paso el punto no está diciendo un estado, solo "es acá": amarillo de
+  // marca, la misma afordancia que usan el resto de los mini-mapas.
+  const color = paso ? semaforoHex(tema)[paso] : "#f4dc00";
   return (
     <div className="relative overflow-hidden rounded-xl border border-borde">
       <div style={{ height: alto }}>

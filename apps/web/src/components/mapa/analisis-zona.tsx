@@ -4,8 +4,9 @@ import { Circle, GitCompareArrows, GripVertical, Hexagon, Radar, X } from "lucid
 import Link from "next/link";
 import { useMemo } from "react";
 import type { Feature, FeatureCollection, Point } from "geojson";
+import type { EstadoIncidente } from "@cimba/domain";
 import type { usePanelArrastrable } from "@/lib/arrastrable";
-import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, ETIQUETA_TIPO, SEMAFORO, type PasoSemaforo, numero, pasoDeEstado } from "@/lib/formato";
 import { aMetros, distanciaM } from "./geo-cliente";
 
 type FC = FeatureCollection<Point, Record<string, unknown>>;
@@ -23,8 +24,13 @@ export interface StatsZona {
   sinAtencion: number;
   porFuente: Array<[string, number]>;
   porTipo: Array<[string, number]>;
-  abiertos: number;
-  enCurso: number;
+  /* Los incidentes, abiertos en los cuatro pasos del semáforo. No se cuentan
+     por macro: el macro llama "abierto" a lo que el mapa pinta ROJO y mete
+     programado (naranja) y en_ejecucion (ámbar) en la misma bolsa, así que
+     cualquier cifra armada sobre él miente el color. */
+  incSinAtencion: number;
+  incEnCola: number;
+  incEnObra: number;
   resueltos: number;
   m2: number;
   topCalles: Array<[string, number]>;
@@ -53,6 +59,11 @@ function statsConFiltro(
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   };
 
+  // El paso sale del ESTADO, que es el único campo que conserva la diferencia
+  // entre "hay orden emitida" y "la cuadrilla está en la calle".
+  const porPaso = (paso: PasoSemaforo) =>
+    i.filter((f) => pasoDeEstado(String(f.properties.estado) as EstadoIncidente) === paso).length;
+
   const m2 = i.reduce((acc, f) => acc + (Number(f.properties.m2) || 0), 0);
   const porDireccion = new Map<string, number>();
   for (const f of d) {
@@ -66,9 +77,10 @@ function statsConFiltro(
     sinAtencion: d.filter((f) => f.properties.brecha === "sin_atencion").length,
     porFuente: cuenta(d, "fuente").slice(0, 3),
     porTipo: cuenta(d, "tipo").slice(0, 3),
-    abiertos: i.filter((f) => f.properties.macro === "abierto").length,
-    enCurso: i.filter((f) => f.properties.macro === "en_curso").length,
-    resueltos: i.filter((f) => f.properties.macro === "resuelto").length,
+    incSinAtencion: porPaso("sin_atencion"),
+    incEnCola: porPaso("en_cola"),
+    incEnObra: porPaso("en_obra"),
+    resueltos: porPaso("resuelto"),
     m2: Math.round(m2),
     topCalles: [...porDireccion.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
     hectareas,
@@ -273,11 +285,29 @@ export function AnalisisZona({
           <ComparacionAB a={statsA} b={stats} />
         ) : stats ? (
           <>
+            {/* El semáforo, en orden: lo que nadie tocó es rojo, lo comprometido
+                naranja, lo que está en obra ámbar y lo hecho verde. "Pedidos
+                pendientes" queda en el amarillo de marca: es demanda, no estado
+                de reparación. */}
             <div className="grid grid-cols-2 gap-2">
               <Cifra n={stats.pendientes} etiqueta="pedidos pendientes" color="var(--color-amarillo)" />
-              <Cifra n={stats.sinAtencion} etiqueta="sin atención (brecha)" color={COLOR_MACRO.en_curso} />
-              <Cifra n={stats.enCurso + stats.abiertos} etiqueta="incidentes activos" color={COLOR_MACRO.abierto} />
-              <Cifra n={stats.resueltos} etiqueta="reparaciones hechas" color={COLOR_MACRO.resuelto} />
+              <Cifra n={stats.sinAtencion} etiqueta="sin atención (brecha)" color={SEMAFORO.sin_atencion} />
+            </div>
+
+            {/* Cuatro cifras y no una: una sola cifra "activos" en ámbar metía
+                adentro los detectados/priorizados, que en el canvas de al lado
+                son ROJOS, y tapaba la diferencia entre tener una orden emitida y
+                tener la cuadrilla en la calle. */}
+            <div>
+              <p className="mb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                Incidentes de la zona
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Cifra n={stats.incSinAtencion} etiqueta="sin tocar" color={SEMAFORO.sin_atencion} />
+                <Cifra n={stats.incEnCola} etiqueta="con orden, en cola" color={SEMAFORO.en_cola} />
+                <Cifra n={stats.incEnObra} etiqueta="cuadrilla en obra" color={SEMAFORO.en_obra} />
+                <Cifra n={stats.resueltos} etiqueta="reparaciones hechas" color={SEMAFORO.resuelto} />
+              </div>
             </div>
 
             {stats.m2 > 0 && (
@@ -316,7 +346,11 @@ export function AnalisisZona({
                 {stats.topCalles.map(([dir, n]) => (
                   <div key={dir} className="flex items-baseline justify-between gap-2">
                     <span className="truncate" title={dir}>{dir}</span>
-                    <span className="num shrink-0 text-xs font-bold text-encurso">{numero(n)}</span>
+                    {/* Amarillo de marca y no el viejo --color-encurso: es un
+                        desglose de la DEMANDA por calle (mismo idioma que
+                        "pedidos pendientes"), y ese naranja quedaba a un
+                        centímetro de la cifra naranja de "en cola". */}
+                    <span className="num shrink-0 text-xs font-bold text-amarillo">{numero(n)}</span>
                   </div>
                 ))}
               </div>
@@ -373,9 +407,13 @@ export function AnalisisZona({
 function ComparacionAB({ a, b }: { a: StatsZona; b: StatsZona }) {
   const filas: Array<{ etiqueta: string; va: number; vb: number; color?: string }> = [
     { etiqueta: "Pedidos pendientes", va: a.pendientes, vb: b.pendientes, color: "var(--color-amarillo)" },
-    { etiqueta: "Sin atención (brecha)", va: a.sinAtencion, vb: b.sinAtencion, color: COLOR_MACRO.en_curso },
-    { etiqueta: "Incidentes activos", va: a.abiertos + a.enCurso, vb: b.abiertos + b.enCurso, color: COLOR_MACRO.abierto },
-    { etiqueta: "Reparaciones hechas", va: a.resueltos, vb: b.resueltos, color: COLOR_MACRO.resuelto },
+    // Mismos colores y mismo desglose que las cifras de arriba: la comparación
+    // A/B no puede hablar otro idioma que el panel del que sale.
+    { etiqueta: "Sin atención (brecha)", va: a.sinAtencion, vb: b.sinAtencion, color: SEMAFORO.sin_atencion },
+    { etiqueta: "Incidentes sin tocar", va: a.incSinAtencion, vb: b.incSinAtencion, color: SEMAFORO.sin_atencion },
+    { etiqueta: "Con orden, en cola", va: a.incEnCola, vb: b.incEnCola, color: SEMAFORO.en_cola },
+    { etiqueta: "Cuadrilla en obra", va: a.incEnObra, vb: b.incEnObra, color: SEMAFORO.en_obra },
+    { etiqueta: "Reparaciones hechas", va: a.resueltos, vb: b.resueltos, color: SEMAFORO.resuelto },
     { etiqueta: "m² intervenidos", va: a.m2, vb: b.m2 },
   ];
   return (
@@ -399,8 +437,10 @@ function ComparacionAB({ a, b }: { a: StatsZona; b: StatsZona }) {
       <p className="mt-3 mb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
         Por hectárea (comparación justa)
       </p>
+      {/* slice(0, -1): la densidad por hectárea vale para las cuentas, no para
+          los m² (que ya son una superficie). */}
       <div className="space-y-1.5">
-        {filas.slice(0, 4).map((f) => (
+        {filas.slice(0, -1).map((f) => (
           <div key={f.etiqueta} className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-3">
             <span className="truncate text-[12px] text-texto-2">{f.etiqueta}</span>
             <span className="num text-right text-xs">{(f.va / a.hectareas).toFixed(2)}</span>

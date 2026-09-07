@@ -7,8 +7,10 @@ import {
   Camera,
   ChevronDown,
   Columns2,
+  Construction,
   Crosshair,
   Download,
+  Droplets,
   Eye,
   EyeOff,
   Flame,
@@ -21,6 +23,7 @@ import {
   Printer,
   Radar,
   RotateCcw,
+  Ruler,
   Satellite,
   Send,
   Sparkles,
@@ -43,10 +46,19 @@ import {
 } from "react-map-gl/maplibre";
 import type { Feature, FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
-import { dentroDeSMT, type RolUsuario } from "@cimba/domain";
+import { dentroDeSMT, type EstadoIncidente, type RolUsuario } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import type { CircuitoResumen, DeudaTerritorial } from "@/lib/ordenes";
-import { COLOR_MACRO, ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
+import {
+  ETIQUETA_FUENTE,
+  ETIQUETA_TIPO,
+  SEMAFORO,
+  fechaCorta,
+  numero,
+  pasoDeBrecha,
+  pasoDeEstado,
+  semaforoHex,
+} from "@/lib/formato";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 import { vincularDemanda } from "@/lib/acciones";
@@ -83,7 +95,7 @@ const VISTAS = {
   brecha: {
     etiqueta: "Brecha",
     descripcion:
-      "Lo pedido vs. lo hecho: cada pedido pendiente coloreado según si nadie lo tocó (naranja), está en cola (azul) o ya habría una reparación cerca (verde).",
+      "Lo pedido vs. lo hecho: cada pedido pendiente pintado con el semáforo — rojo nadie lo tocó, naranja está en cola, ámbar la cuadrilla está en obra, verde parece resuelto (hay una reparación cerca).",
     macro: { abierto: false, en_curso: false, resuelto: false, inactivo: false },
     demandasAbiertas: true,
     verDemandas: true,
@@ -114,9 +126,36 @@ const normalizarVista = (v: string | null | undefined): Vista | undefined =>
     : Object.hasOwn(VISTA_LEGADO, v) ? (VISTA_LEGADO as Record<string, Vista>)[v]
     : undefined;
 
+/** Cuánto se muestra encima del mapa (ver el estado `detalle`). */
+type Detalle = "completo" | "esencial" | "limpio";
+const ETIQUETA_DETALLE: Record<Detalle, string> = { completo: "Todo", esencial: "Esencial", limpio: "Limpio" };
+
+/**
+ * En "esencial" la fila de KPIs baja de seis cifras a DOS: las que contestan
+ * la pregunta de cada vista. HOY y BRECHA se leen sobre la deuda de pedidos
+ * (cuántos hay y cuántos nadie cotejó todavía); HISTORIAL se lee sobre lo
+ * producido (reparaciones y m²). Los otros cuatro no desaparecen: están a un
+ * clic en "Todo", y el panel de Capas los sigue mostrando con su conteo.
+ */
+const KPIS_ESENCIALES: Record<Vista, readonly string[]> = {
+  hoy: ["demandas", "sinAtencion"],
+  brecha: ["demandas", "sinAtencion"],
+  historial: ["resueltos", "m2"],
+};
+
 const AYUDA_KPI = {
   demandas: "Pedidos visibles con la vista y filtros actuales: reclamos de vecinos (AC), pedidos del Concejo, intimaciones SAT, redes y secretarías.",
-  sinVincular: "Demandas que todavía nadie cotejó contra el territorio: no sabemos si son un problema nuevo, un duplicado o algo ya reparado. Es la cola de consolidación (pestaña Calidad).",
+  /**
+   * Era "Sin vincular", pero ese número salía de un count GLOBAL del servidor
+   * sin ningún filtro y convivía con "Demandas", que sí respeta destino, tipo,
+   * fuente y período: con el default (solo bacheo) llegaba a ser MAYOR que el
+   * total del que era subconjunto. El geojson no trae si la demanda está
+   * vinculada a un incidente (no viaja demanda_incidente), así que no se puede
+   * replicar del lado del cliente: se cambió por la cifra que sí se puede
+   * calcular sobre el MISMO conjunto y que contesta la misma pregunta operativa.
+   * La cola de consolidación global sigue viva en la pestaña Calidad.
+   */
+  sinAtencion: "De esos mismos pedidos, cuántos no tienen NADA cerca: ni incidente detectado, ni orden emitida, ni reparación a menos de 40 m. Es el paso rojo del semáforo. La cola de «sin vincular» (pedidos que nadie cotejó todavía) es un total del sistema y vive en la pestaña Calidad.",
   abiertos: "Incidentes (problemas físicos confirmados) detectados o priorizados, sin cuadrilla asignada aún.",
   enCurso: "Incidentes con trabajo programado o en ejecución (cuadrilla u obra SIGOV).",
   resueltos: "Incidentes reparados o verificados.",
@@ -134,6 +173,39 @@ interface GeoDatos {
   incidentes: FC;
   demandas: FC;
 }
+
+/** demandas.destino (enum destino_resolucion de la 0006): QUIÉN resuelve el
+ *  pedido. Es propiedad de la demanda, no del incidente. */
+type Destino = "bacheo" | "sat" | "ingenieria";
+const DESTINOS: readonly Destino[] = ["bacheo", "sat", "ingenieria"];
+const ETIQUETA_DESTINO: Record<Destino, string> = {
+  bacheo: "Bacheo",
+  sat: "SAT (agua)",
+  ingenieria: "Ingeniería",
+};
+/** Los cinco valores de demandas.brecha, con el nombre que se muestra. */
+const ETIQUETA_BRECHA: Record<string, string> = {
+  sin_atencion: "Sin atención",
+  en_cola: "En cola",
+  en_obra: "En obra",
+  posible_resuelta: "Parece resuelta",
+  atendida: "Atendida",
+};
+const AYUDA_DESTINO: Record<Destino, string> = {
+  bacheo: "La cola real de la Dirección de Bacheo: lo que se resuelve con asfalto u hormigón. Es lo único prendido al abrir el mapa.",
+  sat: "Pérdidas de agua, tapas y sumideros: los resuelve la SAT por expediente, no la cuadrilla. Se marcan con anillo violeta fino.",
+  ingenieria: "Reclamos que no son bache (calle de ripio, apertura, traza): van a Ingeniería. Se marcan con anillo magenta grueso.",
+};
+/** Aclaración que va en los tres chips: la cifra NO es "lo que se ve en
+ *  pantalla" ni cambia al apagar el chip — es el tamaño completo de esa cola
+ *  bajo los filtros de datos (tipo, fuente, período, distrito). */
+const AYUDA_CUENTA_DESTINO =
+  "La cifra es el total de esta cola con los filtros actuales de tipo, fuente y período: no cambia al prender o apagar el chip.";
+/** El destino con el que se cuenta un pedido. Un pedido que el trigger no
+ *  clasificó (destino null) se cuenta como bacheo: es la cola de la Dirección
+ *  hasta que alguien diga lo contrario, y así ningún pedido desaparece del
+ *  mapa por un dato que falta. */
+const destinoDe = (v: unknown): Destino => (v === "sat" || v === "ingenieria" ? v : "bacheo");
 
 const CENTRO_SMT: [number, number] = [-65.2226, -26.8241];
 
@@ -154,8 +226,43 @@ type Tema = TemaMapa;
  */
 function paleta(tema: Tema) {
   const oscuro = tema === "oscuro";
+  // EL SEMÁFORO en hex crudo del tema: MapLibre no resuelve var(), y varias
+  // capas además concatenan alfa sobre el color. La tabla vive en formato.ts
+  // (una sola verdad para HTML y canvas): acá solo se elige el juego.
+  const s = semaforoHex(tema);
   return {
     oscuro,
+    /** Los cinco pasos del semáforo, listos para las expresiones de pintado. */
+    sinAtencion: s.sin_atencion,
+    enCola: s.en_cola,
+    enObra: s.en_obra,
+    resuelto: s.resuelto,
+    inactivo: s.inactivo,
+    /** PROCEDENCIA (no estado): anillo de la obra contratada por SIGOV. Era
+     *  amarillo, pero el amarillo quedó reservado para las afordancias de
+     *  interacción y el ámbar del semáforo es demasiado parecido. Es el mismo
+     *  celeste institucional que --color-celeste: en HTML usar esa clase. */
+    sigov: oscuro ? "#2eb1ff" : "#0b7fd1",
+    /**
+     * DESTINO (ni estado ni procedencia): quién resuelve el pedido. Los dos
+     * colores anteriores competían con cosas que ya significaban otra cosa —
+     * el celeste agua de la SAT contra el celeste SIGOV y el marrón del ripio
+     * de Ingeniería contra el naranja "en cola" (1.13:1, indistinguibles y en
+     * la MISMA fila de la leyenda). Violeta y magenta son los únicos dos
+     * rangos de matiz que quedan libres: a ΔE ≥ 44 de cada paso del semáforo
+     * y del celeste institucional, y por encima de 5:1 contra el fondo en los
+     * dos temas. El destino además se refuerza por FORMA en capaDemandasDestino
+     * (anillo fino para la SAT, grueso y más abierto para Ingeniería): quien no
+     * distingue matices igual los separa.
+     */
+    destinoSat: oscuro ? "#b18cff" : "#6d28d9",
+    destinoIngenieria: oscuro ? "#ff7ad9" : "#be185d",
+    /** Marca de RANKING (Top 20), deliberadamente FUERA del semáforo: el disco
+     *  amarillo #f4dc00 se fundía con el ámbar "en obra" (#ffc233), que es
+     *  justo el estado de casi todo lo que el Top 20 numera. Tinta invertida
+     *  (disco claro sobre oscuro y al revés): ningún estado se pinta así. */
+    rankDisco: oscuro ? "#edf2fa" : "#16202e",
+    rankNumero: oscuro ? "#0B0F16" : "#ffffff",
     /** Halo de toda etiqueta de texto sobre el mapa. */
     halo: oscuro ? "#070a10" : "#ffffff",
     /** Amarillo de acento: anillos, hilos de cotejo, cifras flotantes. */
@@ -177,13 +284,10 @@ function paleta(tema: Tema) {
     /** Recorridos de colectivos: rosa sobre oscuro, violeta sobre claro —
      *  lejos del rosa de barrios y del violeta de distritos. */
     colectivo: oscuro ? "#f08fd0" : "#8b2fc9",
-    /** EN CURSO vs RESUELTO distinguibles de lejos: naranja más saturado y
-     *  con trazo fuerte vs. verde apagado — al combinarlos "no te cambia la
-     *  visión" era el reclamo. Solo para los puntos del mapa; las leyendas
-     *  HTML siguen con COLOR_MACRO. */
-    enCursoVivo: oscuro ? "#ff6a1f" : "#f05a00",
-    resueltoApagado: oscuro ? "#2f7d5c" : "#6ba98a",
-    trazoEnCurso: oscuro ? "rgba(237,242,250,0.95)" : "rgba(22,24,29,0.8)",
+    /** Trazo fuerte de lo que está comprometido o pasando ahora (programado y
+     *  en ejecución): el color ya lo dice, el trazo lo pone por encima del
+     *  archivo cuando conviven miles de puntos. */
+    trazoActivo: oscuro ? "rgba(237,242,250,0.95)" : "rgba(22,24,29,0.8)",
     distritos: oscuro ? "#a78bfa" : "#6d4fd4",
     circuitos: oscuro ? "#34d399" : "#0c8a5f",
     barrios: oscuro ? "#f472b6" : "#c22672",
@@ -200,6 +304,22 @@ function paleta(tema: Tema) {
   };
 }
 type Paleta = ReturnType<typeof paleta>;
+
+/** El hex del semáforo que le toca a un estado de incidente en el tema
+ *  vigente. Para HTML el equivalente es SEMAFORO[pasoDeEstado(estado)], que
+ *  devuelve la CSS var y se re-tematiza sola; acá hace falta el hex crudo. */
+function colorDeEstado(p: Paleta, estado: string): string {
+  const paso = pasoDeEstado(estado as EstadoIncidente);
+  return paso === "sin_atencion"
+    ? p.sinAtencion
+    : paso === "en_cola"
+      ? p.enCola
+      : paso === "en_obra"
+        ? p.enObra
+        : paso === "resuelto"
+          ? p.resuelto
+          : p.inactivo;
+}
 
 // ── Capas MapLibre ──────────────────────────────────────────────────────────
 
@@ -679,13 +799,49 @@ const capaColectivos = (p: Paleta): LayerProps => ({
   paint: { "line-color": p.colectivo, "line-opacity": 0.7, "line-width": 1 },
 });
 
+/**
+ * La burbuja de cluster habla el semáforo, no densidad. Antes interpolaba
+ * n_sin/point_count entre verde y rojo, y ahí mentía: un cluster de puros
+ * 'en_ejecucion' — donde no hay NADA resuelto — daba 0 y se pintaba VERDE, que
+ * es el color que la leyenda declara "resuelto". Ahora el clustering suma los
+ * TRES pasos por separado (n_sin, n_act = cola + obra, n_hecho) y la burbuja
+ * toma el color del paso DOMINANTE, desempatando siempre hacia el peor. Lo que
+ * no cae en ninguno (desestimado) deja la burbuja gris, que es lo honesto: no
+ * hay deuda ni trabajo que mostrar ahí.
+ */
 const capaClusters = (p: Paleta): LayerProps => ({
   id: "clusters",
   type: "circle",
   source: "incidentes",
   filter: ["has", "point_count"],
   paint: {
-    "circle-color": ["step", ["get", "point_count"], "#1c5cab", 10, "#0066ff", 60, "#2eb1ff", 200, "#f4dc00"],
+    // Las tres cifras van con coalesce+to-number porque un cluster de una sola
+    // categoría no trae las otras claves: sin la guarda, la comparación con
+    // null cortocircuita y la burbuja cae en el último caso (gris).
+    "circle-color": [
+      "case",
+      // Rojo si "sin atención" es el paso dominante O si llega a un tercio del
+      // cluster: una burbuja no puede verse verde mientras un tercio de lo que
+      // agrupa no lo tocó nadie.
+      ["all",
+        [">", ["to-number", ["coalesce", ["get", "n_sin"], 0]], 0],
+        ["any",
+          ["all",
+            [">=", ["to-number", ["coalesce", ["get", "n_sin"], 0]], ["to-number", ["coalesce", ["get", "n_act"], 0]]],
+            [">=", ["to-number", ["coalesce", ["get", "n_sin"], 0]], ["to-number", ["coalesce", ["get", "n_hecho"], 0]]]],
+          [">=",
+            ["*", 3, ["to-number", ["coalesce", ["get", "n_sin"], 0]]],
+            ["max", 1, ["to-number", ["coalesce", ["get", "point_count"], 1]]]]]],
+      p.sinAtencion,
+      // Activo = en cola + en obra en una sola cifra; se pinta con el ámbar, el
+      // paso más avanzado que cubre (mismo criterio que el KPI "En curso").
+      ["all",
+        [">", ["to-number", ["coalesce", ["get", "n_act"], 0]], 0],
+        [">=", ["to-number", ["coalesce", ["get", "n_act"], 0]], ["to-number", ["coalesce", ["get", "n_hecho"], 0]]]],
+      p.enObra,
+      [">", ["to-number", ["coalesce", ["get", "n_hecho"], 0]], 0], p.resuelto,
+      p.inactivo,
+    ],
     "circle-radius": ["step", ["get", "point_count"], 14, 10, 19, 60, 26, 200, 33],
     "circle-stroke-width": 2,
     "circle-stroke-color": p.trazoCluster,
@@ -703,7 +859,11 @@ const capaClusterConteo: LayerProps = {
     "text-font": ["Open Sans Bold"],
   },
   paint: {
-    "text-color": ["step", ["get", "point_count"], "#ffffff", 200, "#16181d"],
+    // Con la burbuja recorriendo verde→ámbar→rojo no hay un color de texto que
+    // sirva para todos: blanco con halo oscuro se lee sobre los tres.
+    "text-color": "#ffffff",
+    "text-halo-color": "rgba(11,15,22,0.75)",
+    "text-halo-width": 1.4,
   },
 };
 
@@ -713,36 +873,41 @@ const capaIncidentes = (p: Paleta): LayerProps => ({
   source: "incidentes",
   filter: ["!", ["has", "point_count"]],
   paint: {
-    // EN CURSO y RESUELTO tienen que distinguirse DE LEJOS cuando conviven:
-    // en curso naranja saturado, más grande y con trazo fuerte (es lo que
-    // está pasando ahora); resuelto verde apagado y más chico (es archivo).
+    // El color sale del ESTADO, no del macro: es el único lugar donde se
+    // distinguen los cuatro pasos del semáforo (el macro junta programado y
+    // en ejecución en un solo "en curso" y perdería el ámbar).
     "circle-color": [
       "match",
-      ["get", "macro"],
-      "abierto", COLOR_MACRO.abierto,
-      "en_curso", p.enCursoVivo,
-      "resuelto", p.resueltoApagado,
-      COLOR_MACRO.inactivo,
+      ["get", "estado"],
+      ["detectado", "priorizado"], p.sinAtencion,
+      ["programado"], p.enCola,
+      ["en_ejecucion"], p.enObra,
+      ["reparado", "verificado"], p.resuelto,
+      p.inactivo,
     ],
+    // Se conserva la jerarquía de tamaño: lo que está pasando ahora (en obra)
+    // manda, lo comprometido le sigue y el archivo (resuelto/desestimado) se
+    // achica — solo que ahora la escala tiene los cuatro escalones.
     "circle-radius": [
       "interpolate", ["linear"], ["zoom"],
-      11, ["match", ["get", "macro"], "en_curso", 4.5, "resuelto", 3, 3.5],
-      14, ["match", ["get", "macro"], "en_curso", 7.5, "resuelto", 5, 6],
-      17, ["match", ["get", "macro"], "en_curso", 11, "resuelto", 7.5, 9],
-      19.5, ["match", ["get", "macro"], "en_curso", 16, "resuelto", 11.5, 14],
+      11, ["match", ["get", "estado"], ["en_ejecucion"], 4.5, ["programado"], 4, ["reparado", "verificado", "desestimado"], 3, 3.5],
+      14, ["match", ["get", "estado"], ["en_ejecucion"], 7.5, ["programado"], 6.5, ["reparado", "verificado", "desestimado"], 5, 6],
+      17, ["match", ["get", "estado"], ["en_ejecucion"], 11, ["programado"], 9.5, ["reparado", "verificado", "desestimado"], 7.5, 9],
+      19.5, ["match", ["get", "estado"], ["en_ejecucion"], 16, ["programado"], 14.5, ["reparado", "verificado", "desestimado"], 11.5, 14],
     ],
-    // Anillo amarillo = obra SIGOV (contratada); trazo fuerte = en curso;
-    // anillo neutro = el resto (CIMBA/planillas)
+    // Anillo CELESTE = obra SIGOV (contratada): es PROCEDENCIA, no estado —
+    // el amarillo que usaba antes lo necesita el semáforo. Trazo fuerte =
+    // comprometido o en obra; anillo neutro = el resto (CIMBA/planillas).
     "circle-stroke-width": [
       "case",
       ["==", ["get", "origen"], "sigov"], 2,
-      ["==", ["get", "macro"], "en_curso"], 2,
+      ["match", ["get", "estado"], ["programado", "en_ejecucion"], true, false], 2,
       1,
     ],
     "circle-stroke-color": [
       "case",
-      ["==", ["get", "origen"], "sigov"], p.acento,
-      ["==", ["get", "macro"], "en_curso"], p.trazoEnCurso,
+      ["==", ["get", "origen"], "sigov"], p.sigov,
+      ["match", ["get", "estado"], ["programado", "en_ejecucion"], true, false], p.trazoActivo,
       p.trazoPunto,
     ],
   },
@@ -771,8 +936,8 @@ const capaPulso = (p: Paleta): LayerProps => ({
     "circle-color": "rgba(0,0,0,0)",
     "circle-radius": 10,
     "circle-stroke-width": 2,
-    // El mismo naranja saturado del punto en curso: el pulso es su eco.
-    "circle-stroke-color": p.enCursoVivo,
+    // El mismo ámbar del punto en obra: el pulso es su eco.
+    "circle-stroke-color": p.enObra,
     "circle-stroke-opacity": 0.6,
   },
 });
@@ -824,18 +989,59 @@ const capaDemandasBrecha = (p: Paleta): LayerProps => ({
   type: "circle",
   source: "demandas",
   paint: {
+    // El semáforo completo: 'en_obra' salió de 'en_cola' (hay un incidente en
+    // ejecución a menos de 40 m) y se pinta ámbar. 'atendida' y cualquier
+    // valor nuevo caen en gris: no hay deuda que contar ahí.
     "circle-color": [
       "match",
       ["get", "brecha"],
-      "sin_atencion", COLOR_MACRO.en_curso,
-      "en_cola", COLOR_MACRO.abierto,
-      "posible_resuelta", COLOR_MACRO.resuelto,
-      "#6b7280",
+      "sin_atencion", p.sinAtencion,
+      "en_cola", p.enCola,
+      "en_obra", p.enObra,
+      "posible_resuelta", p.resuelto,
+      p.inactivo,
     ],
     "circle-opacity": 0.85,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.6, 14, 4.5, 17, 7, 19.5, 10],
     "circle-stroke-width": 0.8,
     "circle-stroke-color": p.trazoBrecha,
+  },
+});
+
+/**
+ * Marca de DESTINO: un pedido que no resuelve bacheo (agua → SAT, ripio o
+ * problema de traza → Ingeniería) no habla el idioma del semáforo, porque su
+ * estado no es el de la cuadrilla. Se distingue por FORMA — un anillo propio
+ * alrededor del punto —, no por color: MapLibre no dibuja formas en las capas
+ * circle y el color ya está ocupado por el semáforo. Se monta encima del punto
+ * y sin relleno, así el paso del semáforo se sigue leyendo adentro.
+ *
+ * Los dos destinos se separan además ENTRE SÍ por la forma del anillo, no solo
+ * por el matiz: la SAT lleva un aro fino y ceñido al punto, Ingeniería uno
+ * grueso y más abierto. `circle-stroke` no admite dasharray, así que el grosor
+ * y el radio son las dos únicas variables de forma disponibles — alcanzan para
+ * que la marca se lea en escala de grises.
+ */
+const capaDemandasDestino = (p: Paleta): LayerProps => ({
+  id: "demandas-destino-anillo",
+  type: "circle",
+  source: "demandas",
+  filter: ["match", ["get", "destino"], ["sat", "ingenieria"], true, false],
+  paint: {
+    "circle-color": "rgba(0,0,0,0)",
+    "circle-radius": [
+      "interpolate", ["linear"], ["zoom"],
+      11, ["match", ["get", "destino"], "sat", 5, 6.5],
+      14, ["match", ["get", "destino"], "sat", 7.5, 9.5],
+      17, ["match", ["get", "destino"], "sat", 11, 13.5],
+      19.5, ["match", ["get", "destino"], "sat", 14.5, 17.5],
+    ],
+    "circle-stroke-width": ["match", ["get", "destino"], "sat", 2, 3.2],
+    // Violeta la SAT, magenta Ingeniería: ver el comentario de destinoSat en
+    // la paleta — los colores viejos (celeste agua y marrón ripio) chocaban
+    // con el celeste SIGOV y con el naranja "en cola".
+    "circle-stroke-color": ["match", ["get", "destino"], "sat", p.destinoSat, p.destinoIngenieria],
+    "circle-stroke-opacity": 0.95,
   },
 });
 
@@ -910,6 +1116,17 @@ export interface InicialMapa {
   brecha?: string;
   fuente?: string;
   tipo?: string;
+  /**
+   * Aislar quién resuelve ("mostrame solo lo de la SAT"). A diferencia del
+   * resto de los chips, el destino NO se persiste: el mapa abre siempre en la
+   * cola de bacheo salvo que el link diga otra cosa.
+   * Es `string` y no la unión de los tres valores porque el parámetro admite
+   * una LISTA separada por comas ("bacheo,sat") y el atajo "todos": un link de
+   * "Copiar link de esta vista" con dos colas prendidas perdía una. Lo parsea
+   * el estado `destinos` de abajo; cualquier valor desconocido cae en el
+   * default (solo bacheo).
+   */
+  destino?: string;
   dias?: number;
   calor?: boolean;
   hex?: boolean;
@@ -1019,6 +1236,7 @@ function MapaInterno({
       demandas: capaDemandas(pal),
       demandasEdad: capaDemandasEdad(pal),
       demandasBrecha: capaDemandasBrecha(pal),
+      demandasDestino: capaDemandasDestino(pal),
       zonaRelleno: capaZonaRelleno(pal),
       zonaBorde: capaZonaBorde(pal),
       hexagonos: capaHexagonos(pal),
@@ -1078,6 +1296,27 @@ function MapaInterno({
     return apagados;
   });
   const [filtroBrecha, setFiltroBrecha] = useState<string | null>(inicial?.brecha ?? null);
+  /**
+   * Chips de DESTINO: por defecto SOLO bacheo. Esa es la cola real de la
+   * Dirección — los ~975 pedidos de agua (SAT) y los ~119 de ripio
+   * (Ingeniería) inflaban una deuda que no es suya. A propósito NO se
+   * persiste en localStorage: que abrir el mapa sea siempre predecible.
+   * Un deep-link ?destino= sí manda: acepta un destino suelto, una LISTA
+   * separada por comas ("bacheo,sat" — lo que emite "Copiar link de esta
+   * vista" cuando hay más de una cola prendida) o el atajo "todos". Un valor
+   * que no se entiende cae en el default en vez de dejar el mapa en blanco.
+   */
+  const [destinos, setDestinos] = useState<Record<string, boolean>>(() => {
+    const soloBacheo = { bacheo: true, sat: false, ingenieria: false };
+    const crudo = inicial?.destino?.trim().toLowerCase();
+    if (!crudo) return soloBacheo;
+    if (crudo === "todos") return { bacheo: true, sat: true, ingenieria: true };
+    const pedidos = new Set(
+      crudo.split(",").map((v) => v.trim()).filter((v): v is Destino => (DESTINOS as readonly string[]).includes(v)),
+    );
+    if (pedidos.size === 0) return soloBacheo;
+    return { bacheo: pedidos.has("bacheo"), sat: pedidos.has("sat"), ingenieria: pedidos.has("ingenieria") };
+  });
   // Analizador de zona (lupa territorial)
   const [modoAnalisis, setModoAnalisis] = useState(false);
   const [zona, setZona] = useState<{ lon: number; lat: number } | null>(
@@ -1457,8 +1696,59 @@ function MapaInterno({
     fc: FeatureCollection<Point, Record<string, unknown>>;
     frase: string;
   } | null>(null);
-  // Modo despejado: esconde de un golpe todo lo que flota sobre el mapa
-  const [despejado, setDespejado] = useState(false);
+  /**
+   * NIVEL DE DETALLE — "limpiá de la manera más sencilla los índices y los
+   * números". Tres escalones, no un interruptor:
+   *   completo → todo lo que el mapa sabe dibujar (los 6 KPIs y las cifras
+   *              flotantes de deuda por zona, que son el mayor ruido);
+   *   esencial → el valor inicial: dos KPIs elegidos por la vista, sin cifras
+   *              flotantes, con el balance y la leyenda del semáforo puestos;
+   *   limpio   → el viejo "Despejar": el mapa y nada más.
+   * `despejado` deriva de acá para no duplicar la mecánica: el botón del ojo y
+   * el chip "Mostrar paneles" mueven este estado, y todo el render que ya
+   * miraba `despejado` sigue funcionando igual.
+   */
+  const [detalle, setDetalle] = useState<Detalle>("esencial");
+  const despejado = detalle === "limpio";
+  /** A qué escalón volver al salir de "limpio" (el ojo es un ida y vuelta). */
+  const detalleAntesDeLimpiar = useRef<Detalle>("esencial");
+  /**
+   * "Limpio" NO se persiste, ni al leer ni al escribir: despejar siempre fue
+   * un gesto efímero ("sacame todo un segundo para mirar el mapa") y guardarlo
+   * hacía que al día siguiente el mapa abriera vacío, sin paneles y sin ninguna
+   * pista de por qué. Se guarda el último nivel REAL — el mismo al que vuelve
+   * el ojo —, así que salir despejado y volver mañana abre donde se estaba.
+   */
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("cimba:mapa-detalle");
+      if (v === "completo" || v === "esencial") {
+        setDetalle(v);
+        detalleAntesDeLimpiar.current = v;
+      }
+    } catch {
+      // sin localStorage: queda "esencial", que es el valor inicial
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("cimba:mapa-detalle", detalle === "limpio" ? detalleAntesDeLimpiar.current : detalle);
+    } catch {
+      // sin persistencia no se pierde nada más que la preferencia
+    }
+  }, [detalle]);
+  const cambiarDetalle = (v: Detalle) => {
+    if (v !== "limpio") detalleAntesDeLimpiar.current = v;
+    setDetalle(v);
+  };
+  const alternarDespejado = () => {
+    if (despejado) {
+      setDetalle(detalleAntesDeLimpiar.current);
+      return;
+    }
+    detalleAntesDeLimpiar.current = detalle;
+    setDetalle("limpio");
+  };
   // Paneles reubicables: el usuario los arrastra de su cabecera y quedan ahí
   const arrCapas = usePanelArrastrable("capas");
   const arrZonas = usePanelArrastrable("zonas");
@@ -1556,7 +1846,13 @@ function MapaInterno({
       const t = inter.tipo;
       setTipos(Object.fromEntries(Object.keys(ETIQUETA_TIPO).map((k) => [k, k === t])));
     }
-    if (dems.length > 0) setVerDemandas(true);
+    if (dems.length > 0) {
+      setVerDemandas(true);
+      // Lo encontrado puede caer en otra cola (agua, ripio): sin prender ese
+      // chip el buscador marcaría con anillo puntos que el filtro esconde.
+      const presentes = [...new Set(dems.map((f) => destinoDe(f.properties.destino)))];
+      setDestinos((v) => ({ ...v, ...Object.fromEntries(presentes.map((d) => [d, true])) }));
+    }
 
     if (todas.length > 0) {
       setResaltado({ fc: { type: "FeatureCollection", features: todas }, frase });
@@ -1662,21 +1958,51 @@ function MapaInterno({
     return { type: "FeatureCollection", features };
   }, [data, verMacro, tipos, corte, finMesCursor, distritoFoco]);
 
+  /**
+   * Los pedidos que pasan todos los filtros de datos MENOS los dos que tienen
+   * su propio control visible (destino y brecha). De acá salen las tres cosas
+   * que tienen que cerrar entre sí: los puntos del mapa, la cuenta de cada
+   * chip de destino y la cuenta de cada categoría de la leyenda de brecha —
+   * si cada una filtrara distinto, el usuario vería un número y otro conjunto.
+   */
+  const demandasBase = useMemo(
+    () =>
+      (data?.demandas.features ?? []).filter((f) => {
+        const fuente = String(f.properties.fuente);
+        if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
+        if (fuentes[fuente] === false) return false;
+        if (tipos[String(f.properties.tipo)] === false) return false;
+        if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
+          return false;
+        if (finMesCursor !== null) {
+          if (f.properties.sin_fecha) return false;
+          if (Date.parse(String(f.properties.creado_en)) > finMesCursor) return false;
+        } else if (corte && Date.parse(String(f.properties.creado_en)) < corte) {
+          return false;
+        }
+        return true;
+      }),
+    [data, fuentes, tipos, soloDemandasAbiertas, corte, finMesCursor, distritoFoco],
+  );
+
+  /** El filtro de brecha solo existe dentro de la vista Brecha. */
+  const filtroBrechaActivo = vista === "brecha" ? filtroBrecha : null;
+
+  /** Cuántos pedidos aporta cada destino con los filtros actuales. Sale de los
+   *  datos ya cargados: los chips no piden nada al servidor. */
+  const cuentasDestino = useMemo(() => {
+    const c: Record<Destino, number> = { bacheo: 0, sat: 0, ingenieria: 0 };
+    for (const f of demandasBase) {
+      if (filtroBrechaActivo && String(f.properties.brecha) !== filtroBrechaActivo) continue;
+      c[destinoDe(f.properties.destino)] += 1;
+    }
+    return c;
+  }, [demandasBase, filtroBrechaActivo]);
+
   const demandasFiltradas = useMemo<FC>(() => {
-    const features = (data?.demandas.features ?? []).filter((f) => {
-      const fuente = String(f.properties.fuente);
-      if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
-      if (fuentes[fuente] === false) return false;
-      if (tipos[String(f.properties.tipo)] === false) return false;
-      if (soloDemandasAbiertas && !["recibida", "en_validacion"].includes(String(f.properties.estado)))
-        return false;
-      if (vista === "brecha" && filtroBrecha && String(f.properties.brecha) !== filtroBrecha) return false;
-      if (finMesCursor !== null) {
-        if (f.properties.sin_fecha) return false;
-        if (Date.parse(String(f.properties.creado_en)) > finMesCursor) return false;
-      } else if (corte && Date.parse(String(f.properties.creado_en)) < corte) {
-        return false;
-      }
+    const features = demandasBase.filter((f) => {
+      if (destinos[destinoDe(f.properties.destino)] !== true) return false;
+      if (filtroBrechaActivo && String(f.properties.brecha) !== filtroBrechaActivo) return false;
       return true;
     });
     // edad en días para "la deuda envejece" (-1 = sin fecha confiable).
@@ -1694,7 +2020,21 @@ function MapaInterno({
       return { ...f, properties: { ...f.properties, edad_dias: edadDias } };
     });
     return { type: "FeatureCollection", features: conEdad };
-  }, [data, fuentes, tipos, soloDemandasAbiertas, corte, vista, filtroBrecha, finMesCursor, distritoFoco]);
+  }, [demandasBase, destinos, filtroBrechaActivo]);
+
+  /** Cuántos pedidos pendientes hay en cada categoría de brecha, para la
+   *  leyenda de esa vista. Respeta el destino prendido (si no, el chip decía
+   *  una cosa y el mapa mostraba otra) y los demás filtros de datos. */
+  const cuentasBrecha = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const f of demandasBase) {
+      if (destinos[destinoDe(f.properties.destino)] !== true) continue;
+      if (!["recibida", "en_validacion"].includes(String(f.properties.estado))) continue;
+      const b = String(f.properties.brecha ?? "");
+      c[b] = (c[b] ?? 0) + 1;
+    }
+    return c;
+  }, [demandasBase, destinos]);
 
   // Memoizados: sin esto, cada render (uno por frame al panear con Comparar
   // activo) recalcula el polígono de la zona entero para nada. La geometría
@@ -1757,11 +2097,16 @@ function MapaInterno({
       if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (fuentes[String(f.properties.fuente)] === false) return false;
       if (tipos[String(f.properties.tipo)] === false) return false;
+      // El DESTINO sí entra acá (a diferencia de la visibilidad de capa):
+      // "quién resuelve" es un filtro de datos, como el tipo o el período.
+      // Sin esto el balance de abajo y las cifras de deuda por zona seguirían
+      // contando el agua y el ripio que los chips acaban de sacar del mapa.
+      if (destinos[destinoDe(f.properties.destino)] !== true) return false;
       if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, tipos, corte, distritoFoco]);
+  }, [data, fuentes, tipos, destinos, corte, distritoFoco]);
 
   /**
    * Coropletas: pinta cada distrito según qué proporción de sus pedidos
@@ -1842,6 +2187,10 @@ function MapaInterno({
       filtros.push(`Fuente: ${activas.map((f) => ETIQUETA_FUENTE[f as keyof typeof ETIQUETA_FUENTE] ?? f).join(", ")}`);
     }
     if (soloDemandasAbiertas && verDemandas) filtros.push("Solo pedidos pendientes");
+    const destinosActivos = DESTINOS.filter((d) => destinos[d] === true);
+    if (destinosActivos.length < DESTINOS.length) {
+      filtros.push(`Resuelve: ${destinosActivos.map((d) => ETIQUETA_DESTINO[d]).join(", ") || "nada"}`);
+    }
     if (vista === "brecha" && filtroBrecha) filtros.push(`Brecha: ${filtroBrecha.replaceAll("_", " ")}`);
     if (dias) filtros.push(`Período: últimos ${dias} días`);
 
@@ -1911,6 +2260,14 @@ function MapaInterno({
     if (vista === "brecha" && modoBrecha === "antiguedad") p.set("modoBrecha", "antiguedad");
     const tiposActivos = Object.keys(ETIQUETA_TIPO).filter((t) => tipos[t] !== false);
     if (tiposActivos.length === 1 && tiposActivos[0]) p.set("tipo", tiposActivos[0]);
+    // El destino viaja como LISTA: emitirlo solo cuando quedaba UNO prendido
+    // hacía que "bacheo + SAT" llegara al otro lado como el default (solo
+    // bacheo) y el link mostrara menos pedidos que la pantalla que lo generó.
+    // Con las tres colas prendidas se abrevia "todos". Ninguna prendida no se
+    // emite: no hay valor que signifique "nada" y el mapa abriría en blanco.
+    const destinosActivos = DESTINOS.filter((d) => destinos[d] === true);
+    if (destinosActivos.length === DESTINOS.length) p.set("destino", "todos");
+    else if (destinosActivos.length > 0) p.set("destino", destinosActivos.join(","));
     const fuentesActivas = fuentesPresentes.filter((fu) => fuentes[fu] !== false);
     if (fuentesActivas.length === 1 && fuentesActivas[0] && fuentesPresentes.length > 1) p.set("fuente", fuentesActivas[0]);
     if (dias) p.set("dias", String(dias));
@@ -2182,13 +2539,19 @@ function MapaInterno({
     });
     return {
       demandas: demandasFiltradas.features.length,
+      // Sobre el MISMO conjunto que "Demandas" (ver AYUDA_KPI.sinAtencion): las
+      // dos cifras de "Esencial" se leen juntas, así que tienen que medir el
+      // mismo universo o la de abajo puede superar a la de arriba.
+      sinAtencion: demandasFiltradas.features.filter((f) => f.properties.brecha === "sin_atencion").length,
       abiertos: inc.filter((f) => f.properties.macro === "abierto").length,
       enCurso: inc.filter((f) => f.properties.macro === "en_curso").length,
       resueltos: inc.filter((f) => f.properties.macro === "resuelto").length,
       m2: kpisIniciales.m2Intervenidos,
-      sinVincular: kpisIniciales.demandasSinVincular,
     };
   }, [data, tipos, corte, demandasFiltradas, kpisIniciales]);
+
+  /** Qué cifras de la fila de arriba sobreviven al nivel de detalle. */
+  const verKpi = (clave: string) => detalle === "completo" || KPIS_ESENCIALES[vista].includes(clave);
 
   /**
    * Callejero legible al hacer zoom, para poder ubicar cualquier dirección y no
@@ -2467,7 +2830,13 @@ function MapaInterno({
     } else if (feature.layer.id === "demandas-punto") {
       const props = feature.properties ?? {};
       const brechaProp = String(props.brecha ?? "");
-      if (vistaRef.current === "brecha" && ["sin_atencion", "en_cola", "posible_resuelta"].includes(brechaProp)) {
+      // Los cuatro pasos del semáforo abren el cotejo: 'en_obra' (la cuadrilla
+      // ya está en la calle a menos de 40 m) es justo el caso donde más
+      // conviene vincular el pedido al trabajo que lo está resolviendo.
+      if (
+        vistaRef.current === "brecha" &&
+        ["sin_atencion", "en_cola", "en_obra", "posible_resuelta"].includes(brechaProp)
+      ) {
         // Cotejo desde el mapa: hilos hacia lo que hay a menos de 60 m.
         // Se excluyen los desestimados (macro inactivo): la gestión decidió
         // no atenderlos, vincular ahí sería sacar un pedido real de la
@@ -2795,6 +3164,11 @@ function MapaInterno({
             {verDemandas && (
               <Layer {...(vista === "brecha" ? (modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha) : capas.demandas)} />
             )}
+            {/* El anillo de destino se monta encima del punto y solo si hay
+                alguna cola ajena prendida: con solo bacheo no dibuja nada. */}
+            {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
+              <Layer {...capas.demandasDestino} />
+            )}
           </Source>
         )}
 
@@ -2860,7 +3234,10 @@ function MapaInterno({
               features: cotejo.candidatos.map((c) => ({
                 type: "Feature" as const,
                 geometry: { type: "Point" as const, coordinates: c.lngLat },
-                properties: { macro: c.macro },
+                // El paso del semáforo se resuelve acá, en JS: el candidato ya
+                // tiene el estado exacto, así el punto marcado se pinta igual
+                // que el mismo incidente en la capa de abajo.
+                properties: { color: colorDeEstado(pal, c.estado) },
               })),
             }}
           >
@@ -2876,13 +3253,7 @@ function MapaInterno({
               type="circle"
               paint={{
                 "circle-radius": 7,
-                "circle-color": [
-                  "match", ["get", "macro"],
-                  "abierto", COLOR_MACRO.abierto,
-                  "en_curso", COLOR_MACRO.en_curso,
-                  "resuelto", COLOR_MACRO.resuelto,
-                  "#8b94a3",
-                ],
+                "circle-color": ["coalesce", ["get", "color"], pal.inactivo],
                 "circle-stroke-color": pal.tinta,
                 "circle-stroke-width": 2,
               }}
@@ -2896,11 +3267,16 @@ function MapaInterno({
               id="top20-circulo"
               type="circle"
               paint={{
-                // El disco amarillo con número oscuro se banca los dos temas;
-                // en claro el borde pasa a ocre oscuro para despegarlo del fondo.
+                // El disco era #f4dc00 y en tema oscuro se fundía con el ámbar
+                // "en obra" (#ffc233) — justo el estado de casi todo lo que el
+                // Top 20 numera, así que el ranking se leía como un estado más.
+                // Ahora es tinta INVERTIDA (disco claro sobre el mapa oscuro y
+                // al revés): ningún paso del semáforo se pinta así, el número
+                // queda a máximo contraste y el disco se lee como una chapa de
+                // ranking, no como un color de estado.
                 "circle-radius": 11,
-                "circle-color": "#f4dc00",
-                "circle-stroke-color": pal.oscuro ? "#0B0F16" : "#6b5d00",
+                "circle-color": pal.rankDisco,
+                "circle-stroke-color": pal.tinta,
                 "circle-stroke-width": 2,
               }}
             />
@@ -2913,12 +3289,14 @@ function MapaInterno({
                 "text-font": ["Montserrat Regular"],
                 "text-allow-overlap": true,
               }}
-              paint={{ "text-color": "#0B0F16" }}
+              paint={{ "text-color": pal.rankNumero }}
             />
           </Source>
         )}
 
-        {cifrasZona.features.length > 0 && (
+        {/* Las cifras flotantes "N sin respuesta" son el mayor ruido del mapa
+            al alejarse: solo se dibujan con el detalle en "Todo". */}
+        {detalle === "completo" && cifrasZona.features.length > 0 && (
           <Source id="cifras-zona" type="geojson" data={cifrasZona}>
             <Layer
               id="cifras-zona-texto"
@@ -2941,6 +3319,20 @@ function MapaInterno({
           cluster
           clusterMaxZoom={14}
           clusterRadius={45}
+          // Los tres pasos del semáforo contados por el propio clustering, para
+          // que la burbuja pueda pintarse por el paso DOMINANTE (ver
+          // capaClusters). Con solo n_sin la burbuja mentía: un cluster de
+          // puros 'en_ejecucion' daba 0 sin atención y se pintaba verde, que es
+          // el color de "resuelto". Lo que no entra en ninguno de los tres
+          // (desestimado) queda fuera a propósito: no es deuda ni es trabajo.
+          //   n_sin   = detectado + priorizado  (nadie lo tocó)
+          //   n_act   = programado + en_ejecucion (en cola + en obra)
+          //   n_hecho = reparado + verificado
+          clusterProperties={{
+            n_sin: ["+", ["case", ["match", ["get", "estado"], ["detectado", "priorizado"], true, false], 1, 0]],
+            n_act: ["+", ["case", ["match", ["get", "estado"], ["programado", "en_ejecucion"], true, false], 1, 0]],
+            n_hecho: ["+", ["case", ["match", ["get", "estado"], ["reparado", "verificado"], true, false], 1, 0]],
+          }}
         >
           <Layer {...capas.pulso} />
           <Layer {...capas.incidentes} />
@@ -3040,19 +3432,57 @@ function MapaInterno({
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
         ) : (
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] overflow-x-auto rounded-xl p-1 sm:max-w-none sm:flex-wrap sm:overflow-visible">
-            {(Object.keys(VISTAS) as Vista[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => aplicarVista(v)}
-                title={VISTAS[v].descripcion}
-                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition sm:px-3.5 ${
-                  vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
-                }`}
-              >
-                {VISTAS[v].etiqueta}
-              </button>
-            ))}
+          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] flex-col rounded-xl p-1 sm:max-w-none">
+            <div className="flex overflow-x-auto sm:flex-wrap sm:overflow-visible">
+              {(Object.keys(VISTAS) as Vista[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => aplicarVista(v)}
+                  title={VISTAS[v].descripcion}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition sm:px-3.5 ${
+                    vista === v ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                  }`}
+                >
+                  {VISTAS[v].etiqueta}
+                </button>
+              ))}
+            </div>
+            {/* QUIÉN RESUELVE: la cola de la Dirección es bacheo. El agua (SAT)
+                y el ripio (Ingeniería) se prenden a pedido — mientras están
+                apagados no inflan ninguna cifra de deuda. */}
+            {/* La fila salía sin rótulo visible —el "quién resuelve" vivía solo
+                en el title— y las tres cifras no cambian al apagar un chip, así
+                que se leía como tres datos informativos y no como el filtro que
+                es. El rótulo lo nombra y el pie aclara qué mide la cifra; los
+                dos son texto chico y envuelven, así que entran en 375 px. */}
+            <div data-tour="destinos" className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1">
+              <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Resuelve</span>
+              {DESTINOS.map((d) => {
+                const activo = destinos[d] === true;
+                // El color del chip es el de su anillo en el mapa; bacheo no
+                // tiene anillo (habla el semáforo) y va con el relleno neutro.
+                const marca = d === "sat" ? pal.destinoSat : d === "ingenieria" ? pal.destinoIngenieria : null;
+                return (
+                  <button
+                    key={d}
+                    onClick={() => setDestinos((v) => ({ ...v, [d]: !activo }))}
+                    aria-pressed={activo}
+                    title={`${AYUDA_DESTINO[d]} — ${AYUDA_CUENTA_DESTINO}`}
+                    className={`flex items-center gap-1 rounded-lg border px-1.5 py-1 text-[11px] font-semibold whitespace-nowrap transition ${
+                      activo ? "border-transparent bg-panel-3 text-texto" : "border-borde-2 text-texto-3 hover:text-texto-2"
+                    }`}
+                    style={activo && marca ? { borderColor: marca, color: marca } : undefined}
+                  >
+                    {d === "bacheo" ? <Construction size={12} /> : d === "sat" ? <Droplets size={12} /> : <Ruler size={12} />}
+                    {ETIQUETA_DESTINO[d]}
+                    <span className="num opacity-70">{numero(cuentasDestino[d])}</span>
+                  </button>
+                );
+              })}
+              <span className="basis-full text-[10px] leading-tight text-texto-3" title={AYUDA_CUENTA_DESTINO}>
+                Prendé o apagá cada cola · la cifra es el total de la cola, no lo que se ve
+              </span>
+            </div>
           </div>
         )}
 
@@ -3100,9 +3530,29 @@ function MapaInterno({
               <RotateCcw size={14} />
             </button>
           )}
+          {/* Nivel de detalle: cuánto se muestra encima del mapa. "Limpio" es
+              el mismo despejado del ojo de al lado — un solo estado para las
+              dos afordancias. */}
+          <div
+            data-tour="detalle"
+            className="panel-vidrio hidden items-center rounded-xl p-1 sm:flex"
+            title="Cuánta información se dibuja encima del mapa: Todo (los 6 números y las cifras de deuda por zona), Esencial (los 2 que importan en esta vista) o Limpio (solo el mapa)"
+          >
+            {(Object.keys(ETIQUETA_DETALLE) as Detalle[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => cambiarDetalle(d)}
+                className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold whitespace-nowrap transition ${
+                  detalle === d ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                }`}
+              >
+                {ETIQUETA_DETALLE[d]}
+              </button>
+            ))}
+          </div>
           <button
             data-tour="despejar"
-            onClick={() => setDespejado((v) => !v)}
+            onClick={alternarDespejado}
             className={`panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:flex sm:px-3 sm:py-2.5 ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
@@ -3284,16 +3734,27 @@ function MapaInterno({
                       if (activo) setTiempoIdx(0);
                     }}
                   />
-                  <ItemAccion
-                    icono={<EyeOff size={15} />}
-                    titulo={despejado ? "Mostrar todo de nuevo" : "Despejar la pantalla"}
-                    desc="Esconde paneles y números para ver el mapa limpio"
-                    activo={despejado}
-                    onClick={() => {
-                      setMenuAcciones(false);
-                      setDespejado((v) => !v);
-                    }}
-                  />
+                  {/* Mismo selector de detalle que en la barra de escritorio:
+                      en mobile el ojo no está, así que el escalón se elige acá. */}
+                  <p className="mt-1 border-t border-borde px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                    Cuánto se muestra
+                  </p>
+                  <div className="flex gap-1 px-2 pb-1">
+                    {(Object.keys(ETIQUETA_DETALLE) as Detalle[]).map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => {
+                          cambiarDetalle(d);
+                          if (d === "limpio") setMenuAcciones(false);
+                        }}
+                        className={`flex-1 rounded-md border px-1 py-1.5 text-[11px] font-semibold transition ${
+                          detalle === d ? "border-azul bg-azul/20 text-texto" : "border-borde-2 text-texto-3"
+                        }`}
+                      >
+                        {ETIQUETA_DETALLE[d]}
+                      </button>
+                    ))}
+                  </div>
                   {panelesMovidos && (
                     <ItemAccion
                       icono={<RotateCcw size={15} />}
@@ -3366,7 +3827,7 @@ function MapaInterno({
           esfumaba. Este chip existe SOLO con el mapa despejado. */}
       {despejado && (
         <button
-          onClick={() => setDespejado(false)}
+          onClick={() => setDetalle(detalleAntesDeLimpiar.current)}
           className="panel-vidrio absolute top-3 right-3 z-30 flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-amarillo ring-1 ring-amarillo/60 transition hover:brightness-110"
           title="Volver a mostrar los paneles y datos sobre el mapa"
         >
@@ -3384,12 +3845,28 @@ function MapaInterno({
           className="pointer-events-auto absolute left-3 right-3 z-10 flex gap-2 overflow-x-auto pb-1 sm:pointer-events-none sm:flex-wrap sm:overflow-visible sm:pb-0"
           style={{ top: altoHerr > 0 ? altoHerr + 24 : 64 }}
         >
-          <Kpi etiqueta="Demandas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
-          <Kpi etiqueta="Sin vincular" valor={kpis.sinVincular} color="var(--color-amarillo)" ayuda={AYUDA_KPI.sinVincular} />
-          <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={COLOR_MACRO.abierto} ayuda={AYUDA_KPI.abiertos} />
-          <Kpi etiqueta="En curso" valor={kpis.enCurso} color={COLOR_MACRO.en_curso} pulso ayuda={AYUDA_KPI.enCurso} />
-          <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={COLOR_MACRO.resuelto} ayuda={AYUDA_KPI.resueltos} />
-          <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
+          {verKpi("demandas") && (
+            <Kpi etiqueta="Demandas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
+          )}
+          {/* Pinta con el ROJO del semáforo, no con el amarillo de marca: es
+              literalmente el paso "sin atención" de la leyenda de abajo. */}
+          {verKpi("sinAtencion") && (
+            <Kpi etiqueta="Sin atención" valor={kpis.sinAtencion} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.sinAtencion} />
+          )}
+          {verKpi("abiertos") && (
+            <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.abiertos} />
+          )}
+          {/* "En curso" es el macro: junta en cola y en obra, así que se pinta
+              con el ámbar (el paso más avanzado que cubre). */}
+          {verKpi("enCurso") && (
+            <Kpi etiqueta="En curso" valor={kpis.enCurso} color={SEMAFORO.en_obra} pulso ayuda={AYUDA_KPI.enCurso} />
+          )}
+          {verKpi("resueltos") && (
+            <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={SEMAFORO.resuelto} ayuda={AYUDA_KPI.resueltos} />
+          )}
+          {verKpi("m2") && (
+            <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
+          )}
         </div>
       )}
 
@@ -3413,11 +3890,16 @@ function MapaInterno({
       {balance && !comparar && !despejado && (balance.pend > 0 || balance.m2 > 0) && (
         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
+            {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
+                "sin respuesta" sale de brecha === 'sin_atencion' (rojo) y los
+                m² son trabajo terminado (verde). Con los viejos --color-encurso
+                y --color-ok, la pastilla contradecía a la leyenda que tiene a
+                centímetros. */}
             En pantalla: <b className="num text-texto">{numero(balance.pend)}</b> pedidos pendientes ·{" "}
-            <b className="num" style={{ color: "var(--color-encurso)" }}>
+            <b className="num" style={{ color: "var(--color-sin-atencion)" }}>
               {balance.pend > 0 ? Math.round((100 * balance.sinAt) / balance.pend) : 0}%
             </b>{" "}
-            sin respuesta · <b className="num" style={{ color: "var(--color-ok)" }}>{numero(balance.m2)} m²</b> hechos
+            sin respuesta · <b className="num" style={{ color: "var(--color-hecho)" }}>{numero(balance.m2)} m²</b> hechos
           </div>
         </div>
       )}
@@ -3468,7 +3950,7 @@ function MapaInterno({
                     <div className="flex items-center gap-1.5">
                       <span
                         className="inline-block h-2 w-2 shrink-0 rounded-full"
-                        style={{ background: COLOR_MACRO[c.macro as keyof typeof COLOR_MACRO] ?? "#8b94a3" }}
+                        style={{ background: SEMAFORO[pasoDeEstado(c.estado as EstadoIncidente)] }}
                       />
                       <span className="truncate text-[12px] font-semibold">
                         {ETIQUETA_TIPO[c.tipo as keyof typeof ETIQUETA_TIPO] ?? c.tipo} · {c.estado.replaceAll("_", " ")}
@@ -3898,21 +4380,31 @@ function MapaInterno({
       )}
 
       {/* Leyenda de la vista Brecha */}
-      {vista === "brecha" && (
-        <div className="panel-vidrio absolute top-28 left-1/2 z-10 -translate-x-1/2 rounded-xl px-4 py-2">
-          <div className="flex items-center gap-3 text-[11px] font-medium">
+      {/* Esta leyenda es la de FILTRO de la vista Brecha (con sus cuentas y el
+          sub-modo de pintado); la del semáforo, fija y sin controles, vive
+          abajo a la izquierda. En "limpio" se va con todo lo demás. */}
+      {vista === "brecha" && !despejado && (
+        // El top se mide contra la barra de herramientas igual que los KPIs, y
+        // se corre otra fila para quedar DEBAJO de ellos: con `top-28` fijo,
+        // la fila de chips de destino empujó los KPIs justo encima de este
+        // panel y las cifras quedaban tapadas.
+        <div
+          className="panel-vidrio absolute left-1/2 z-10 max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl px-4 py-2"
+          style={{ top: (altoHerr > 0 ? altoHerr + 24 : 64) + 58 }}
+        >
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-medium">
+            {/* Los cuatro pasos del semáforo, en orden de avance hacia
+                resuelto. 'en_obra' es el paso nuevo: salió de 'en_cola'
+                cuando hay una cuadrilla trabajando a menos de 40 m. */}
             {(
               [
-                ["sin_atencion", "Sin atención", COLOR_MACRO.en_curso],
-                ["en_cola", "En cola", COLOR_MACRO.abierto],
-                ["posible_resuelta", "Posible resuelta", COLOR_MACRO.resuelto],
+                ["sin_atencion", "Sin atención", SEMAFORO.sin_atencion],
+                ["en_cola", "En cola", SEMAFORO.en_cola],
+                ["en_obra", "En obra", SEMAFORO.en_obra],
+                ["posible_resuelta", "Parece resuelta", SEMAFORO.resuelto],
               ] as const
             ).map(([clave, etiqueta, color]) => {
-              const n = (data?.demandas.features ?? []).filter(
-                (f) =>
-                  f.properties.brecha === clave &&
-                  ["recibida", "en_validacion"].includes(String(f.properties.estado)),
-              ).length;
+              const n = cuentasBrecha[clave] ?? 0;
               const activo = filtroBrecha === clave;
               return (
                 <button
@@ -3952,7 +4444,9 @@ function MapaInterno({
             ))}
             {modoBrecha === "antiguedad" && (
               <span className="flex items-center gap-1.5 text-[10px] text-texto-3">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--color-amarillo)" }} /> reciente
+                {/* pal.edadReciente y no --color-amarillo: es el hex exacto con
+                    el que la capa arranca la rampa en este tema. */}
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: pal.edadReciente }} /> reciente
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#d95926" }} /> +1 año
                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#ff3b30" }} /> +2 años
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#6b7280" }} /> sin fecha
@@ -3965,11 +4459,28 @@ function MapaInterno({
         </div>
       )}
 
-      {/* Panel de capas — oculto durante Comparar: togglear demandas/incidentes
-          ahí desincroniza la cortina "Lo pedido | Lo hecho". */}
-      <div data-tour="capas" className={`absolute bottom-6 left-3 z-10 ${despejado || comparar ? "hidden" : ""}`} style={arrCapas.estilo}>
+      {/* Columna de abajo a la izquierda: el panel de Capas con la leyenda del
+          semáforo ANCLADA DEBAJO, las dos en un solo contenedor. Van juntas a
+          propósito — así la leyenda no puede taparle el botón de Capas, que
+          vive justo acá, y el arrastre del panel se las lleva a las dos. La
+          columna arranca a 4.5rem del piso y no a 1.5rem: esos 3 cm de abajo
+          son de la escala de MapLibre y de la pastilla de balance, que en
+          mobile ocupa todo el ancho. Las dos se esconden durante Comparar: el
+          panel porque togglear capas desincroniza la cortina, y la leyenda
+          porque le quedaba encima de la tarjeta "Lo pedido" de la cortina. */}
+      {/* El max-w va acá y en % (no en vw dentro de la leyenda): el mapa arranca
+          después del riel de navegación, así que 100vw sobra justo lo que mide
+          ese riel y la leyenda volvía a llegar hasta los controles. Al ser
+          `absolute`, el 100% resuelve contra el contenedor del mapa, que es el
+          ancho real disponible; las 4.75rem son la columna derecha de controles
+          de MapLibre más aire. Al panel de Capas no lo achica (w-72 manda). */}
+      <div
+        className={`absolute bottom-[4.5rem] left-3 z-10 flex max-w-[calc(100%-4.75rem)] flex-col items-start gap-2 ${despejado ? "hidden" : ""}`}
+        style={arrCapas.estilo}
+      >
+      <div data-tour="capas" className={comparar ? "hidden" : ""}>
         {panelCapas ? (
-          <div className="panel-vidrio max-h-[calc(100vh-14rem)] w-72 overflow-y-auto rounded-xl p-4">
+          <div className="panel-vidrio max-h-[calc(100vh-20rem)] w-72 overflow-y-auto rounded-xl p-4">
             <div
               {...arrCapas.asaProps}
               className="mb-3 flex items-center justify-between select-none"
@@ -4075,30 +4586,51 @@ function MapaInterno({
                   onChange={(e) => setVerMacro((v) => ({ ...v, [clave]: e.target.checked }))}
                   className="accent-[#0066ff]"
                 />
-                {/* Los puntitos de la leyenda copian el color REAL del mapa:
-                    en curso saturado y resuelto apagado (contraste pedido). */}
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{
-                    background:
-                      clave === "en_curso" ? pal.enCursoVivo : clave === "resuelto" ? pal.resueltoApagado : COLOR_MACRO[clave],
-                  }}
-                />
+                {/* El puntito copia el color REAL del mapa. OJO con "En
+                    curso": el FILTRO sigue siendo por macro (una sola casilla)
+                    pero el pintado ahora es por estado, así que ese macro se
+                    dibuja en dos colores — de ahí el puntito partido. */}
+                {clave === "en_curso" ? (
+                  <span
+                    className="inline-block h-2.5 w-4 shrink-0 rounded-sm"
+                    style={{ background: `linear-gradient(90deg, ${SEMAFORO.en_cola} 50%, ${SEMAFORO.en_obra} 50%)` }}
+                  />
+                ) : (
+                  <span
+                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{
+                      background:
+                        clave === "abierto"
+                          ? SEMAFORO.sin_atencion
+                          : clave === "resuelto"
+                            ? SEMAFORO.resuelto
+                            : SEMAFORO.inactivo,
+                    }}
+                  />
+                )}
                 <span className="min-w-0 flex-1 truncate">{etiqueta}</span>
                 <span className="num text-[10px] text-texto-3">
                   {numero(clave === "abierto" ? kpis.abiertos : clave === "en_curso" ? kpis.enCurso : clave === "resuelto" ? kpis.resueltos : 0)}
                 </span>
               </label>
             ))}
+            <p className="mb-1 ml-5 text-[10px] leading-snug text-texto-3">
+              «En curso» es una sola casilla pero dos pasos del semáforo: en cola (naranja, hay orden emitida) y en obra
+              (ámbar, la cuadrilla está trabajando).
+            </p>
+            {/* El swatch usa la clase, no pal.sigov: es el mismo celeste
+                (--color-celeste) y así se re-tematiza sin estilo inline. */}
             <p className="mt-1 mb-2 flex items-center gap-1.5 text-[10px] text-texto-3">
-              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amarillo" /> anillo amarillo = obra SIGOV
+              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-celeste" /> anillo celeste = obra SIGOV
+              (procedencia, no estado)
             </p>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
             >
               <input type="checkbox" checked={verTop20} onChange={(e) => setVerTop20(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="num rounded bg-amarillo px-1 text-[10px] font-black text-fondo">1</span>
+              {/* Mismo disco de tinta invertida que la capa top20-circulo. */}
+              <span className="num rounded bg-texto px-1 text-[10px] font-black text-fondo">1</span>
               <span className="min-w-0 truncate">Top 20 urgentes</span>
             </label>
             </>)}
@@ -4354,6 +4886,21 @@ function MapaInterno({
           </button>
         )}
       </div>
+      {/* La leyenda se va con Comparar: la cortina «Lo pedido | Lo hecho» tiene
+          su propio lenguaje visual (dos mapas rotulados) y la leyenda le
+          quedaba encima de la tarjeta "Lo pedido", que vive a bottom-16. */}
+      {!comparar && (
+        <LeyendaSemaforo
+          vista={vista}
+          modoBrecha={modoBrecha}
+          verMacro={verMacro}
+          destinos={destinos}
+          colorSat={pal.destinoSat}
+          colorIngenieria={pal.destinoIngenieria}
+          colorEdadReciente={pal.edadReciente}
+        />
+      )}
+      </div>
 
       {/* Recorrido guiado: ¿para qué sirve cada cosa? */}
       {guiaAbierta && <GuiaMapa alCerrar={() => setGuiaAbierta(false)} />}
@@ -4421,7 +4968,7 @@ function ItemAccion({
 function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar: () => void }) {
   const p = seleccion.props;
   const esIncidente = seleccion.capa === "incidente";
-  const macro = String(p.macro ?? "abierto") as keyof typeof COLOR_MACRO;
+  const destino = destinoDe(p.destino);
 
   return (
     <aside className="panel-vidrio absolute top-28 right-3 bottom-6 z-10 flex w-80 flex-col rounded-xl">
@@ -4429,7 +4976,10 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
         <div className="flex items-center gap-2">
           {esIncidente ? (
             <>
-              <span className="inline-block h-3 w-3 rounded-full" style={{ background: COLOR_MACRO[macro] }} />
+              <span
+                className="inline-block h-3 w-3 rounded-full"
+                style={{ background: SEMAFORO[pasoDeEstado(String(p.estado) as EstadoIncidente)] }}
+              />
               <span className="text-sm font-bold">Incidente #{String(p.id)}</span>
             </>
           ) : (
@@ -4487,32 +5037,43 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
               <Dato etiqueta="Confianza geocod." valor={`${Math.round(Number(p.confianza) * 100)}%`} />
             )}
             <Dato etiqueta="Ingresó" valor={fechaCorta(String(p.creado_en))} />
+            {/* QUIÉN RESUELVE, solo cuando no es bacheo: el pedido no lo va a
+                cerrar la cuadrilla, así que el link no va a la bandeja general
+                sino a la de tratamiento que corresponde. */}
+            {destino !== "bacheo" && (
+              <div className="rounded-lg border border-borde-2 p-2.5">
+                <div className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">No lo resuelve bacheo</div>
+                <p className="mt-0.5 text-[12px] font-semibold">{ETIQUETA_DESTINO[destino]}</p>
+                <p className="mt-1 text-[11px] leading-snug text-texto-2">
+                  {destino === "sat"
+                    ? "Pérdida de agua, tapa o sumidero: se resuelve por expediente a la SAT."
+                    : "No es un bache (calle de ripio, apertura o problema de traza): lo trata Ingeniería."}
+                </p>
+                <Link
+                  href={`/calidad/tratamiento/${destino === "sat" ? "derivar_sat" : "no_es_bache"}`}
+                  className="mt-1 inline-block text-[11px] font-semibold text-celeste hover:underline"
+                >
+                  Ver la bandeja de tratamiento →
+                </Link>
+              </div>
+            )}
             {p.brecha != null && p.brecha !== "atendida" && (
               <div className="rounded-lg border border-borde bg-panel-2/60 p-2.5">
                 <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider">
                   <span
                     className="inline-block h-2 w-2 rounded-full"
-                    style={{
-                      background:
-                        p.brecha === "sin_atencion"
-                          ? COLOR_MACRO.en_curso
-                          : p.brecha === "en_cola"
-                            ? COLOR_MACRO.abierto
-                            : COLOR_MACRO.resuelto,
-                    }}
+                    style={{ background: SEMAFORO[pasoDeBrecha(String(p.brecha))] }}
                   />
-                  {p.brecha === "sin_atencion"
-                    ? "Sin atención"
-                    : p.brecha === "en_cola"
-                      ? "En cola"
-                      : "Posible resuelta"}
+                  {ETIQUETA_BRECHA[String(p.brecha)] ?? String(p.brecha).replaceAll("_", " ")}
                 </div>
                 <p className="mt-1 text-[11px] leading-snug text-texto-2">
                   {p.brecha === "sin_atencion"
                     ? "No hay reparación ni trabajo en curso a menos de 40 m: este pedido está en la brecha real."
                     : p.brecha === "en_cola"
                       ? "Hay un incidente abierto a menos de 40 m: este pedido debería vincularse a ese trabajo."
-                      : "Hay una reparación posterior a menos de 40 m: cotejalo para cerrar el circuito y que cuente como atendido."}
+                      : p.brecha === "en_obra"
+                        ? "Hay una cuadrilla trabajando a menos de 40 m: vinculalo a ese trabajo y sale de la deuda cuando cierre."
+                        : "Hay una reparación posterior a menos de 40 m: cotejalo para cerrar el circuito y que cuente como atendido."}
                 </p>
               </div>
             )}
@@ -4543,6 +5104,128 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
         </Link>
       </div>
     </aside>
+  );
+}
+
+/**
+ * LA LEYENDA DEL SEMÁFORO, siempre a la vista. Hasta ahora el único lugar
+ * donde se explicaba el color era el panel de Capas, que está cerrado casi
+ * siempre: nadie sabía qué quería decir un punto naranja. Es fija y NO
+ * interactiva (los filtros ya viven en la leyenda de Brecha y en el panel de
+ * Capas; duplicarlos acá sería otro control que aprender).
+ *
+ * Muestra solo los pasos que esta vista puede llegar a dibujar: en Brecha, los
+ * cuatro de la deuda; en las demás, los que correspondan a las casillas de
+ * incidentes prendidas — que es lo que el usuario está mirando de verdad.
+ *
+ * Y en Brecha + "Antigüedad de la deuda" NO dibuja el semáforo: ahí los puntos
+ * los pinta capaDemandasEdad, que es otra rampa entera (amarillo reciente →
+ * rojo con más de dos años, gris sin fecha). Sin este caso la leyenda declaraba
+ * cuatro pasos que en pantalla no existían.
+ */
+function LeyendaSemaforo({
+  vista,
+  modoBrecha,
+  verMacro,
+  destinos,
+  colorSat,
+  colorIngenieria,
+  colorEdadReciente,
+}: {
+  vista: Vista;
+  modoBrecha: "categoria" | "antiguedad";
+  verMacro: Record<string, boolean>;
+  destinos: Record<string, boolean>;
+  colorSat: string;
+  colorIngenieria: string;
+  /** El arranque de la rampa de edad cambia por tema (#f4dc00 / #bfa000): la
+   *  leyenda lo recibe hecho para pintar exactamente lo que pinta la capa. */
+  colorEdadReciente: string;
+}) {
+  /** Con el mapa pintado por antigüedad el semáforo no aplica: la leyenda
+   *  muestra la rampa real de capaDemandasEdad, mismos colores y mismos cortes. */
+  const porEdad = vista === "brecha" && modoBrecha === "antiguedad";
+
+  const pasos: Array<[string, string]> =
+    porEdad
+      ? []
+      : vista === "brecha"
+      ? [
+          [SEMAFORO.sin_atencion, "Sin atención"],
+          [SEMAFORO.en_cola, "En cola"],
+          [SEMAFORO.en_obra, "En obra"],
+          [SEMAFORO.resuelto, "Parece resuelto"],
+        ]
+      : [
+          ...(verMacro.abierto ? ([[SEMAFORO.sin_atencion, "Sin atención"]] as Array<[string, string]>) : []),
+          // El macro "en curso" se dibuja en dos pasos: comprometido y en obra.
+          ...(verMacro.en_curso
+            ? ([
+                [SEMAFORO.en_cola, "En cola"],
+                [SEMAFORO.en_obra, "En obra"],
+              ] as Array<[string, string]>)
+            : []),
+          ...(verMacro.resuelto ? ([[SEMAFORO.resuelto, "Resuelto"]] as Array<[string, string]>) : []),
+          ...(verMacro.inactivo ? ([[SEMAFORO.inactivo, "Desestimado"]] as Array<[string, string]>) : []),
+        ];
+
+  /** Las dos colas ajenas, con el MISMO grosor de anillo que usa el mapa: la
+   *  SAT fino, Ingeniería grueso (ver capaDemandasDestino). */
+  const marcas: Array<[string, string, string]> = [
+    ...(destinos.sat === true ? ([[colorSat, "SAT (agua)", "border-2"]] as Array<[string, string, string]>) : []),
+    ...(destinos.ingenieria === true
+      ? ([[colorIngenieria, "Ingeniería (ripio)", "border-[3px]"]] as Array<[string, string, string]>)
+      : []),
+  ];
+
+  if (pasos.length === 0 && !porEdad && marcas.length === 0) return null;
+
+  return (
+    /* El ancho está acotado a 100vw − 4.75rem y no a 100vw − 1.5rem: con el
+       ancho casi completo la leyenda llegaba a x≈363 en 375 px y se metía
+       debajo de la columna derecha de controles de MapLibre (zoom, brújula y
+       geolocalizar, x≈336..365), que quedaban intocables. Sigue sin capturar el
+       puntero (pointer-events-none): es un rótulo, no un control. */
+    <div className="panel-vidrio pointer-events-none max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] font-medium text-texto-2">
+        {porEdad ? (
+          <>
+            {/* La rampa de capaDemandasEdad, no el semáforo: mismos hex y mismos
+                cortes que la capa (30 d → 2 años), más el gris de "sin fecha",
+                que es un caso aparte y no un extremo de la rampa. */}
+            <span className="flex items-center gap-1 whitespace-nowrap">
+              <span
+                className="inline-block h-2.5 w-10 shrink-0 rounded-full"
+                style={{ background: `linear-gradient(90deg,${colorEdadReciente},#f59e0b,#d95926,#ff3b30)` }}
+              />
+              reciente → +2 años
+            </span>
+            <span className="flex items-center gap-1 whitespace-nowrap">
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: "#6b7280" }} />
+              sin fecha
+            </span>
+          </>
+        ) : (
+          pasos.map(([color, etiqueta]) => (
+            <span key={etiqueta} className="flex items-center gap-1 whitespace-nowrap">
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+              {etiqueta}
+            </span>
+          ))
+        )}
+        {/* Las colas ajenas se distinguen por FORMA (anillo sin relleno, fino o
+            grueso), no solo por color: su estado no es el del bacheo. */}
+        {marcas.map(([color, etiqueta, grosor]) => (
+          <span key={etiqueta} className="flex items-center gap-1 whitespace-nowrap">
+            <span
+              className={`inline-block h-3 w-3 shrink-0 rounded-full ${grosor}`}
+              style={{ borderColor: color }}
+            />
+            {etiqueta}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

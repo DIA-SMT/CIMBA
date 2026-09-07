@@ -28,11 +28,28 @@
   --color-texto-2: #8fa3bf;
   --color-texto-3: #5c6b84;
 
-  /* Estados de incidente (macro, validados sobre #0B0F16) */
+  /*
+   * EL SEMÁFORO — el único lenguaje de color del estado, en cuatro pasos hacia
+   * resuelto: rojo (nadie lo tocó) → naranja (comprometido, hay orden pero no
+   * arrancó) → ámbar (la cuadrilla está en la calle) → verde (reparado o
+   * verificado). Gris para lo desestimado y lo sin dato.
+   * Estos son los hex del tema oscuro (validados sobre dark-matter / #0B0F16);
+   * el bloque de tema claro los reemplaza por el juego que aguanta el blanco de
+   * positron. El ámbar de acá no es --color-amarillo: el amarillo de marca
+   * queda para las afordancias de interacción.
+   */
+  --color-sin-atencion: #ff453a;
+  --color-en-cola: #ff8c1a;
+  --color-en-obra: #ffc233;
+  --color-hecho: #21b95c;
+  --color-inactivo: #9ca3af;
+
+  /* Azul / naranja / verde heredados. Ya NO son el lenguaje del estado (eso es
+   * el semáforo de arriba): quedan como acentos de categoría — el azul de los
+   * pedidos, el naranja del corredor primario, el verde de "bien" en barras. */
   --color-abierto: #3987e5;
   --color-encurso: #d95926;
   --color-resuelto: #199e70;
-  --color-inactivo: #6b7280;
 
   /* Semánticos */
   --color-peligro: #e66767;
@@ -44,6 +61,10 @@
 
 :root {
   color-scheme: dark;
+
+  /* El pulso de "en obra" se anima con rgba() y necesita el alfa suelto, así
+   * que el ámbar viaja acá por canales en vez de por token hex. */
+  --pulso-rgb: 255, 194, 51;
 }
 
 /*
@@ -75,10 +96,18 @@ html[data-tema="claro"] {
   --color-celeste: #0b7fd1;
   --color-amarillo: #9c8600;
 
+  /* El semáforo, un punto más oscuro: sobre blanco los hex del tema oscuro se
+   * lavan (el ámbar #ffc233 directamente desaparece). */
+  --color-sin-atencion: #d42d20;
+  --color-en-cola: #e8590c;
+  --color-en-obra: #c08a00;
+  --color-hecho: #15803d;
+  --color-inactivo: #6b7280;
+  --pulso-rgb: 192, 138, 0;
+
   --color-abierto: #2f6fd0;
   --color-encurso: #c74a1d;
   --color-resuelto: #0e7f57;
-  --color-inactivo: #6b7280;
 
   --color-peligro: #c93b3b;
   --color-ok: #0e7f57;
@@ -133,11 +162,13 @@ body {
   scrollbar-color: var(--color-borde-2) transparent;
 }
 
-/* Pulso para incidentes en ejecución (leyenda / chips) */
+/* Pulso para incidentes en obra (leyenda / chips): late en el ámbar del
+ * semáforo y sigue al tema, que el rgba fijo no podía. Los pasos que se apagan
+ * mantienen el matiz con alfa 0 — animar hacia `transparent` pasa por negro. */
 @keyframes pulso {
-  0% { box-shadow: 0 0 0 0 rgba(217, 89, 38, 0.55); }
-  70% { box-shadow: 0 0 0 8px rgba(217, 89, 38, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(217, 89, 38, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--pulso-rgb), 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--pulso-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--pulso-rgb), 0); }
 }
 .pulso { animation: pulso 1.8s ease-out infinite; }
 

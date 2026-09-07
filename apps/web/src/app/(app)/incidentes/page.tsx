@@ -3,7 +3,7 @@ import { Info } from "lucide-react";
 import { ESTADOS_INCIDENTE, TIPOS_PROBLEMA, type EstadoIncidente } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { listarCuadrillas, listarIncidentes, resumenIncidentes } from "@/lib/consultas";
-import { COLOR_MACRO, ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, fechaCorta, macroDeEstado, numero } from "@/lib/formato";
+import { ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, SEMAFORO, fechaCorta, numero, pasoDeEstado } from "@/lib/formato";
 import { BadgeEstadoIncidente, BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { AccionesIncidente } from "./acciones-incidente";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
@@ -61,7 +61,10 @@ export default async function PaginaIncidentes({
         {ESTADOS_INCIDENTE.map((e) => {
           const n = resumen.porEstado[e] ?? 0;
           if (n === 0) return null;
-          const color = COLOR_MACRO[macroDeEstado(e)];
+          // Los filtros de la cola son los siete estados, así que acá el
+          // semáforo se lee en sus cuatro pasos: Programado naranja (en cola),
+          // En ejecución ámbar (en obra).
+          const color = SEMAFORO[pasoDeEstado(e)];
           const activo = filtros.estado === e;
           return (
             <Link
@@ -199,9 +202,13 @@ export default async function PaginaIncidentes({
                   </span>
                 </td>
                 <td className="px-4 py-2.5">
+                  {/* El verde del semáforo y no --color-ok: son dos verdes casi
+                      iguales a dos celdas de distancia del punto de estado, que
+                      ya pinta --color-hecho. Uno solo, y que sea el del
+                      semáforo. */}
                   <span
                     className={`num text-[13px] font-bold ${i.intervenciones > 0 ? "" : "text-texto-3"}`}
-                    style={i.intervenciones > 0 ? { color: "var(--color-ok)" } : undefined}
+                    style={i.intervenciones > 0 ? { color: SEMAFORO.resuelto } : undefined}
                     title={i.intervenciones === 0 ? "Todavía sin trabajo asignado" : `${i.intervenciones} trabajo(s) lo atendieron`}
                   >
                     {i.intervenciones}

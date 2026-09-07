@@ -63,7 +63,8 @@ export interface InterpretacionMapa {
   lugar: string | null;
   tipo: (typeof TIPOS_PROBLEMA)[number] | null;
   capa: "pedidos" | "trabajos" | "todo" | null;
-  brecha: "sin_atencion" | "en_cola" | "posible_resuelta" | null;
+  /** Los pasos del semáforo: 'en_obra' se separó de 'en_cola' (ya arrancó la cuadrilla). */
+  brecha: "sin_atencion" | "en_cola" | "en_obra" | "posible_resuelta" | null;
 }
 
 const esquemaMapa = z
@@ -71,7 +72,7 @@ const esquemaMapa = z
     lugar: z.string().max(120).nullish().catch(null),
     tipo: z.enum(TIPOS_PROBLEMA).nullish().catch(null),
     capa: z.enum(["pedidos", "trabajos", "todo"]).nullish().catch(null),
-    brecha: z.enum(["sin_atencion", "en_cola", "posible_resuelta"]).nullish().catch(null),
+    brecha: z.enum(["sin_atencion", "en_cola", "en_obra", "posible_resuelta"]).nullish().catch(null),
   })
   .catch({ lugar: null, tipo: null, capa: null, brecha: null });
 
@@ -98,7 +99,7 @@ export async function interpretarBusquedaMapa(
 - lugar: el nombre distintivo de la calle, avenida, pasaje, esquina o barrio, SIN los prefijos "av", "avenida", "calle" (ej: "¿qué hay reclamado en av. Belgrano?" → "Belgrano"; "esquina de Corrientes y Junín" → "Corrientes"). Sirve para matchear contra direcciones guardadas.
 - tipo: uno de ${TIPOS_PROBLEMA.join(", ")} (pistas: "baches/pozos"→bache, "hundido"→hundimiento, "tapa"→tapa_registro, "agua/pérdida"→perdida_agua)
 - capa: "pedidos" (reclamos, demandas, lo que pide la gente), "trabajos" (reparaciones, arreglos, obras hechas) o "todo" (ambas). "¿Qué hay reclamado…?"→pedidos; "¿qué se arregló…?"→trabajos.
-- brecha: "sin_atencion" (pistas: sin atender, sin respuesta, abandonados), "en_cola" (en proceso), "posible_resuelta" (ya resueltos sin cerrar). Solo si la frase habla de eso.`,
+- brecha: "sin_atencion" (pistas: sin atender, sin respuesta, abandonados), "en_cola" (comprometidos: hay orden emitida pero la cuadrilla no arrancó), "en_obra" (pistas: en obra, trabajando ahora, la cuadrilla está ahí), "posible_resuelta" (ya resueltos sin cerrar). Solo si la frase habla de eso; ante un "en proceso" genérico usá "en_cola".`,
       frase,
       esquemaMapa,
     );

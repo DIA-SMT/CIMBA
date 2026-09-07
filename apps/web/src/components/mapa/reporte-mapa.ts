@@ -1,4 +1,11 @@
-import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta } from "@/lib/formato";
+import type { EstadoIncidente } from "@cimba/domain";
+import { ETIQUETA_FUENTE, ETIQUETA_TIPO, SEMAFORO_HEX, type PasoSemaforo, fechaCorta, pasoDeEstado } from "@/lib/formato";
+
+/** El reporte se imprime sobre BLANCO, así que el semáforo va siempre en su
+ *  juego CLARO — el mismo que valida contra positron. Los tokens var() no
+ *  sirven acá: este HTML se escribe en una ventana nueva, fuera del árbol de la
+ *  app y sin sus variables de tema. */
+const S = SEMAFORO_HEX.claro;
 
 /**
  * Reporte imprimible del estado actual del mapa: extracto visual + números
@@ -26,6 +33,7 @@ const n = (x: number) => x.toLocaleString("es-AR");
 const ETIQUETA_BRECHA: Record<string, string> = {
   sin_atencion: "Sin atención",
   en_cola: "En cola",
+  en_obra: "En obra",
   posible_resuelta: "Prob. resuelta",
   sin_dato: "—",
 };
@@ -58,8 +66,15 @@ export function construirReporteHtml(d: DatosReporte): string {
   const incs = d.incidentes;
   const m2 = Math.round(incs.reduce((acc, f) => acc + (Number(f.m2) || 0), 0));
   const sinAtencion = dems.filter((f) => f.brecha === "sin_atencion").length;
-  const resueltos = incs.filter((f) => f.macro === "resuelto").length;
-  const enCurso = incs.filter((f) => f.macro === "en_curso" || f.macro === "abierto").length;
+  // Por ESTADO y no por macro: el macro junta en una sola cifra lo que nadie
+  // tocó con lo que ya tiene cuadrilla, y el reporte va grapado a una captura
+  // del mapa donde eso son dos colores distintos.
+  const porPaso = (paso: PasoSemaforo) =>
+    incs.filter((f) => pasoDeEstado(String(f.estado) as EstadoIncidente) === paso).length;
+  const incSinAtencion = porPaso("sin_atencion");
+  const incEnCola = porPaso("en_cola");
+  const incEnObra = porPaso("en_obra");
+  const resueltos = porPaso("resuelto");
 
   const tarjeta = (valor: string, etiqueta: string, color: string) => `
     <div class="tarjeta"><div class="valor" style="color:${color}">${valor}</div><div class="etq">${etiqueta}</div></div>`;
@@ -120,10 +135,13 @@ export function construirReporteHtml(d: DatosReporte): string {
   .consulta b { color: #0066FF; }
   .filtros { margin: 8px 0 0; font-size: 11px; color: #667085; }
   .filtros span { display: inline-block; background: #f2f4f7; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; }
-  .tarjetas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+  .tarjetas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0 12px; }
   .tarjeta { border: 1px solid #e4e7ec; border-radius: 10px; padding: 10px 12px; }
   .tarjeta .valor { font-size: 22px; font-weight: 800; }
   .tarjeta .etq { font-size: 10px; color: #667085; }
+  .titulo-tira { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #0066FF; margin-bottom: 6px; }
+  .semaforo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 16px; }
+  .semaforo .valor { font-size: 19px; }
   .mapa { margin: 6px 0 2px; border: 1px solid #e4e7ec; border-radius: 10px; overflow: hidden; }
   .mapa img { display: block; width: 100%; }
   .atrib { font-size: 9px; color: #98a2b3; margin: 4px 0 14px; }
@@ -143,6 +161,8 @@ export function construirReporteHtml(d: DatosReporte): string {
     .barra { display: none; }
     .hoja { padding: 0; max-width: none; }
     .tarjeta, .mapa, .consulta { break-inside: avoid; }
+    /* El título de la tira no puede quedar solo al pie de una hoja. */
+    .titulo-tira { break-after: avoid; }
     table.datos tr { break-inside: avoid; }
     @page { margin: 14mm; }
   }
@@ -164,10 +184,22 @@ export function construirReporteHtml(d: DatosReporte): string {
 
   <div class="tarjetas">
     ${tarjeta(n(dems.length), "pedidos en el reporte", "#0066FF")}
-    ${tarjeta(n(sinAtencion), "sin atención (brecha)", "#c2410c")}
-    ${tarjeta(`${n(enCurso)} / ${n(resueltos)}`, "incidentes activos / resueltos", "#0e7a54")}
+    ${tarjeta(n(sinAtencion), "sin atención (brecha)", S.sin_atencion)}
     ${tarjeta(`${n(m2)} m²`, "superficie intervenida", "#1d2939")}
   </div>
+
+  ${
+    // Sin incidentes en el reporte la tira serían cuatro ceros y un título.
+    incs.length > 0
+      ? `<h3 class="titulo-tira">Incidentes por estado</h3>
+  <div class="semaforo">
+    ${tarjeta(n(incSinAtencion), "sin tocar", S.sin_atencion)}
+    ${tarjeta(n(incEnCola), "con orden, en cola", S.en_cola)}
+    ${tarjeta(n(incEnObra), "cuadrilla en obra", S.en_obra)}
+    ${tarjeta(n(resueltos), "reparados", S.resuelto)}
+  </div>`
+      : ""
+  }
 
   ${
     d.imagen

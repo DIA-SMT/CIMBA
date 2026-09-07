@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Camera, HardHat, Inbox, Wrench } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarCuadrillas, obtenerHistoriaIncidente } from "@/lib/consultas";
-import { COLOR_MACRO, ETIQUETA_FUENTE, fechaCorta, macroDeEstado, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, SEMAFORO, SEMAFORO_HEX, fechaCorta, numero, pasoDeEstado } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { BadgeEstadoIncidente, BadgeFuente, BadgeTipo, Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -13,9 +13,19 @@ import { AccionesIncidente } from "../acciones-incidente";
 
 export const dynamic = "force-dynamic";
 
-/** Paleta funcional del relato (la misma del mapa): pedido / en curso / hecho. */
-// hito en token: el amarillo pleno desaparece como texto en tema claro.
-const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70", hito: "var(--color-amarillo)" } as const;
+/**
+ * Paleta del relato. Los hechos de obra hablan el semáforo (curso = ámbar de
+ * obra, hecho = verde, anulado = gris); "pedido" se queda con el azul de
+ * categoría porque un reclamo no es un estado del problema — es quién lo pidió.
+ * El hito va en token: el amarillo pleno desaparece como texto en tema claro.
+ */
+const C = {
+  pedido: "var(--color-abierto)",
+  curso: SEMAFORO.en_obra,
+  hecho: SEMAFORO.resuelto,
+  anulado: SEMAFORO.inactivo,
+  hito: "var(--color-amarillo)",
+} as const;
 
 const ETIQUETA_IV: Record<string, string> = {
   asignada: "Asignada",
@@ -76,7 +86,7 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
     let emitido = false;
     if (iv.estado === "anulada") {
       const fecha = iv.finalizadaEn ?? iv.iniciadaEn;
-      const ev: Evento = { fecha, titulo: `Trabajo anulado — ${iv.ejecutor}`, color: "#8b94a3" };
+      const ev: Evento = { fecha, titulo: `Trabajo anulado — ${iv.ejecutor}`, color: C.anulado };
       (fecha ? eventos : sinFecha).push(ev);
       emitido = true;
     } else {
@@ -102,7 +112,7 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
   if (h.cerradoEn) eventos.push({ fecha: h.cerradoEn, titulo: "Incidente cerrado", color: C.hecho });
   eventos.sort((a, b) => Date.parse(a.fecha!) - Date.parse(b.fecha!));
 
-  const macro = macroDeEstado(h.estado);
+  const paso = pasoDeEstado(h.estado);
 
   // La galería con URLs ya resueltas: el visor es una isla cliente y recibe
   // todo serializado desde el servidor (nada de funciones ni filas crudas).
@@ -116,9 +126,16 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
         url,
         alt: `Obra ${momento} en ${h.direccion ?? "el lugar"}`,
         etiqueta: `${momento.toUpperCase()} · ${fecha}`,
+        // La insignia va sobre la foto, con fondo oscuro fijo que no flipea con
+        // el tema: por eso el juego oscuro en hex, y no los tokens de C.
         insignia: {
           texto: momento,
-          color: fo.momento === "despues" ? C.hecho : fo.momento === "antes" ? C.pedido : C.curso,
+          color:
+            fo.momento === "despues"
+              ? SEMAFORO_HEX.oscuro.resuelto
+              : fo.momento === "antes"
+                ? "#3987e5" // el azul de pedidos del tema oscuro, sin pasar por var()
+                : SEMAFORO_HEX.oscuro.en_obra,
         },
         // El sello que vuelve la foto auditable: cuándo y dónde se tomó.
         sello: [fecha, ...(fo.lat != null && fo.lon != null ? [`${fo.lat.toFixed(5)}, ${fo.lon.toFixed(5)}`] : [])],
@@ -166,7 +183,7 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
         <Cadena n={1} etiqueta="problema en el territorio" color={C.hito} icono={<Wrench size={16} />}
           nota={h.superficieM2 != null ? `${numero(Math.round(h.superficieM2))} m² estimados` : null} />
         <Cadena n={h.intervenciones.length} etiqueta={h.intervenciones.length === 1 ? "trabajo en la calle" : "trabajos en la calle"}
-          color={COLOR_MACRO[macro]} icono={<HardHat size={16} />}
+          color={SEMAFORO[paso]} icono={<HardHat size={16} />}
           nota={h.intervenciones.length === 0 ? "todavía en la cola: sin trabajo asignado" : null} />
       </div>
 
@@ -209,7 +226,12 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
         {/* Dónde está */}
         <div className="space-y-3">
           {h.lat != null && h.lon != null ? (
-            <MapaPunto lat={h.lat} lon={h.lon} color={COLOR_MACRO[macro]} alto={280} />
+            /* Le pasamos el PASO, no un hex: el marcador arma su halo
+               concatenando alfa (`${color}33`) y necesita hex crudo, pero cuál
+               de los dos juegos corresponde solo se sabe con el tema en la
+               mano. Esta página es server component; MapaPunto es cliente y ya
+               lee usarTemaMapa(), así que resuelve el color adentro. */
+            <MapaPunto lat={h.lat} lon={h.lon} paso={paso} alto={280} />
           ) : (
             <Panel className="p-5 text-sm text-texto-3">Este incidente no tiene ubicación registrada.</Panel>
           )}
@@ -269,11 +291,16 @@ export default async function PaginaHistoriaIncidente({ params }: { params: Prom
       {h.intervenciones.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2">
           {h.intervenciones.map((iv) => {
-            const color = iv.estado === "finalizada" ? C.hecho : iv.estado === "en_curso" ? C.curso : "#8b94a3";
+            const color = iv.estado === "finalizada" ? C.hecho : iv.estado === "en_curso" ? C.curso : C.anulado;
             return (
               <Panel key={iv.id} className="p-4">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                  <span className="rounded-md px-2 py-0.5 text-[11px] font-bold" style={{ background: `${color}22`, color }}>
+                  {/* color-mix y no `${color}22`: ahora el color llega como
+                      var() del semáforo y concatenar alfa al hex no aplica. */}
+                  <span
+                    className="rounded-md px-2 py-0.5 text-[11px] font-bold"
+                    style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
+                  >
                     {ETIQUETA_IV[iv.estado] ?? iv.estado}
                   </span>
                   {/* Cómo se resolvió: "¿por bacheo o por cambio de paño?" */}

@@ -1,11 +1,11 @@
 import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain";
 import {
-  COLOR_MACRO,
   ETIQUETA_ESTADO_DEMANDA,
   ETIQUETA_ESTADO_INCIDENTE,
   ETIQUETA_FUENTE,
   ETIQUETA_TIPO,
-  macroDeEstado,
+  SEMAFORO,
+  pasoDeEstado,
 } from "@/lib/formato";
 
 export function Chip({ children, tono = "neutro" }: { children: React.ReactNode; tono?: "neutro" | "azul" | "amarillo" | "celeste" }) {
@@ -36,7 +36,9 @@ export function BadgeTipo({ tipo }: { tipo: TipoProblema | null }) {
 }
 
 export function BadgeEstadoIncidente({ estado }: { estado: EstadoIncidente }) {
-  const color = COLOR_MACRO[macroDeEstado(estado)];
+  // El paso (no el macro) para que "Programado" se lea naranja —comprometido,
+  // todavía en cola— y solo "En ejecución" tome el ámbar de obra.
+  const color = SEMAFORO[pasoDeEstado(estado)];
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium">
       <span
@@ -44,7 +46,7 @@ export function BadgeEstadoIncidente({ estado }: { estado: EstadoIncidente }) {
         style={{ background: color }}
       />
       {ETIQUETA_ESTADO_INCIDENTE[estado]}
-      {estado === "verificado" && <span className="text-resuelto">✓</span>}
+      {estado === "verificado" && <span className="text-hecho">✓</span>}
     </span>
   );
 }

@@ -22,6 +22,14 @@ const filtro = (v?: string | null): string | null => (v ? v : null);
 export const filtroEnum = (v: string | null | undefined, validos: readonly string[]): string | null =>
   v && validos.includes(v) ? v : null;
 
+/**
+ * demandas.destino (enum destino_resolucion de la 0006): quién resuelve el
+ * pedido. La lista vive acá y no en cada página porque además de etiquetar es
+ * la lista cerrada contra la que se validan los `?destino=` que llegan por URL.
+ */
+export const DESTINOS_RESOLUCION = ["bacheo", "sat", "ingenieria"] as const;
+export type DestinoResolucion = (typeof DESTINOS_RESOLUCION)[number];
+
 // ── KPIs del centro de comando ──────────────────────────────────────────────
 
 export interface Kpis {
@@ -100,7 +108,7 @@ export async function listarDemandas(
 
   const fuente = filtroEnum(filtros.fuente, FUENTES_DEMANDA);
   const estado = filtroEnum(filtros.estado, ESTADOS_DEMANDA);
-  const destino = filtroEnum(filtros.destino, ["bacheo", "sat", "ingenieria"]);
+  const destino = filtroEnum(filtros.destino, DESTINOS_RESOLUCION);
   const q = filtro(filtros.q);
   const mes = filtro(filtros.mes);
 
@@ -732,6 +740,7 @@ export async function estadisticasCalidad(sesion: Sesion): Promise<EstadisticasC
 export interface EstadisticasBrecha {
   totalAbiertas: number;
   yaResueltasProbable: number;
+  enObra: number;
   enCola: number;
   brechaReal: number;
   reincidencias: number;
@@ -746,6 +755,15 @@ export interface EstadisticasBrecha {
   yaVinculadas: number;
   porFuente: Array<{ fuente: string; abiertas: number; atendidas: number }>;
   porTipo: Array<{ tipo: string; abiertas: number; sinNadaCerca: number }>;
+  /**
+   * El hallazgo del Director: buena parte de la deuda nunca fue de la Dirección
+   * de Bacheo. Va en la misma pasada que el resto (un `filter` más sobre el
+   * mismo cruce de 40 m) porque el cruce espacial es lo caro, no el conteo.
+   * Un pedido que el trigger no clasificó (destino null) cuenta como bacheo,
+   * igual que en el mapa: así ningún pedido desaparece del desglose y las tres
+   * filas suman `totalAbiertas`.
+   */
+  porDestino: Array<{ destino: DestinoResolucion; abiertas: number; sinAtencion: number }>;
   mensual: Array<{ mes: string; pedidos: number; hechos: number }>;
   topDeuda: Array<{
     direccion: string;
@@ -762,15 +780,32 @@ export interface EstadisticasBrecha {
  * Clasificación de cada demanda abierta con ubicación (radio 40 m):
  *  - ya_resuelta_probable: hay reparación POSTERIOR al pedido (o el pedido no
  *    tiene fecha confiable) → falta cerrar el circuito, no falta obra.
- *  - en_cola: hay un incidente abierto cerca → está en proceso.
- *  - brecha_real: no hay nada cerca → nadie la tocó.
- *  - reincidencia: la reparación fue ANTERIOR al pedido → el problema volvió.
+ *  - en_obra: hay un incidente en ejecución cerca → la cuadrilla ya arrancó.
+ *  - en_cola: hay un incidente comprometido cerca (detectado/priorizado/
+ *    programado) que todavía no arrancó.
+ *  - brecha_real: no hay nada posterior cerca → nadie la tocó.
+ *
+ * Los cuatro son los cuatro pasos del semáforo, mutuamente excluyentes y
+ * exhaustivos: ya_resuelta + en_obra + en_cola + brecha_real = total_abiertas.
+ * Es EXACTAMENTE la misma clasificación que hace geodata() para el mapa, y
+ * tiene que seguir siéndolo: cada segmento de /brecha es un link al mapa
+ * filtrado, y si los criterios se separan el operador hace clic en un número
+ * y ve otro.
+ *
+ * La REINCIDENCIA (la reparación fue ANTERIOR al pedido: el problema volvió)
+ * NO es un quinto paso, es una MARCA sobre los anteriores — casi siempre
+ * sobre brecha_real, porque desde que volvió nadie lo tocó. Antes se restaba
+ * de brecha_real y por eso /brecha mostraba ~70 pedidos menos que el mapa.
  */
 export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBrecha> {
   return conRls(claims(sesion), async (tx) => {
     const cobertura = (await tx.execute(sql`
       with d as (
         select d.id, d.geom, d.creado_en, d.fuente, d.tipo, d.geocod_confianza,
+               -- destino null = el trigger de la 0006 no lo clasificó: cuenta
+               -- como bacheo, el mismo criterio que usa el mapa para no perder
+               -- ningún pedido por un dato que falta.
+               coalesce(d.destino::text, 'bacheo') as destino,
                (d.metadata->>'sin_fecha' is null) as fecha_confiable
         from demandas d
         where d.estado in ('recibida','en_validacion') and d.geom is not null
@@ -787,6 +822,9 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
                   where i.estado in ('detectado','priorizado','programado','en_ejecucion')
                     and st_dwithin(i.geom::geography, d.geom::geography, 40)) as incidente_abierto,
           exists (select 1 from incidentes i
+                  where i.estado = 'en_ejecucion'
+                    and st_dwithin(i.geom::geography, d.geom::geography, 40)) as incidente_en_obra,
+          exists (select 1 from incidentes i
                   where i.estado in ('reparado','verificado')
                     and st_dwithin(i.geom::geography, d.geom::geography, 25)
                     and (d.tipo is null or i.tipo = d.tipo
@@ -799,10 +837,24 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
         count(*)::int as total,
         count(*) filter (where reparacion_posterior)::int as ya_resueltas,
         count(*) filter (where hay_reparacion and not reparacion_posterior)::int as reincidencias,
-        count(*) filter (where not hay_reparacion and incidente_abierto)::int as en_cola,
-        count(*) filter (where not hay_reparacion and not incidente_abierto)::int as brecha_real,
+        count(*) filter (where not reparacion_posterior and incidente_en_obra)::int as en_obra,
+        count(*) filter (where not reparacion_posterior and incidente_abierto
+                           and not incidente_en_obra)::int as en_cola,
+        count(*) filter (where not reparacion_posterior and not incidente_abierto)::int as brecha_real,
         count(*) filter (where cotejable and coalesce(geocod_confianza, 0) >= 0.75)::int as cotejables,
-        count(*) filter (where cotejable)::int as cotejables_ampliado
+        count(*) filter (where cotejable)::int as cotejables_ampliado,
+        -- Desglose por quién resuelve: abiertas y, de esas, las que nadie tocó.
+        -- La condición de "sin atención" es la misma de brecha_real, así que
+        -- los tres destinos suman exactamente brecha_real.
+        count(*) filter (where destino = 'bacheo')::int as ab_bacheo,
+        count(*) filter (where destino = 'sat')::int as ab_sat,
+        count(*) filter (where destino = 'ingenieria')::int as ab_ingenieria,
+        count(*) filter (where destino = 'bacheo'
+                           and not reparacion_posterior and not incidente_abierto)::int as brecha_bacheo,
+        count(*) filter (where destino = 'sat'
+                           and not reparacion_posterior and not incidente_abierto)::int as brecha_sat,
+        count(*) filter (where destino = 'ingenieria'
+                           and not reparacion_posterior and not incidente_abierto)::int as brecha_ingenieria
       from cruce
     `)) as unknown as Array<Record<string, number | string>>;
     const c = cobertura[0] ?? {};
@@ -887,6 +939,7 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
     return {
       totalAbiertas: Number(c.total ?? 0),
       yaResueltasProbable: Number(c.ya_resueltas ?? 0),
+      enObra: Number(c.en_obra ?? 0),
       enCola: Number(c.en_cola ?? 0),
       brechaReal: Number(c.brecha_real ?? 0),
       reincidencias: Number(c.reincidencias ?? 0),
@@ -909,6 +962,13 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
         abiertas: Number(f.abiertas),
         sinNadaCerca: Number(f.sin_nada),
       })),
+      // Orden fijo (bacheo → sat → ingenieria), no por volumen: es un desglose
+      // de tres colas conocidas y el operador las busca siempre en el mismo lugar.
+      porDestino: [
+        { destino: "bacheo", abiertas: Number(c.ab_bacheo ?? 0), sinAtencion: Number(c.brecha_bacheo ?? 0) },
+        { destino: "sat", abiertas: Number(c.ab_sat ?? 0), sinAtencion: Number(c.brecha_sat ?? 0) },
+        { destino: "ingenieria", abiertas: Number(c.ab_ingenieria ?? 0), sinAtencion: Number(c.brecha_ingenieria ?? 0) },
+      ],
       mensual: mensual.reverse().map((m) => ({
         mes: m.mes,
         pedidos: Number(m.pedidos),
@@ -934,6 +994,12 @@ export interface BrechaDistrito {
   nombre: string;
   abiertas: number;
   brechaReal: number;
+  /**
+   * Todo lo comprometido: acá van juntos los que están en cola y los que ya
+   * están en obra. El ranking se ordena por deuda sin tocar, no por el paso
+   * del semáforo, así que no se parte — pero no se puede comparar contra el
+   * `en_cola` del geojson, que ahora excluye a los que están en ejecución.
+   */
   enCola: number;
   yaResueltasProbable: number;
   reincidencias: number;
@@ -1068,9 +1134,18 @@ export async function geodata(sesion: Sesion) {
 
     const demandas = (await tx.execute(sql`
       select d.id, d.fuente, d.tipo, d.estado, d.geocod_confianza, d.distrito_id,
+             -- destino lo clasifica solo el trigger de la 0006 (enum
+             -- destino_resolucion): el mapa necesita saber quién resuelve
+             -- cada pedido, porque un bache y una pérdida de agua no se
+             -- reclaman en la misma ventanilla.
+             d.destino::text as destino,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, (d.metadata->>'sin_fecha' = 'true') as sin_fecha,
              st_x(d.geom) as lon, st_y(d.geom) as lat,
+             -- Los cuatro pasos del semáforo salen de este case, y el ORDEN de
+             -- las ramas es la regla: una reparación posterior al pedido manda
+             -- sobre cualquier trabajo en curso (si ya se arregló, se arregló),
+             -- y estar "en obra" manda sobre estar "en cola".
              case
                when d.estado not in ('recibida','en_validacion') then 'atendida'
                when exists (select 1 from incidentes i
@@ -1078,8 +1153,14 @@ export async function geodata(sesion: Sesion) {
                    and st_dwithin(i.geom::geography, d.geom::geography, 40)
                    and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
                  then 'posible_resuelta'
+               -- La cuadrilla está arriba del pozo: es lo único que separa
+               -- "ya arrancó" de "está comprometido pero no arrancó".
                when exists (select 1 from incidentes i
-                 where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                 where i.estado = 'en_ejecucion'
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40))
+                 then 'en_obra'
+               when exists (select 1 from incidentes i
+                 where i.estado in ('detectado','priorizado','programado')
                    and st_dwithin(i.geom::geography, d.geom::geography, 40))
                  then 'en_cola'
                else 'sin_atencion'
@@ -1130,6 +1211,7 @@ export async function geodata(sesion: Sesion) {
             confianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,
             direccion: (f.direccion as string) ?? null,
             brecha: String(f.brecha),
+            destino: (f.destino as string) ?? null,
             distrito: f.distrito_id != null ? Number(f.distrito_id) : null,
             sin_fecha: Boolean(f.sin_fecha),
             creado_en: String(f.creado_en),
