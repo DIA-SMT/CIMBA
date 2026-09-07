@@ -27,6 +27,49 @@ const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }
 /** El teclado del teléfono mete coma decimal: se normaliza antes de parsear. */
 const aNumero = (s: string) => Number(s.trim().replace(",", "."));
 
+/**
+ * Medidas por VOZ: "ancho dos, largo tres y medio, espesor cinco" o el más
+ * criollo "dos por tres por cinco" (ancho × largo × espesor). El dictado solo
+ * PROPONE: llena los campos y el capataz confirma — nunca envía solo.
+ */
+function parsearMedidas(fraseCruda: string): { ancho?: string; largo?: string; espesor?: string } {
+  // Los reconocedores suelen devolver dígitos, pero por las dudas se traducen
+  // las palabras más comunes y los decimales hablados ("dos coma cinco").
+  let f = " " + fraseCruda.toLowerCase() + " ";
+  const PALABRAS: Array<[RegExp, string]> = [
+    [/ un[oa]? /g, " 1 "], [/ dos /g, " 2 "], [/ tres /g, " 3 "], [/ cuatro /g, " 4 "],
+    [/ cinco /g, " 5 "], [/ seis /g, " 6 "], [/ siete /g, " 7 "], [/ ocho /g, " 8 "],
+    [/ nueve /g, " 9 "], [/ diez /g, " 10 "], [/ medio metro /g, " 0.5 "],
+  ];
+  for (const [re, v] of PALABRAS) f = f.replace(re, v);
+  f = f
+    .replace(/(d)s*(?:coma|con|punto)s*(d)/g, "$1.$2")
+    .replace(/(d)s*y medio/g, "$1.5")
+    .replace(/,/g, ".");
+
+  const buscar = (claves: string) => {
+    const m = new RegExp("(?:" + claves + ")[^0-9]{0,12}([0-9]+(?:\\.[0-9]+)?)").exec(f);
+    return m?.[1];
+  };
+  const r: { ancho?: string; largo?: string; espesor?: string } = {
+    ancho: buscar("ancho"),
+    largo: buscar("largo|alto"),
+    espesor: buscar("espesor|grosor|profundidad"),
+  };
+
+  // Sin palabras clave: "2 por 3 por 5" (o "2 x 3 x 5") en el orden de la
+  // planilla de siempre — ancho, largo, espesor.
+  if (!r.ancho && !r.largo && !r.espesor) {
+    const porM = /([0-9]+(?:.[0-9]+)?)s*(?:por|x)s*([0-9]+(?:.[0-9]+)?)(?:s*(?:por|x)s*([0-9]+(?:.[0-9]+)?))?/.exec(f);
+    if (porM) {
+      r.ancho = porM[1];
+      r.largo = porM[2];
+      if (porM[3]) r.espesor = porM[3];
+    }
+  }
+  return r;
+}
+
 /** Mismo bounding box que valida la acción: mejor avisar acá que con un error zod críptico. */
 const dentroDeSmt = (lat: number, lon: number) =>
   lat >= -27.2 && lat <= -26.5 && lon >= -65.6 && lon <= -64.9;
@@ -151,6 +194,21 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const dictado = useDictadoVoz((frase) => {
     setDireccionTexto(frase);
     void buscarDireccion(frase);
+  });
+
+  // Medidas por voz: llena lo que entendió y muestra qué entendió; el envío
+  // sigue siendo el botón de siempre — "requiere solo confirmación después".
+  const [oidoMedidas, setOidoMedidas] = useState<string | null>(null);
+  const dictadoMedidas = useDictadoVoz((frase) => {
+    const m = parsearMedidas(frase);
+    if (m.ancho) setAncho(m.ancho);
+    if (m.largo) setLargo(m.largo);
+    if (m.espesor) setEspesor(m.espesor);
+    setOidoMedidas(
+      m.ancho || m.largo || m.espesor
+        ? `Entendí: «${frase}» — revisá los números y confirmá.`
+        : `No entendí medidas en «${frase}». Probá: "ancho 2, largo 3, espesor 5" o "2 por 3 por 5".`,
+    );
   });
 
   const usarGps = () => {
@@ -433,6 +491,23 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
         <div className="mt-4 space-y-4">
           {/* Medidas reales */}
           <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold tracking-wider text-texto-3 uppercase">Medidas reales</span>
+              <button
+                type="button"
+                onClick={dictadoMedidas.alternar}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  dictadoMedidas.escuchando
+                    ? "border-peligro text-peligro"
+                    : "border-borde-2 text-celeste hover:border-celeste"
+                }`}
+                title='Decí las tres medidas de corrido: "ancho 2, largo 3, espesor 5" o "2 por 3 por 5"'
+              >
+                🎤 {dictadoMedidas.escuchando ? "Escuchando…" : "Dictar medidas"}
+              </button>
+            </div>
+            {oidoMedidas && <p className="mb-1.5 text-[11px] text-texto-2">{oidoMedidas}</p>}
+            {dictadoMedidas.error && <p className="mb-1.5 text-[11px] text-peligro">{dictadoMedidas.error}</p>}
             <div className="grid grid-cols-3 gap-2">
               <label className="block">
                 <span className="mb-1 block text-xs font-semibold text-texto-2">Ancho (m)</span>

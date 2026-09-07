@@ -5,6 +5,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, listarOrdenes, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
 import { fechaCorta, hoyISO, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
+import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
 import { PanelProyeccion } from "./panel-proyeccion";
 import {
@@ -59,6 +60,12 @@ export default async function PaginaOrdenes({
         sub="El circuito como unidad de planificación: qué se releva, quién lo trabaja y con qué prioridad."
         extra={
           <div className="flex items-center gap-3">
+            <Link
+              href="/ordenes/productividad"
+              className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
+            >
+              Productividad
+            </Link>
             <Link
               href="/ordenes/avisos"
               className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
@@ -146,18 +153,14 @@ export default async function PaginaOrdenes({
                     </td>
                     <td className="num px-3 py-2 text-right text-texto-2">{numero(c.ordenesActivas)}</td>
                     <td className="px-3 py-2 text-right">
-                      {/* Deep-link al centroide: el mapa todavía no filtra por circuito */}
-                      <Link
-                        href={
-                          c.lat != null && c.lon != null
-                            ? `/mapa?lat=${c.lat.toFixed(6)}&lon=${c.lon.toFixed(6)}&z=15`
-                            : "/mapa"
-                        }
-                        title={`Ver la zona del circuito ${c.codigo} en el mapa`}
-                        className="inline-block py-2 text-xs font-semibold whitespace-nowrap text-celeste hover:underline sm:py-0"
-                      >
-                        ver en mapa →
-                      </Link>
+                      {/* El cuadrado, no un viaje: el mini-mapa abre acá mismo
+                          y adentro está "Mapa completo →" para quien lo quiera
+                          — "que no me mande a otra funcionalidad y me pierda". */}
+                      <ChipMiniMapa
+                        lat={c.lat}
+                        lon={c.lon}
+                        etiqueta={`Circuito ${c.codigo}`}
+                      />
                     </td>
                   </tr>
                 ))}

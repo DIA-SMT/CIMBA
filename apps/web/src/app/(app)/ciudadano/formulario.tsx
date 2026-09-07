@@ -25,6 +25,10 @@ export function FormularioCiudadano() {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [punto, setPunto] = useState<{ lat: number; lon: number } | null>(null);
+  // "Hay lugares que NO pueden tener bache porque no tienen asfalto": apenas
+  // se elige el punto, la red vial contesta y el cartel salta acá mismo — no
+  // se bloquea la carga (el pedido vale igual: va a Ingeniería), se AVISA.
+  const [superficie, setSuperficie] = useState<string | null>(null);
   const [desdeGps, setDesdeGps] = useState(false);
   const [buscandoGps, setBuscandoGps] = useState(false);
   const [tipo, setTipo] = useState("bache");
@@ -63,8 +67,20 @@ export function FormularioCiudadano() {
     }
   };
 
+  const consultarSuperficie = async (lat: number, lon: number) => {
+    try {
+      const res = await fetch(`/api/superficie-calle?lat=${lat}&lon=${lon}`);
+      const data = (await res.json()) as { superficie: string | null };
+      setSuperficie(data.superficie);
+    } catch {
+      setSuperficie(null);
+    }
+  };
+
   const elegirPunto = (lat: number, lon: number, gps = false) => {
     setPunto({ lat, lon });
+    setSuperficie(null);
+    void consultarSuperficie(lat, lon);
     setDesdeGps(gps);
     void resolverDireccion(lat, lon);
   };
@@ -230,6 +246,16 @@ export function FormularioCiudadano() {
           <p className="num mt-1 text-[11px] text-texto-3">
             {punto.lat.toFixed(6)}, {punto.lon.toFixed(6)} {desdeGps && <span className="text-resuelto">· GPS</span>}
           </p>
+        )}
+        {superficie === "ripio" && (
+          <div className="mt-2 rounded-xl border border-encurso/50 bg-encurso/10 px-3 py-2.5 text-[13px] leading-snug">
+            <b className="text-encurso">Ojo: acá no hay asfalto.</b>{" "}
+            <span className="text-texto-2">
+              La red vial marca esta cuadra como ripio o cordón cuneta: no puede ser un bache — es un pozo o
+              un pedido de pasado de máquina. Cargalo igual si corresponde: el sistema lo va a clasificar solo
+              para Ingeniería, no para la cuadrilla de bacheo.
+            </span>
+          </div>
         )}
       </div>
 

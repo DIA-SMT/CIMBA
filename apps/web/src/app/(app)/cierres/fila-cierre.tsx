@@ -41,8 +41,38 @@ export function FilaCierre({
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [abierto, setAbierto] = useState(false);
-  const [respuesta, setRespuesta] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * La respuesta SEMI-AUTOMÁTICA: el sistema redacta con lo que ya sabe
+   * (dirección, fecha, cómo se resolvió y el link a la foto del trabajo) y la
+   * persona solo revisa y confirma — o la reescribe. La foto del después es
+   * la prueba del trabajo; si hay del antes, va también.
+   */
+  const respuestaSugerida = (() => {
+    const que = demanda.tipoIntervencion
+      ? (ETIQUETA_TIPO_INTERVENCION[demanda.tipoIntervencion] ?? demanda.tipoIntervencion).toLowerCase()
+      : "la reparación";
+    const donde = demanda.direccion ? ` en ${demanda.direccion}` : "";
+    const cuando = demanda.cerradoEn ? ` el ${fechaCorta(demanda.cerradoEn)}` : "";
+    const despues = demanda.fotos.find((f) => f.momento === "despues");
+    const antes = demanda.fotos.find((f) => f.momento === "antes");
+    let texto = `Su reclamo${donde} fue resuelto${cuando} mediante ${que}.`;
+    if (despues && antes) texto += ` Foto del trabajo terminado: ${despues.url} · Antes de la reparación: ${antes.url}.`;
+    else if (despues) texto += ` Foto del trabajo terminado: ${despues.url}.`;
+    else if (antes) texto += ` Foto del estado previo a la reparación: ${antes.url}.`;
+    texto += " Muchas gracias por avisarnos.";
+    return texto;
+  })();
+  const [respuesta, setRespuesta] = useState("");
+  // Al abrir por primera vez, la sugerencia ya está puesta: solo confirmar.
+  const abrir = () => {
+    setAbierto((v) => {
+      if (!v && respuesta === "") setRespuesta(respuestaSugerida);
+      return !v;
+    });
+    setError(null);
+  };
 
   const cerrar = () => {
     setError(null);
@@ -119,10 +149,7 @@ export function FilaCierre({
         <td className="px-4 py-2.5 text-right">
           {puedeCerrar && (
             <button
-              onClick={() => {
-                setAbierto((v) => !v);
-                setError(null);
-              }}
+              onClick={abrir}
               disabled={pendiente}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${
                 abierto
@@ -140,15 +167,13 @@ export function FilaCierre({
         <tr className="border-b border-borde/60 bg-panel-2/60">
           <td colSpan={10} className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
-              <input
+              <textarea
                 value={respuesta}
                 onChange={(e) => setRespuesta(e.target.value)}
                 maxLength={1000}
+                rows={3}
                 disabled={pendiente}
-                placeholder={`Se reparó el bache de su reclamo el ${
-                  demanda.cerradoEn ? fechaCorta(demanda.cerradoEn) : "…"
-                }`}
-                className="w-full max-w-xl flex-1 rounded-lg border border-borde-2 bg-panel px-3 py-2 text-sm placeholder:text-texto-3"
+                className="w-full max-w-xl flex-1 rounded-lg border border-borde-2 bg-panel px-3 py-2 text-sm leading-relaxed placeholder:text-texto-3"
               />
               <button
                 onClick={cerrar}

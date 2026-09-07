@@ -2,6 +2,7 @@ import { conRls, sql, getDb } from "@cimba/db";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { filtroEnum } from "./consultas";
+import { urlFoto } from "./fotos";
 import { parametrosDesdeJson, type ParametrosCapacidad } from "./capacidad";
 
 /**
@@ -450,6 +451,8 @@ export interface DemandaParaCerrar {
    *  diga al vecino si fue bacheo o cambio de paño. */
   tipoIntervencion: string | null;
   fotosDespues: number;
+  /** URLs públicas de las fotos (antes/después) para armar la respuesta al vecino. */
+  fotos: Array<{ momento: string; url: string }>;
   /** Punto del incidente reparado, para verificar la dirección en el mini-mapa antes de responder. */
   lat: number | null;
   lon: number | null;
@@ -488,7 +491,18 @@ export async function demandasParaCerrar(
                 limit 1) as tipo_intervencion,
              (select count(*) from fotografias fo
                 join intervenciones v on v.id = fo.intervencion_id
-                where v.incidente_id = i.id and fo.momento = 'despues')::int as fotos_despues
+                where v.incidente_id = i.id and fo.momento = 'despues')::int as fotos_despues,
+             -- Las fotos en sí (antes y después, las 2 más recientes de cada
+             -- momento): la respuesta al vecino puede llevar el link directo
+             -- al trabajo — "que tenga la foto del antes y después".
+             (select json_agg(x) from (
+                select fo.momento, fo.url_externa, fo.storage_path
+                from fotografias fo
+                join intervenciones v on v.id = fo.intervencion_id
+                where v.incidente_id = i.id and fo.momento in ('antes','despues')
+                order by fo.momento, fo.tomada_en desc nulls last
+                limit 4
+              ) x) as fotos_detalle
       from demandas d
       join demanda_incidente di on di.demanda_id = d.id
       join incidentes i on i.id = di.incidente_id
@@ -513,6 +527,15 @@ export async function demandasParaCerrar(
       m2: f.m2 != null ? Number(f.m2) : null,
       tipoIntervencion: (f.tipo_intervencion as string) ?? null,
       fotosDespues: Number(f.fotos_despues ?? 0),
+      fotos: (Array.isArray(f.fotos_detalle) ? (f.fotos_detalle as Array<Record<string, unknown>>) : [])
+        .map((x) => ({
+          momento: String(x.momento),
+          url: urlFoto({
+            urlExterna: (x.url_externa as string) ?? null,
+            storagePath: (x.storage_path as string) ?? null,
+          }),
+        }))
+        .filter((x): x is { momento: string; url: string } => x.url != null),
       lat: f.lat != null ? Number(f.lat) : null,
       lon: f.lon != null ? Number(f.lon) : null,
     }));
