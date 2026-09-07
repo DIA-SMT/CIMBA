@@ -3535,22 +3535,21 @@ function MapaInterno({
 
         <div className="ml-auto flex flex-wrap items-start justify-end gap-2">
           {iaHabilitada && (
-            <button
-              data-tour="informe-ia"
-              onClick={() => void generarInforme()}
-              disabled={generandoInforme}
-              className="panel-vidrio hidden items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold text-celeste transition hover:text-texto disabled:opacity-60 sm:flex sm:px-3.5 sm:py-2.5"
-              title="Informe ejecutivo generado por IA sobre lo visible en el mapa"
-            >
-              <Sparkles size={14} className={generandoInforme ? "animate-pulse text-amarillo" : ""} />
-              <span className="hidden sm:inline">{generandoInforme ? "Generando…" : "Informe IA"}</span>
-            </button>
+            /* Mientras genera, la barra lo muestra para que se vea el pulso;
+               el disparo vive en el menú Acciones ("están agrupados, no hace
+               falta que se vean todos juntos en el mapa"). */
+            generandoInforme && (
+              <span className="panel-vidrio flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-celeste">
+                <Sparkles size={14} className="animate-pulse text-amarillo" />
+                Generando…
+              </span>
+            )
           )}
           <button
             data-tour="comparar"
             onClick={alternarComparar}
-            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
-              comparar ? "flex text-celeste ring-1 ring-celeste/60" : "hidden text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
+              comparar ? "flex text-celeste ring-1 ring-celeste/60" : "hidden"
             }`}
             title="Cortina «Lo pedido | Lo hecho»: dos mapas sincronizados divididos por una cortina arrastrable — la brecha convertida en imagen"
           >
@@ -3568,15 +3567,7 @@ function MapaInterno({
               <span className="hidden sm:inline">{capturando ? "Capturando…" : "Capturar"}</span>
             </button>
           )}
-          {panelesMovidos && (
-            <button
-              onClick={reubicarTodos}
-              className="panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-texto-2 transition hover:text-texto sm:flex sm:px-3 sm:py-2.5"
-              title="Volver los paneles a su lugar original"
-            >
-              <RotateCcw size={14} />
-            </button>
-          )}
+
           {/* Nivel de detalle: cuánto se muestra encima del mapa. "Limpio" es
               el mismo despejado del ojo de al lado — un solo estado para las
               dos afordancias. */}
@@ -3618,8 +3609,8 @@ function MapaInterno({
               setModoAnalisis(activo);
               if (!activo) setZona(null);
             }}
-            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
-              modoAnalisis ? "flex text-amarillo ring-1 ring-amarillo/60" : "hidden text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
+              modoAnalisis ? "flex text-amarillo ring-1 ring-amarillo/60" : "hidden"
             }`}
             title="Analizador de zona: mantené clic y arrastrá para dibujar un círculo — las estadísticas se calculan en vivo mientras arrastrás"
           >
@@ -3634,15 +3625,17 @@ function MapaInterno({
               setReproduciendo(false);
               if (activo) setTiempoIdx(0);
             }}
-            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:flex sm:px-3.5 sm:py-2.5 ${
-              tiempoActivo ? "flex text-celeste ring-1 ring-celeste/60" : "hidden text-texto-2 hover:text-texto"
+            className={`panel-vidrio items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition sm:px-3.5 sm:py-2.5 ${
+              tiempoActivo ? "flex text-celeste ring-1 ring-celeste/60" : "hidden"
             }`}
             title="Línea de tiempo: reproducí la historia del bacheo mes a mes"
           >
             <History size={14} />
             <span className="hidden sm:inline">Historia</span>
           </button>
-          <div className="relative hidden sm:block">
+          {/* Exportar vive en el menú Acciones; el desplegable suelto se fue
+              con el resto de los botones agrupados. */}
+          <div className="relative hidden">
             <button
               data-tour="exportar"
               onClick={() => {
