@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb, sql } from "@cimba/db";
 import { notificarEvento } from "@/lib/notificar";
+import { datosPulso, emailDelPulso, pushDelPulso } from "@/lib/pulso";
 
 export const maxDuration = 60;
 
@@ -80,5 +81,28 @@ export async function GET(req: NextRequest) {
     avisadas++;
   }
 
-  return NextResponse.json({ ok: true, avisadas , cerrables: nCerrables, avisoCierres });
+  // ── El pulso de las 7:00: el parte diario, una sola vez por día ─────────
+  let pulsoEnviado = 0;
+  {
+    const marca = (await db.execute(sql`
+      insert into parametros (clave, valor)
+      values ('pulso_diario', jsonb_build_object('fecha', ${hoy}::text))
+      on conflict (clave) do update set valor = excluded.valor
+      where parametros.valor->>'fecha' is distinct from ${hoy}::text
+      returning clave
+    `)) as unknown as Array<{ clave: string }>;
+    if (marca[0]) {
+      const pulso = await datosPulso();
+      const push = pushDelPulso(pulso);
+      const r = await notificarEvento("pulso_diario", {
+        titulo: push.titulo,
+        cuerpo: push.cuerpo,
+        url: "/pulso",
+        cuerpoEmail: emailDelPulso(pulso),
+      });
+      pulsoEnviado = r.push + r.emails;
+    }
+  }
+
+  return NextResponse.json({ ok: true, avisadas , cerrables: nCerrables, avisoCierres, pulsoEnviado });
 }

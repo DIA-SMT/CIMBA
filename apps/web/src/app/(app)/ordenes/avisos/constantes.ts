@@ -3,7 +3,7 @@
  * desde las islas cliente, así que acá no entra nada de servidor: solo datos.
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes";
+export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes" | "pulso_diario";
 
 export interface Destinatario {
   id: number;
@@ -57,6 +57,12 @@ export const EVENTOS: Array<{ evento: EventoAviso; titulo: string; dispara: stri
     titulo: "Reclamos listos para cerrar",
     dispara:
       "Se dispara con el control diario cuando hay reclamos cuyo problema ya se reparó y falta responderle al vecino: el sistema empuja la bandeja de Cierres en vez de esperar que alguien la mire.",
+  },
+  {
+    evento: "pulso_diario",
+    titulo: "El pulso de las 7:00",
+    dispara:
+      "Todas las mañanas: el parte del día anterior — qué entró, qué se reparó, dónde se concentró la deuda, qué vence hoy y la anomalía del día. El email lleva el parte completo; el push, el resumen con link.",
   },
   {
     evento: "aviso_general",
