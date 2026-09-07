@@ -72,6 +72,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link
               key={href}
               href={href}
+              // En pantallas angostas el menú es solo ícono: sin el title había
+              // que entrar uno por uno para saber qué era cada cosa.
+              title={etiqueta}
+              aria-label={etiqueta}
               className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-texto-2 transition hover:bg-panel-2 hover:text-texto"
             >
               <Icono size={17} className="shrink-0 transition group-hover:text-celeste" />

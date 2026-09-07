@@ -41,6 +41,31 @@ const MESES = [
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
 
+export type FirmaNota = "direccion" | "secretario" | "ambas";
+
+export const FIRMAS_NOTA: Record<FirmaNota, string> = {
+  direccion: "Dirección de Bacheo",
+  secretario: "Ing. Claudio Bravo — Secretario de Obras Públicas",
+  ambas: "Dirección de Bacheo + Secretario de Obras Públicas",
+};
+
+/** El texto modelo del cuerpo: es el punto de partida editable de la preview. */
+export const CUERPO_MODELO_SAT =
+  "Me dirijo a Ud. a fin de poner en su conocimiento los reclamos vinculados a pérdidas de agua, " +
+  "tapas de registro y sumideros registrados en los sistemas operativos de esta Dirección, cuya " +
+  "atención — conforme a su naturaleza — corresponde al organismo a su cargo. Se acompaña el detalle " +
+  "de cada caso con su ubicación georreferenciada y, de contarse con ella, la fotografía " +
+  "correspondiente, a efectos de facilitar su localización y tratamiento.";
+
+function BloqueFirma({ titulo, sub }: { titulo: string; sub: string }) {
+  return (
+    <div className="w-64 border-t border-texto-3 pt-2 text-center print:border-black">
+      <p className="font-bold">{titulo}</p>
+      <p className="text-[13px]">{sub}</p>
+    </div>
+  );
+}
+
 export function fechaLarga(iso?: string): string {
   const d = iso ? new Date(iso) : new Date();
   return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
@@ -53,6 +78,8 @@ export function NotaSat({
   observaciones,
   renglones,
   generadoPor,
+  cuerpo,
+  firma = "direccion",
 }: {
   /** null = borrador de previsualización, todavía sin número. */
   numero: string | null;
@@ -61,14 +88,24 @@ export function NotaSat({
   observaciones?: string | null;
   renglones: RenglonNota[];
   generadoPor?: string | null;
+  /** Cuerpo editado a mano; sin él, va el texto modelo. */
+  cuerpo?: string | null;
+  firma?: FirmaNota;
 }) {
   return (
     <div
       className="nota-administrativa mx-auto max-w-3xl rounded-xl border border-borde bg-panel p-8 text-[15px] leading-relaxed print:max-w-none print:rounded-none print:border-0 print:p-0"
       style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
     >
-      {/* Membrete */}
+      {/* Membrete, con el isotipo municipal: la nota sale con la cara de la
+          Municipalidad, no solo con su nombre. */}
       <div className="mb-8 border-b border-borde-2 pb-4 text-center print:border-black">
+        {/* eslint-disable-next-line @next/next/no-img-element -- documento imprimible: nada de optimización de Next acá */}
+        <img
+          src="/marca/isotipo-smt.png"
+          alt="Municipalidad de San Miguel de Tucumán"
+          className="mx-auto mb-2 h-14 w-auto"
+        />
         <p className="text-[13px] font-bold tracking-[0.18em] uppercase">
           Municipalidad de San Miguel de Tucumán
         </p>
@@ -89,14 +126,16 @@ export function NotaSat({
       </div>
 
       <p className="mb-4">De mi mayor consideración:</p>
-      <p className="mb-4 text-justify indent-8">
-        Me dirijo a Ud. a fin de poner en su conocimiento los reclamos vinculados a{" "}
-        <b>pérdidas de agua, tapas de registro y sumideros</b> registrados en los sistemas
-        operativos de esta Dirección, cuya atención — conforme a su naturaleza — corresponde
-        al organismo a su cargo. Se acompaña el detalle de cada caso con su ubicación
-        georreferenciada y, de contarse con ella, la fotografía correspondiente, a efectos de
-        facilitar su localización y tratamiento.
-      </p>
+      {/* El cuerpo puede venir editado desde la previsualización; los saltos de
+          línea del textarea se respetan como párrafos. */}
+      {(cuerpo ?? CUERPO_MODELO_SAT)
+        .split(/\n+/)
+        .filter((par) => par.trim().length > 0)
+        .map((par, i) => (
+          <p key={i} className="mb-4 text-justify indent-8">
+            {par}
+          </p>
+        ))}
       {observaciones && <p className="mb-4 text-justify indent-8">{observaciones}</p>}
       <p className="mb-6 text-justify indent-8">
         Los casos informados ascienden a <b>{renglones.length}</b>. Se solicita, de
@@ -154,11 +193,13 @@ export function NotaSat({
       <p className="mt-8 mb-10 text-justify indent-8">
         Sin otro particular, saludo a Ud. con distinguida consideración.
       </p>
-      <div className="mb-2 text-center">
-        <div className="mx-auto w-64 border-t border-texto-3 pt-2 print:border-black">
-          <p className="font-bold">Dirección de Bacheo</p>
-          <p className="text-[13px]">Secretaría de Obras Públicas</p>
-        </div>
+      <div className="mb-2 flex flex-wrap justify-center gap-x-12 gap-y-6">
+        {(firma === "direccion" || firma === "ambas") && (
+          <BloqueFirma titulo="Dirección de Bacheo" sub="Secretaría de Obras Públicas" />
+        )}
+        {(firma === "secretario" || firma === "ambas") && (
+          <BloqueFirma titulo="Ing. Claudio Bravo" sub="Secretario de Obras Públicas" />
+        )}
       </div>
 
       <p className="mt-8 border-t border-borde pt-3 text-[11px] text-texto-3 print:border-black print:text-black">

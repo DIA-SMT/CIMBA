@@ -119,6 +119,7 @@ export function ChipMiniMapa({
   etiqueta,
   texto,
   conMapaCompleto = true,
+  fichaHref,
 }: {
   lat: number | null | undefined;
   lon: number | null | undefined;
@@ -127,6 +128,9 @@ export function ChipMiniMapa({
   texto?: string;
   /** Apagalo en el portal de empresas: el rol empresa no puede entrar a /mapa. */
   conMapaCompleto?: boolean;
+  /** Link a la ficha del elemento: desde la card se va derecho al pedido, sin
+   *  tener que cerrarla y buscar el botón de la fila (pedido del Director). */
+  fichaHref?: string;
 }) {
   const [abierto, setAbierto] = useState(false);
 
@@ -211,6 +215,14 @@ export function ChipMiniMapa({
                   {lat.toFixed(6)}, {lon.toFixed(6)}
                 </span>
                 <span className="flex items-center gap-3">
+                  {fichaHref && (
+                    <Link
+                      href={fichaHref}
+                      className="text-[11px] font-bold text-celeste hover:underline"
+                    >
+                      Abrir el pedido →
+                    </Link>
+                  )}
                   <a
                     href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}`}
                     target="_blank"

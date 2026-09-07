@@ -16,7 +16,7 @@ import { notificarRoles, type CargaPush } from "./push";
  * el evento (emitir una orden vale más que su aviso).
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general";
+export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes";
 
 export interface ResultadoAviso {
   push: number;

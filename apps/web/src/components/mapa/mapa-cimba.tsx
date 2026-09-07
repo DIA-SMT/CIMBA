@@ -284,6 +284,9 @@ function paleta(tema: Tema) {
     /** Recorridos de colectivos: rosa sobre oscuro, violeta sobre claro —
      *  lejos del rosa de barrios y del violeta de distritos. */
     colectivo: oscuro ? "#f08fd0" : "#8b2fc9",
+    /** Zonas del programa "Bacheo integral" (KML del Director): teal — es un
+     *  ÁREA translúcida de programa, no un estado, y queda lejos del semáforo. */
+    bacheoIntegral: oscuro ? "#2dd4bf" : "#0d9488",
     /** Trazo fuerte de lo que está comprometido o pasando ahora (programado y
      *  en ejecución): el color ya lo dice, el trazo lo pone por encima del
      *  archivo cuando conviven miles de puntos. */
@@ -1578,6 +1581,8 @@ function MapaInterno({
   const [redVialGeo, setRedVialGeo] = useState<FCLinea | null>(null);
   const [sectoresGeo, setSectoresGeo] = useState<FCPoligono | null>(null);
   const [colectivosGeo, setColectivosGeo] = useState<FCLinea | null>(null);
+  const [verBacheoIntegral, setVerBacheoIntegral] = useState(false);
+  const [bacheoIntegralGeo, setBacheoIntegralGeo] = useState<FCPoligono | null>(null);
   // Detalle del sector de licitación clickeado (hormigón o cuadrante)
   const [sectorSel, setSectorSel] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
@@ -1592,6 +1597,10 @@ function MapaInterno({
     if (!verColectivos || colectivosGeo) return;
     fetch("/data/recorridos-colectivos.json").then((r) => r.json()).then(setColectivosGeo).catch(() => {});
   }, [verColectivos, colectivosGeo]);
+  useEffect(() => {
+    if (!verBacheoIntegral || bacheoIntegralGeo) return;
+    fetch("/data/bacheo-integral.json").then((r) => r.json()).then(setBacheoIntegralGeo).catch(() => {});
+  }, [verBacheoIntegral, bacheoIntegralGeo]);
   useEffect(() => {
     if (!verSectores || sectoresGeo) return;
     fetch("/data/sectores-licitacion.json")
@@ -2783,7 +2792,9 @@ function MapaInterno({
     // Las líneas de colectivos y los barrios son solo informativos (tooltip):
     // un clic sobre ellos no debe abrir ni cerrar nada — se busca el siguiente
     // feature útil.
-    const feature = e.features?.find((f) => f.layer.id !== "colectivos-linea" && f.layer.id !== "barrios-relleno");
+    const feature = e.features?.find(
+      (f) => f.layer.id !== "colectivos-linea" && f.layer.id !== "barrios-relleno" && f.layer.id !== "bacheo-integral-relleno",
+    );
     if (!feature) {
       setSeleccion(null);
       setCotejo(null);
@@ -2902,6 +2913,7 @@ function MapaInterno({
           ...(verBarrios && barriosConDeuda ? ["barrios-relleno"] : []),
           ...(verSectores && sectoresGeo ? ["sectores-hormigon-relleno", "sectores-cuadrante-relleno"] : []),
           ...(verColectivos && colectivosGeo ? ["colectivos-linea"] : []),
+          ...(verBacheoIntegral && bacheoIntegralGeo ? ["bacheo-integral-relleno"] : []),
         ]}
         onClick={alClick}
         onContextMenu={(e) => {
@@ -3032,6 +3044,13 @@ function MapaInterno({
                     ? "con problemas reportados"
                     : "sin problemas reportados",
             ];
+          } else if (f.layer.id === "bacheo-integral-relleno") {
+            // La zona del programa: nombre, obra y el detalle del KML (monto,
+            // plazo, objetivo) sin tener que entrar a ningún lado.
+            lineas = [
+              "Bacheo integral — zona " + String(p.nombre ?? "") + (p.obra ? " · Obra " + String(p.obra) : ""),
+              String(p.detalle ?? ""),
+            ];
           } else if (f.layer.id === "colectivos-linea") {
             // "L4 · MERCOFRUT": la sensibilidad por transporte del ingeniero
             lineas = [String(p.linea ?? "") + " · " + String(p.ramal ?? ""), "recorrido de colectivo"];
@@ -3114,6 +3133,33 @@ function MapaInterno({
         {verColectivos && colectivosGeo && (
           <Source id="colectivos" type="geojson" data={colectivosGeo}>
             <Layer {...capas.colectivos} />
+          </Source>
+        )}
+        {verBacheoIntegral && bacheoIntegralGeo && (
+          <Source id="bacheo-integral" type="geojson" data={bacheoIntegralGeo}>
+            <Layer
+              id="bacheo-integral-relleno"
+              type="fill"
+              paint={{ "fill-color": pal.bacheoIntegral, "fill-opacity": pal.oscuro ? 0.08 : 0.1 }}
+            />
+            <Layer
+              id="bacheo-integral-borde"
+              type="line"
+              paint={{ "line-color": pal.bacheoIntegral, "line-width": 2, "line-dasharray": [3, 1.5] }}
+            />
+            <Layer
+              id="bacheo-integral-etiqueta"
+              type="symbol"
+              layout={{
+                "text-field": ["format",
+                  ["get", "nombre"], { "font-scale": 1 },
+                  "\nObra ", { "font-scale": 0.8 },
+                  ["get", "obra"], { "font-scale": 0.8 }],
+                "text-font": ["Montserrat Regular"],
+                "text-size": 13,
+              }}
+              paint={{ "text-color": pal.bacheoIntegral, "text-halo-color": pal.halo, "text-halo-width": 1.6 }}
+            />
           </Source>
         )}
 
@@ -4671,6 +4717,14 @@ function MapaInterno({
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Las zonas del programa Bacheo integral (SE, SO y Centro-Este) con su n° de obra, monto y plazo — pasá el mouse por una zona para ver el detalle"
+            >
+              <input type="checkbox" checked={verBacheoIntegral} onChange={(e) => setVerBacheoIntegral(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-2.5 w-4 shrink-0 rounded-sm border border-dashed" style={{ borderColor: pal.bacheoIntegral, background: pal.oscuro ? "rgba(45,212,191,0.12)" : "rgba(13,148,136,0.12)" }} />
+              <span className="min-w-0 truncate">Bacheo integral (obras)</span>
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Recorridos de las líneas de colectivos (sensibilidad por transporte) — pasá el mouse por una línea para ver línea y ramal"
             >
               <input type="checkbox" checked={verColectivos} onChange={(e) => setVerColectivos(e.target.checked)} className="accent-[#0066ff]" />
@@ -5049,12 +5103,21 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
                     ? "Pérdida de agua, tapa o sumidero: se resuelve por expediente a la SAT."
                     : "No es un bache (calle de ripio, apertura o problema de traza): lo trata Ingeniería."}
                 </p>
-                <Link
-                  href={`/calidad/tratamiento/${destino === "sat" ? "derivar_sat" : "no_es_bache"}`}
-                  className="mt-1 inline-block text-[11px] font-semibold text-celeste hover:underline"
-                >
-                  Ver la bandeja de tratamiento →
-                </Link>
+                {p.expediente != null && p.expediente_id != null ? (
+                  <Link
+                    href={`/expedientes/${String(p.expediente_id)}`}
+                    className="mt-1 inline-block text-[11px] font-semibold text-celeste hover:underline"
+                  >
+                    Ver el expediente {String(p.expediente)} →
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/calidad/tratamiento/${destino === "sat" ? "derivar_sat" : "no_es_bache"}`}
+                    className="mt-1 inline-block text-[11px] font-semibold text-celeste hover:underline"
+                  >
+                    Ver la bandeja de tratamiento →
+                  </Link>
+                )}
               </div>
             )}
             {p.brecha != null && p.brecha !== "atendida" && (
@@ -5100,7 +5163,7 @@ function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar:
             ? "Gestionar incidente"
             : p.brecha === "posible_resuelta"
               ? "Revisar y cotejar →"
-              : "Abrir en bandeja"}
+              : "Abrir el pedido →"}
         </Link>
       </div>
     </aside>

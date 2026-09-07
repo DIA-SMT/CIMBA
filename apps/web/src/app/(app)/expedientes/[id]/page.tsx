@@ -43,7 +43,31 @@ export default async function PaginaExpediente({ params }: { params: Promise<{ i
         observaciones={exp.observaciones}
         renglones={exp.renglones}
         generadoPor={exp.generadoPor}
+        cuerpo={exp.cuerpo}
+        firma={exp.firma}
       />
+
+      {/* La trazabilidad de la gestión: lo que se dejó afuera del papel no se
+          borra del registro — pantalla interna, jamás se imprime. */}
+      {exp.exclusiones && exp.exclusiones.reclamos.length > 0 && (
+        <div className="mx-auto mt-4 max-w-3xl rounded-xl border border-borde bg-panel p-4 text-xs text-texto-2 print:hidden">
+          <p className="mb-1 font-bold tracking-wider text-texto-3 uppercase">Exclusiones registradas</p>
+          <p>
+            {exp.exclusiones.por} dejó fuera de esta nota {exp.exclusiones.reclamos.length} reclamo(s) el{" "}
+            {fechaCorta(exp.exclusiones.en)}:{" "}
+            {exp.exclusiones.reclamos.map((r, i) => (
+              <span key={r.demanda_id}>
+                {i > 0 && ", "}
+                <Link href={`/demandas/${r.demanda_id}`} className="font-semibold text-celeste hover:underline">
+                  #{r.demanda_id}
+                </Link>
+                {r.ticket && <> (ticket {r.ticket})</>}
+              </span>
+            ))}
+            . Siguieron abiertos en la cola.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

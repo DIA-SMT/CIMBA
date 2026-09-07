@@ -116,7 +116,7 @@ export default async function PaginaSenal({ params }: { params: Promise<{ senal:
                   {d.detalle && <div className="mt-1 text-xs font-medium text-amarillo">{d.detalle}</div>}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <ChipMiniMapa lat={d.lat} lon={d.lon} etiqueta={d.direccion} />
+                  <ChipMiniMapa lat={d.lat} lon={d.lon} etiqueta={d.direccion} fichaHref={`/demandas/${d.id}`} />
                   <Link
                     href={`/demandas/${d.id}`}
                     className="rounded-lg border border-borde-2 px-2.5 py-1.5 text-xs font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"

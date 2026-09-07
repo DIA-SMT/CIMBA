@@ -136,7 +136,7 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "capas-viales",
     titulo: "Red vial y licitaciones",
-    desc: "En Capas → Territorio hay cuatro capas nuevas: avenidas primarias y secundarias, pavimento/ripio/cordón cuneta por cuadra (el ripio bien visible: ahí no se bachea, se pasa la máquina), los sectores de licitación con su empresa adjudicataria (hormigón y asfalto) y los recorridos de colectivos. Con la red vial, cada reclamo se clasifica solo: bacheo, SAT o ingeniería.",
+    desc: "En Capas → Territorio hay cuatro capas nuevas: avenidas primarias y secundarias, pavimento/ripio/cordón cuneta por cuadra (el ripio bien visible: ahí no se bachea, se pasa la máquina), los sectores de licitación con su empresa adjudicataria (hormigón y asfalto), las zonas del programa Bacheo integral (SE, SO y Centro-Este, con n° de obra, monto y plazo al pasar el mouse) y los recorridos de colectivos. Con la red vial, cada reclamo se clasifica solo: bacheo, SAT o ingeniería.",
     como: "Panel de Capas → grupo Territorio. Tocá un sector de licitación para ver empresa y n° de licitación.",
   },
   {

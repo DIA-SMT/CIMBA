@@ -112,6 +112,11 @@ export async function listarExpedientes(sesion: Sesion): Promise<ExpedienteResum
 export interface ExpedienteCompleto extends ExpedienteResumen {
   observaciones: string | null;
   renglones: RenglonNota[];
+  /** Cuerpo editado al generar (null = el texto modelo). */
+  cuerpo: string | null;
+  firma: "direccion" | "secretario" | "ambas";
+  /** Reclamos que el operador dejó afuera de la nota, con quién y cuándo. */
+  exclusiones: { por: string; en: string; reclamos: Array<{ demanda_id: number; ticket: string | null }> } | null;
 }
 
 export async function obtenerExpediente(sesion: Sesion, id: number): Promise<ExpedienteCompleto | null> {
@@ -131,6 +136,7 @@ export async function obtenerExpediente(sesion: Sesion, id: number): Promise<Exp
       order by demanda_id
     `)) as unknown as Array<{ demanda_id: number; detalle: RenglonNota }>;
 
+    const meta = (e.metadata ?? {}) as Record<string, unknown>;
     return {
       id: Number(e.id),
       numero: String(e.numero),
@@ -141,6 +147,9 @@ export async function obtenerExpediente(sesion: Sesion, id: number): Promise<Exp
       generadoEn: String(e.generado_en),
       generadoPor: (e.generado_por_nombre as string) ?? null,
       renglones: detalle.map((d) => ({ ...d.detalle, demandaId: Number(d.demanda_id) })),
+      cuerpo: typeof meta.cuerpo === "string" ? meta.cuerpo : null,
+      firma: (["direccion", "secretario", "ambas"] as const).find((f) => f === meta.firma) ?? "direccion",
+      exclusiones: (meta.exclusiones as ExpedienteCompleto["exclusiones"]) ?? null,
     };
   });
 }

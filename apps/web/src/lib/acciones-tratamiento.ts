@@ -95,9 +95,26 @@ export async function corregirTipoDemanda(entrada: { demandaId: number; tipo: st
  * al expediente. Todo o nada: si algo falla, no queda ni la nota ni la
  * derivación a medias.
  */
-export async function generarNotaSat(entrada: { observaciones?: string }) {
+export async function generarNotaSat(entrada: {
+  observaciones?: string;
+  /** El cuerpo de la nota, si se editó a mano; null/ausente = el texto modelo. */
+  cuerpo?: string;
+  /** Quién firma: la Dirección, el Secretario de Obras Públicas, o ambos. */
+  firma?: "direccion" | "secretario" | "ambas";
+  /** Reclamos que el operador decidió NO incluir en esta nota. Quedan abiertos
+   *  (entran en la próxima) y la exclusión queda registrada en el expediente:
+   *  se puede sacar un caso del papel, pero no sin dejar rastro. */
+  excluirIds?: number[];
+}) {
   const sesion = await requerirRol("planificacion", "atencion_ciudadana");
-  const datos = z.object({ observaciones: z.string().max(2000).optional() }).parse(entrada);
+  const datos = z
+    .object({
+      observaciones: z.string().max(2000).optional(),
+      cuerpo: z.string().max(4000).optional(),
+      firma: z.enum(["direccion", "secretario", "ambas"]).optional(),
+      excluirIds: z.array(z.number().int().positive()).max(2000).optional(),
+    })
+    .parse(entrada);
 
   const { renglonesParaNotaSatEnTx, DESTINATARIO_SAT } = await import("./expedientes");
 
@@ -108,9 +125,20 @@ export async function generarNotaSat(entrada: { observaciones?: string }) {
     // mismos casos congelados. El snapshot se toma DENTRO de esta tx.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cimba-generar-nota-sat'))`);
 
-    const renglones = await renglonesParaNotaSatEnTx(tx);
+    const todos = await renglonesParaNotaSatEnTx(tx);
+    const excluidos = new Set(datos.excluirIds ?? []);
+    const renglones = todos.filter((r) => !excluidos.has(r.demandaId));
+    // Las exclusiones reales (contra el snapshot, no contra lo que mandó el
+    // cliente): si un id excluido ya no estaba abierto, no es una exclusión.
+    const exclusiones = todos
+      .filter((r) => excluidos.has(r.demandaId))
+      .map((r) => ({ demanda_id: r.demandaId, ticket: r.ticket }));
     if (renglones.length === 0) {
-      throw new Error("No hay reclamos de la SAT abiertos para incluir en la nota");
+      throw new Error(
+        todos.length > 0
+          ? "Quedaron todos los reclamos excluidos: la nota no puede salir vacía"
+          : "No hay reclamos de la SAT abiertos para incluir en la nota",
+      );
     }
 
     // Numeración administrativa ANUAL en hora de Tucumán (la global seguía
@@ -118,11 +146,20 @@ export async function generarNotaSat(entrada: { observaciones?: string }) {
     // El advisory lock de arriba hace seguro el count+1.
     const creado = (await tx.execute(sql`
       with anio as (select to_char(now() at time zone 'America/Argentina/Buenos_Aires', 'YYYY') as a)
-      insert into expedientes (numero, tipo, destinatario, observaciones, cantidad, generado_por)
+      insert into expedientes (numero, tipo, destinatario, observaciones, cantidad, generado_por, metadata)
       select 'NOTA-SAT-' || anio.a || '-' ||
              lpad((coalesce((select count(*) from expedientes e
                              where e.tipo = 'sat' and e.numero like 'NOTA-SAT-' || anio.a || '-%'), 0) + 1)::text, 4, '0'),
-             'sat', ${DESTINATARIO_SAT}, ${datos.observaciones ?? null}, ${renglones.length}, ${sesion.sub}::uuid
+             'sat', ${DESTINATARIO_SAT}, ${datos.observaciones ?? null}, ${renglones.length}, ${sesion.sub}::uuid,
+             ${JSON.stringify({
+               // La trazabilidad de la gestión: qué se editó y qué se dejó
+               // afuera, con nombre y fecha. La nota es editable; el registro, no.
+               ...(datos.cuerpo ? { cuerpo: datos.cuerpo } : {}),
+               firma: datos.firma ?? "direccion",
+               ...(exclusiones.length > 0
+                 ? { exclusiones: { por: sesion.nombre, en: new Date().toISOString(), reclamos: exclusiones } }
+                 : {}),
+             })}::jsonb
       from anio
       returning id, numero
     `)) as unknown as Array<{ id: number; numero: string }>;

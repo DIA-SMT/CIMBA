@@ -31,6 +31,39 @@ export async function GET(req: NextRequest) {
       and coalesce(ot.metadata->>'aviso_vencimiento', '') <> current_date::text
   `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; pendientes: number }>;
 
+  // ── Cierres pendientes: el empujón diario ──────────────────────────────
+  // Reclamos abiertos vinculados a un incidente YA reparado: el trabajo está,
+  // falta responderle al vecino. Un solo aviso por día (marca en parametros),
+  // solo si hay algo para cerrar.
+  const hoy = new Date().toISOString().slice(0, 10);
+  const cerrables = (await db.execute(sql`
+    select count(distinct d.id)::int as n
+    from demandas d
+    join demanda_incidente di on di.demanda_id = d.id
+    join incidentes i on i.id = di.incidente_id
+    where d.estado in ('recibida','en_validacion','vinculada')
+      and i.estado in ('reparado','verificado')
+  `)) as unknown as Array<{ n: number }>;
+  const nCerrables = Number(cerrables[0]?.n ?? 0);
+  let avisoCierres = 0;
+  if (nCerrables > 0) {
+    const marca = (await db.execute(sql`
+      insert into parametros (clave, valor)
+      values ('aviso_cierres_pendientes', jsonb_build_object('fecha', ${hoy}::text, 'n', ${nCerrables}::int))
+      on conflict (clave) do update set valor = excluded.valor
+      where parametros.valor->>'fecha' is distinct from ${hoy}::text
+      returning clave
+    `)) as unknown as Array<{ clave: string }>;
+    if (marca[0]) {
+      const r = await notificarEvento("cierres_pendientes", {
+        titulo: `${nCerrables} reclamo(s) listos para cerrar`,
+        cuerpo: "El problema ya está reparado: falta responderle al vecino y cerrar el ticket.",
+        url: "/cierres",
+      });
+      avisoCierres = r.push + r.emails;
+    }
+  }
+
   let avisadas = 0;
   for (const o of ordenes) {
     const vencida = o.vence < new Date().toISOString().slice(0, 10);
@@ -47,5 +80,5 @@ export async function GET(req: NextRequest) {
     avisadas++;
   }
 
-  return NextResponse.json({ ok: true, avisadas });
+  return NextResponse.json({ ok: true, avisadas , cerrables: nCerrables, avisoCierres });
 }

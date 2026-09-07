@@ -3,7 +3,7 @@
  * desde las islas cliente, así que acá no entra nada de servidor: solo datos.
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general";
+export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes";
 
 export interface Destinatario {
   id: number;
@@ -51,6 +51,12 @@ export const EVENTOS: Array<{ evento: EventoAviso; titulo: string; dispara: stri
     evento: "item_propuesto",
     titulo: "Bache propuesto por cuadrilla",
     dispara: "Se dispara cuando una cuadrilla propone desde la calle un bache que no estaba en la orden.",
+  },
+  {
+    evento: "cierres_pendientes",
+    titulo: "Reclamos listos para cerrar",
+    dispara:
+      "Se dispara con el control diario cuando hay reclamos cuyo problema ya se reparó y falta responderle al vecino: el sistema empuja la bandeja de Cierres en vez de esperar que alguien la mire.",
   },
   {
     evento: "aviso_general",

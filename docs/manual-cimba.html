@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Manual CIMBA</title>
+<style>
+  /* ── Manual imprimible de CIMBA: sobrio, municipal, para leer en papel ── */
+  @page { size: A4; margin: 16mm 15mm 18mm 15mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 10.5pt; line-height: 1.55; color: #1a1d23;
+  }
+  h1, h2, h3, .sans { font-family: "Segoe UI", Arial, sans-serif; }
+  h1 { font-size: 21pt; margin: 0 0 2mm; letter-spacing: -0.3px; }
+  h2 {
+    font-size: 13.5pt; margin: 8mm 0 2.5mm; padding-bottom: 1.2mm;
+    border-bottom: 2px solid #0066FF; color: #0b2c66;
+    break-after: avoid;
+  }
+  h3 { font-size: 11pt; margin: 4.5mm 0 1.5mm; color: #16325c; break-after: avoid; }
+  p { margin: 0 0 2.2mm; text-align: justify; }
+  ul, ol { margin: 0 0 2.5mm; padding-left: 6mm; }
+  li { margin-bottom: 1.2mm; }
+  b { color: #10131a; }
+  .seccion { break-inside: auto; }
+  .no-cortar { break-inside: avoid; }
+
+  /* Portada */
+  .portada {
+    height: 250mm; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; text-align: center;
+    break-after: page;
+  }
+  .portada img { height: 34mm; margin-bottom: 8mm; }
+  .portada .titulo { font-family: "Segoe UI", Arial, sans-serif; font-size: 30pt; font-weight: 800; letter-spacing: -0.5px; }
+  .portada .titulo b { color: #0066FF; }
+  .portada .sub { font-family: "Segoe UI", Arial, sans-serif; font-size: 12pt; color: #444; margin-top: 2mm; }
+  .portada .baja { margin-top: 14mm; max-width: 120mm; font-size: 11pt; color: #333; }
+  .portada .pie { margin-top: 18mm; font-family: "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #777; }
+
+  /* Piezas */
+  .caja {
+    border: 1px solid #d8dde6; border-left: 4px solid #0066FF; border-radius: 2mm;
+    padding: 3mm 4mm; margin: 3mm 0; background: #f6f9ff; break-inside: avoid;
+  }
+  .caja.regla { border-left-color: #b45309; background: #fdf6ec; }
+  .chip {
+    display: inline-block; font-family: "Segoe UI", Arial, sans-serif; font-weight: 700;
+    font-size: 8.5pt; color: #fff; border-radius: 99px; padding: 0.4mm 3mm; vertical-align: middle;
+  }
+  .punto { display: inline-block; width: 3mm; height: 3mm; border-radius: 50%; margin-right: 1.5mm; vertical-align: -0.3mm; }
+  table { width: 100%; border-collapse: collapse; margin: 2.5mm 0 3.5mm; font-size: 9.5pt; break-inside: avoid; }
+  th {
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; text-transform: uppercase;
+    letter-spacing: 0.5px; text-align: left; color: #57606e;
+    border-bottom: 1.5px solid #b9c2cf; padding: 1.5mm 2mm;
+  }
+  td { border-bottom: 0.5px solid #dde2ea; padding: 1.8mm 2mm; vertical-align: top; }
+  .porque { color: #57606e; font-style: italic; }
+  .mono { font-family: Consolas, monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<!-- ══ PORTADA ══ -->
+<div class="portada">
+  <img src="../apps/web/public/marca/isotipo-smt.png" alt="Municipalidad de San Miguel de Tucumán">
+  <div class="titulo">CIMBA<b>.</b></div>
+  <div class="sub">Centro Inteligente de Monitoreo de Baches y Asfalto</div>
+  <div class="baja">
+    <b>Manual de uso y de criterios.</b> Qué hace cada pantalla, qué significa cada
+    número y — sobre todo — <b>por qué el sistema decide lo que decide</b>.
+    Escrito para leerse sin saber nada de sistemas.
+  </div>
+  <div class="pie">
+    Municipalidad de San Miguel de Tucumán · Secretaría de Obras Públicas — Dirección de Bacheo<br>
+    Septiembre de 2026 · generado desde la versión en producción
+  </div>
+</div>
+
+<!-- ══ 1. LA IDEA ══ -->
+<div class="seccion">
+<h2>1 · La idea central: pedido → problema → trabajo</h2>
+<p>
+CIMBA junta en un solo lugar, <b>en vivo</b>, todo lo que antes estaba repartido en planillas,
+mapas sueltos y sistemas que no se hablaban. Para hacerlo ordena la realidad en tres piezas:
+</p>
+<table>
+<tr><th style="width:22%">Pieza</th><th>Qué es</th><th style="width:38%">Ejemplo</th></tr>
+<tr><td><b>Demanda</b> (el pedido)</td><td>Alguien pidió algo: un vecino, el Concejo, una secretaría, las redes.</td><td>«Hay un bache en Muñecas 1400» — llamado al 147.</td></tr>
+<tr><td><b>Incidente</b> (el problema)</td><td>El problema físico real, confirmado, en un punto del mapa. <b>Uno solo</b>, aunque lo hayan pedido diez personas.</td><td>El bache de Muñecas 1400, con su prioridad.</td></tr>
+<tr><td><b>Intervención</b> (el trabajo)</td><td>La reparación concreta: quién la hizo, cuándo, con qué medidas y fotos.</td><td>Cuadrilla Norte lo tapó el 27/08: 2×3 m, foto antes y después.</td></tr>
+</table>
+<p class="porque">
+<b>¿Por qué así?</b> Porque diez pedidos sobre el mismo pozo no son diez pozos: si no se agrupan,
+se cuenta trabajo de más, se manda dos veces a la misma esquina y nadie le responde al vecino.
+Agrupar pedidos en un incidente permite <b>reparar una vez y responderles a todos</b>.
+</p>
+<div class="caja regla">
+<b>Regla de oro:</b> en CIMBA <b>nada se borra</b>. Un pedido se vincula, se deriva o se descarta
+<b>con motivo</b>, y siempre queda escrito quién lo hizo y cuándo. El sistema propone; una persona confirma.
+</div>
+</div>
+
+<!-- ══ 2. FUENTES ══ -->
+<div class="seccion">
+<h2>2 · De dónde salen los datos (y por qué están vivos)</h2>
+<ul>
+<li><b>Atención Ciudadana (147 / CIDITUC):</b> los reclamos de los vecinos entran solos, por sincronización automática, varias veces por día.</li>
+<li><b>Obras contratadas (SIGOV):</b> las obras de las empresas, con sus m² — en el mapa llevan <b>anillo celeste</b> (es procedencia, no estado).</li>
+<li><b>Planillas históricas y QGIS:</b> el consolidado de trabajo previo al sistema. Algunas demandas viejas vienen <b>sin fecha</b>: el sistema lo marca y no inventa una.</li>
+<li><b>Concejo, secretarías, redes:</b> pedidos institucionales, cargados o importados con su fuente a la vista.</li>
+<li><b>Carga propia:</b> la pantalla <b>Ciudadano</b> (con dictado por voz) para el pedido presencial o telefónico, y <b>Cargar</b> para archivos.</li>
+<li><b>Los portales de ejecución:</b> cada bache que una empresa o cuadrilla reporta con foto y medidas entra al instante.</li>
+</ul>
+<p class="porque"><b>¿Por qué importa?</b> Porque toda pantalla de CIMBA se calcula sobre estos datos <b>al momento</b>: no hay informes estáticos que envejecen. Si el número cambió, es porque la realidad cambió.</p>
+</div>
+
+<!-- ══ 3. EL SEMÁFORO ══ -->
+<div class="seccion">
+<h2>3 · El semáforo: el único idioma del color</h2>
+<p>
+Todo estado, en cualquier pantalla, se pinta con el mismo código. Si un punto es rojo en el mapa,
+esa misma cosa es roja en Brecha, en el analizador de zona y en el reporte impreso.
+</p>
+<table>
+<tr><th style="width:26%">Color</th><th>Qué significa</th><th style="width:44%">Por qué el sistema lo asigna</th></tr>
+<tr><td><span class="punto" style="background:#d42d20"></span><b>Rojo — Sin atención</b></td><td>Nadie lo tocó todavía.</td><td>A menos de <b>40 metros</b> del pedido no hay ni reparación ni trabajo abierto. Es la <b>brecha real</b>.</td></tr>
+<tr><td><span class="punto" style="background:#e8590c"></span><b>Naranja — En cola</b></td><td>Está comprometido, pero no arrancó.</td><td>Hay un incidente detectado, priorizado o con orden emitida a menos de 40 m.</td></tr>
+<tr><td><span class="punto" style="background:#c08a00"></span><b>Ámbar — En obra</b></td><td>La cuadrilla está trabajando ahora.</td><td>Hay un incidente <b>en ejecución</b> a menos de 40 m.</td></tr>
+<tr><td><span class="punto" style="background:#15803d"></span><b>Verde — Resuelto</b></td><td>Hecho, o casi seguro hecho.</td><td>Hay una reparación registrada <b>después</b> del pedido a menos de 40 m. Falta cerrar el circuito con el vecino, no falta obra.</td></tr>
+<tr><td><span class="punto" style="background:#6b7280"></span><b>Gris</b></td><td>Desestimado o sin dato confiable.</td><td>Se descartó con motivo, o no tiene fecha/ubicación para clasificarlo con honestidad.</td></tr>
+</table>
+<p class="porque">
+<b>¿Por qué 40 metros?</b> Porque las direcciones de los reclamos no son exactas: «Muñecas al 1400»
+puede caer en cualquier punto de la cuadra. 40 m es media cuadra — suficiente para encontrar la
+reparación que corresponde sin confundirla con la de la esquina siguiente.
+</p>
+<div class="caja no-cortar">
+<b>La reincidencia</b> no es un color más: es una <b>marca</b>. Significa que ahí ya se había reparado
+<b>antes</b> del pedido y volvieron a reclamar — el problema volvió. Se cuenta dentro del paso que le
+toque (casi siempre rojo, porque desde que volvió nadie lo tocó) y es la señal más fuerte de falla
+estructural: ahí el bacheo no alcanza, hace falta otra solución.
+</div>
+</div>
+
+<!-- ══ 4. EL DESTINO ══ -->
+<div class="seccion">
+<h2>4 · El destino: quién debe resolver cada pedido</h2>
+<p>
+No todo lo que llega como «bache» es trabajo de la Dirección de Bacheo. Al entrar, cada pedido se
+clasifica <b>solo</b> según quién lo puede resolver de verdad:
+</p>
+<table>
+<tr><th style="width:20%">Cola</th><th>Qué entra</th><th style="width:44%">La regla exacta</th></tr>
+<tr><td><b>Bacheo</b></td><td>Baches y pavimento en calles pavimentadas.</td><td>Todo lo que no cae en las otras dos. Es <b>la cola que el mapa muestra al abrir</b>.</td></tr>
+<tr><td><b>S.A.T. (agua)</b></td><td>Pérdidas de agua, tapas de registro, sumideros.</td><td>Por el <b>tipo</b> del reclamo: son infraestructura de la Sociedad Aguas del Tucumán, no calzada.</td></tr>
+<tr><td><b>Ingeniería</b></td><td>Calles de tierra y ripio.</td><td>El punto cae junto a una cuadra de <b>ripio o cordón cuneta</b> según la red vial real (10.392 cuadras cargadas), sin pavimento pegado — o el texto pide «pasado de máquina» o «enripiado».</td></tr>
+</table>
+<p class="porque">
+<b>¿Por qué?</b> En una calle de tierra no hay bache que bachear: es pasado de máquina. Y una pérdida
+de agua la arregla la SAT. Antes esos pedidos inflaban la deuda de Bacheo: hoy, <b>más de un tercio de
+lo «sin atención» nunca fue trabajo de la Dirección</b>, y el sistema lo separa solo. Una corrección
+hecha a mano por una persona nunca es pisada por la regla automática.
+</p>
+</div>
+
+<!-- ══ 5. EL MAPA ══ -->
+<div class="seccion">
+<h2>5 · El mapa comando</h2>
+<p>Es la pantalla principal. Tres <b>vistas</b>, cada una contesta una pregunta:</p>
+<ul>
+<li><b>HOY</b> — ¿qué hay que resolver? Problemas abiertos o en curso y pedidos pendientes.</li>
+<li><b>BRECHA</b> — ¿qué pasó con cada pedido? Cada punto pendiente con su color de semáforo. Es la medición central.</li>
+<li><b>HISTORIAL</b> — ¿qué se hizo? Todas las reparaciones y obras terminadas.</li>
+</ul>
+<h3>Los controles que importan</h3>
+<ul>
+<li><b>Chips «Resuelve»</b> (Bacheo · SAT · Ingeniería): prenden y apagan cada cola. El mapa abre solo con Bacheo — la cifra del chip es el total de esa cola.</li>
+<li><b>Detalle</b> (Todo · Esencial · Limpio): cuánta información se ve encima del mapa. <b>Esencial</b> (el punto medio, y el valor inicial) deja los puntos, dos cifras y la leyenda; <b>Limpio</b> despeja todo para mirar o capturar; <b>Todo</b> muestra cada número flotante.</li>
+<li><b>Buscador con voz:</b> se escribe o se dicta «baches sin atender en av. Belgrano» y el mapa entiende: marca, vuela y prende lo necesario.</li>
+<li><b>Capas:</b> satélite, avenidas, red vial (el ripio bien visible), sectores de licitación, zonas del programa <b>Bacheo integral</b> (con n° de obra, monto y plazo al pasar el mouse), circuitos pintados por empresa, barrios y distritos <b>pintados por deuda</b>, colectivos, densidad de demanda, Top 20 urgentes.</li>
+<li><b>Clic derecho</b> en cualquier lado: alta rápida de un pedido ahí mismo, o Street View del punto.</li>
+<li><b>Analizar zona:</b> se dibuja un círculo o un polígono («estas ocho manzanas») y devuelve pendientes, % sin atención, m² y quién pide, al instante.</li>
+<li><b>Comparar:</b> pantalla dividida con cortina — LO PEDIDO | LO HECHO, con sus números reales. <b>Historia:</b> la película mes a mes. <b>Informe IA:</b> un texto ejecutivo de lo que se está viendo. <b>Exportar:</b> PDF, GeoJSON, link exacto de la vista o WhatsApp.</li>
+<li><b>Migue:</b> el asistente. Se le pregunta en criollo («¿qué hicimos en Villa Alem?») y contesta con los números reales de la base; también marca en el mapa lo que se le pide.</li>
+</ul>
+<div class="caja no-cortar">
+<b>Los dos números de arriba (en Esencial):</b> «Demandas» = pedidos visibles con los filtros actuales;
+«Sin atención» = de esos, cuántos están en rojo. <b>La pastilla de abajo</b> recalcula sobre lo que hay
+<b>en pantalla</b> al mover el mapa: pendientes, % sin atención y m² hechos en ese encuadre.
+Si un número parece «bajo», casi siempre es porque está mirando solo la cola de Bacheo: los chips lo dicen.
+</div>
+</div>
+
+<!-- ══ 6. BRECHA ══ -->
+<div class="seccion">
+<h2>6 · Brecha: la medición central</h2>
+<p>
+Toma <b>todos los pedidos abiertos con ubicación</b> y los cruza contra el territorio (los 40 m).
+La barra muestra la composición exacta — sin atención / en cola / en obra / probablemente ya resuelto —
+y <b>cada segmento es un link al mapa con esos mismos puntos</b>: el número que se clickea es el número
+que se ve. Abajo, «¿De quién es la deuda?» separa lo que es de Bacheo de lo que es de la SAT y de
+Ingeniería, con el porcentaje que no corresponde a la Dirección.
+</p>
+</div>
+
+<!-- ══ 7. ÓRDENES ══ -->
+<div class="seccion">
+<h2>7 · Órdenes de trabajo y capacidad</h2>
+<p>
+La orden es el papel con el que la Dirección manda trabajo a un ejecutor — una contratista
+(Ingeco, UOCRA, Calleri…) o <b>la Administración misma</b> (las cuadrillas propias son un ejecutor más).
+Su vida: <b>borrador → emitida → en ejecución → completada</b>.
+</p>
+<ul>
+<li>Se arma <b>por circuito</b> (la unidad territorial de planificación, 47 en la ciudad) eligiendo incidentes pendientes; se ve de dónde viene cada reclamo.</li>
+<li>Al <b>emitirla</b> le llega a la empresa a su portal (y un aviso a quien el Director configure). La empresa no ve borradores.</li>
+<li>El capataz reporta cada bache con <b>ancho × largo × espesor + foto</b>: eso crea la intervención real, con m² y m³ calculados solos.</li>
+<li>Si encuentra un bache que no estaba, lo <b>propone</b> (con foto y punto) y no cuenta hasta que Bacheo lo valida. Si ya estaba hecho, lo marca con foto y no suma m² de la empresa.</li>
+<li>La orden se completa sola cuando no quedan ítems pendientes; si vence abierta, el control diario avisa.</li>
+</ul>
+<div class="caja no-cortar">
+<b>Proyección de capacidad</b> (la regla del Director, cargada como parámetro y editable):
+una cuadrilla hace <b>~10 baches por turno</b>, con turnos mañana y tarde; de <b>4 toneladas</b> de mezcla
+salen <b>~14 baches chicos o 4 carpetas</b>. Con eso el sistema estima cuántos días de cuadrilla cuesta
+cualquier lote de trabajo antes de emitir la orden.
+</div>
+</div>
+
+<!-- ══ 8. TRATAMIENTO ══ -->
+<div class="seccion">
+<h2>8 · Tratamiento: la limpieza automática de la demanda</h2>
+<p>
+El sistema cruza cada pedido abierto contra <b>todo lo que sabe</b> — la red vial, las reparaciones,
+los demás pedidos — y hace saltar solo lo que hay que limpiar. Cuatro señales:
+</p>
+<table>
+<tr><th style="width:24%">Señal</th><th>La regla exacta</th><th style="width:34%">Qué se hace</th></tr>
+<tr><td><b>No es bache</b></td><td>Dice «bache» pero cae donde la red vial marca ripio o cordón cuneta.</td><td>Confirmar uno a uno → se deriva a Ingeniería.</td></tr>
+<tr><td><b>Posible duplicada</b></td><td>Otro pedido anterior, del mismo tipo, a menos de <b>15 m</b>, todavía abierto.</td><td>Confirmar una a una; el original junta la prioridad de ambos.</td></tr>
+<tr><td><b>Parece ya resuelta</b></td><td>Reparación <b>posterior</b> al pedido a menos de <b>25 m</b>.</td><td>Confirmar → se <b>vincula</b> a esa obra (no se descarta: queda respondible al vecino).</td></tr>
+<tr><td><b>Para la S.A.T.</b></td><td>Agua: pérdidas, tapas, sumideros.</td><td>Se derivan <b>todos juntos, con la nota</b> (sección 9).</td></tr>
+</table>
+<p class="porque">
+<b>¿Por qué una a una y no en lote?</b> Porque descartar el pedido de un vecino es una decisión con
+nombre y apellido. El sistema deja la referencia y la distancia servidas; la confirma una persona,
+y queda registrado quién.
+</p>
+</div>
+
+<!-- ══ 9. NOTA SAT ══ -->
+<div class="seccion">
+<h2>9 · La nota a la S.A.T. y los expedientes</h2>
+<p>
+Los reclamos de agua no se «pasan» sueltos: se genera una <b>nota administrativa numerada</b>
+(NOTA-SAT-año-número) dirigida al Director de la S.A.T., con membrete y logo municipal, la
+georreferencia y la foto de cada caso. Antes de registrarla se puede <b>editar el texto</b>, elegir
+la <b>firma</b> (Dirección de Bacheo, el Secretario de Obras Públicas, o ambas) y <b>excluir</b> algún
+reclamo que no deba salir en el papel.
+</p>
+<div class="caja regla">
+<b>Trazabilidad:</b> el reclamo excluido <b>no desaparece</b> — sigue abierto y entra en la próxima nota —
+y la exclusión queda registrada en el expediente con nombre y fecha. Al registrar, la nota queda
+<b>inmutable</b>: su detalle se congela tal como se firmó, y se puede reimprimir siempre idéntica.
+Recién entonces los reclamos incluidos salen de la cola de Bacheo, con el número de nota como referencia.
+</div>
+</div>
+
+<!-- ══ 10. CIERRES ══ -->
+<div class="seccion">
+<h2>10 · Cierres: responderle al vecino</h2>
+<p>
+Cuando el problema de un reclamo ya está reparado, falta el último paso: <b>avisarle al que pidió</b>.
+La bandeja de Cierres muestra solo reclamos cuyo incidente está reparado — el botón de cerrar no existe
+para promesas — con la foto del trabajo, el tipo de intervención y filtros por fuente y tipo (el Concejo
+cierra lo suyo y saca su informe). Vale para <b>cualquier</b> pedido: los del 147 y también los cargados
+desde CIMBA. Y el sistema es <b>proactivo</b>: todos los días, si hay reclamos listos para cerrar, manda
+un aviso push a Atención Ciudadana con la cuenta y el link directo a la bandeja.
+</p>
+</div>
+
+<!-- ══ 11. FICHA ══ -->
+<div class="seccion">
+<h2>11 · Las variables de una ficha, una por una</h2>
+<table>
+<tr><th style="width:26%">Variable</th><th>Qué es y por qué el sistema la usa así</th></tr>
+<tr><td><b>Fuente</b></td><td>Quién pidió (Atención Ciudadana, Concejo, redes, secretaría, SAT, carga propia). Nunca se pierde: es lo que permite responderle a cada uno por su canal.</td></tr>
+<tr><td><b>Tipo</b></td><td>Qué es el problema (bache, hundimiento, pérdida de agua…). Alimenta el destino y la severidad del score.</td></tr>
+<tr><td><b>Estado del pedido</b></td><td><span class="mono">recibida → en validación → vinculada</span> (ya tiene su incidente) <span class="mono">→ cerrada</span> (respondida), o <span class="mono">descartada / fuera de alcance</span> (derivada, con motivo y rastro).</td></tr>
+<tr><td><b>Confianza de geocodificación</b></td><td>Qué tan seguro es el punto en el mapa (0–100%). <b>Debajo de 75% el sistema jamás vincula solo</b>: una dirección ambigua («Cris Álvarez», esquinas dudosas) puede caer a cuadras del lugar real — primero una persona corrige el pin.</td></tr>
+<tr><td><b>Score de prioridad (0–100)</b></td><td>El orden de la cola, explicable factor por factor: <b>presión de demanda</b> (hasta 35 — cuánta gente lo pide, con saturación: 10 pedidos no valen 10 veces 1), <b>antigüedad</b> (hasta 20 — crece hasta los 60 días), <b>severidad del tipo</b> (hasta 25 — un hundimiento pesa más que una fisura), <b>reincidencia</b> (hasta 12 — si volvió a romperse, es estructural) y <b>corredor principal</b> (8 — avenidas y troncales, por donde pasa la ciudad).</td></tr>
+<tr><td><b>m² / m³</b></td><td>Ancho × largo (× espesor) de lo reparado, calculados de las medidas que carga el capataz. El m³ conecta con las toneladas de mezcla.</td></tr>
+<tr><td><b>Destino vs. tipo de intervención</b></td><td>Dos preguntas distintas: el <b>destino</b> se clasifica <b>al pedir</b> (¿quién debe resolverlo?); el <b>tipo de intervención</b> se declara <b>al resolver</b> (¿cómo se resolvió?: bacheo, paño de hormigón, carpeta o enripiado).</td></tr>
+</table>
+</div>
+
+<!-- ══ 12. AUTOMATIZACIONES ══ -->
+<div class="seccion">
+<h2>12 · Lo que el sistema hace solo</h2>
+<ul>
+<li><b>Sincroniza</b> los reclamos de Atención Ciudadana, varias veces por día.</li>
+<li><b>Clasifica el destino</b> de cada pedido al entrar (Bacheo / SAT / Ingeniería), usando el tipo, el texto y la red vial real.</li>
+<li><b>Consolida</b> los casos seguros: pedidos del mismo tipo, en la misma zona (≤ 25 m), con geocodificación confiable (≥ 75%) y corroborados, se agrupan solos en un incidente. Lo dudoso queda para revisión humana. Todo auditado y reversible.</li>
+<li><b>Hace saltar las señales</b> de tratamiento (duplicadas, ya resueltas, no-es-bache, para la SAT).</li>
+<li><b>Calcula el semáforo</b> de cada pedido contra el territorio, en cada carga del mapa.</li>
+<li><b>Completa la orden</b> cuando no quedan ítems pendientes, y <b>avisa</b> si venció abierta.</li>
+<li><b>Empuja los cierres</b>: aviso diario cuando hay reclamos reparados sin responder.</li>
+<li><b>Recalcula el score</b> de prioridad cada vez que algo cambia alrededor de un incidente.</li>
+</ul>
+<p class="porque">
+El criterio general: <b>el sistema automatiza lo mecánico y propone lo delicado</b>. Ninguna decisión
+que afecte el pedido de un vecino se toma sola — pero ninguna espera a que alguien se acuerde de mirarla.
+</p>
+
+<h3>Quién ve qué</h3>
+<ul>
+<li><b>Personal municipal</b> (admin, planificación, atención ciudadana, supervisión…): todo el sistema, cada uno con sus acciones.</li>
+<li><b>Empresas contratistas:</b> SOLO su portal, con sus órdenes. No ven el mapa ni los datos de otras empresas.</li>
+<li><b>Cuadrillas propias:</b> el mismo portal de órdenes, como ejecutor «Administración».</li>
+<li><b>Datos de contacto del vecino:</b> solo los ve Atención Ciudadana; jamás aparecen en el mapa, en exportaciones ni en notas a otros organismos.</li>
+</ul>
+</div>
+
+</body>
+</html>

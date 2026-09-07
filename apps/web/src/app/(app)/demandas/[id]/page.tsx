@@ -90,6 +90,45 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
             </Panel>
           )}
 
+          {/* La traza administrativa: qué pasó con este pedido y dónde quedó
+              el papel. Es el "ir al archivo" que faltaba desde la card. */}
+          {(() => {
+            const m = demanda.metadata as Record<string, unknown>;
+            const derivada = m.derivada as { a?: string; por?: string; en?: string } | undefined;
+            const cierre = m.cierre as { por?: string; en?: string; respuesta?: string } | undefined;
+            const expediente = typeof m.expediente === "string" ? m.expediente : null;
+            if (!derivada && !cierre && !expediente) return null;
+            return (
+              <Panel className="p-5">
+                <p className="mb-2 text-[10px] font-bold tracking-wider text-texto-3 uppercase">Qué pasó con este pedido</p>
+                <div className="space-y-2 text-xs text-texto-2">
+                  {derivada && (
+                    <p>
+                      Derivado a <b className="text-texto">{derivada.a === "sat" ? "la S.A.T." : derivada.a === "ingenieria" ? "Ingeniería" : String(derivada.a)}</b>
+                      {derivada.por && <> por {derivada.por}</>}
+                      {derivada.en && <> el {fechaCorta(derivada.en)}</>}.
+                    </p>
+                  )}
+                  {expediente && (
+                    <p>
+                      Quedó registrado en la nota{" "}
+                      <Link href="/expedientes" className="font-semibold text-celeste hover:underline">
+                        {expediente} →
+                      </Link>
+                    </p>
+                  )}
+                  {cierre && (
+                    <p>
+                      Cerrado{cierre.por && <> por {cierre.por}</>}
+                      {cierre.en && <> el {fechaCorta(cierre.en)}</>}
+                      {cierre.respuesta && <>: «{cierre.respuesta}»</>}
+                    </p>
+                  )}
+                </div>
+              </Panel>
+            );
+          })()}
+
           {Object.keys(demanda.metadata).length > 0 && (
             <Panel className="p-5">
               <p className="mb-2 text-[10px] font-bold tracking-wider text-texto-3 uppercase">Metadatos de origen</p>

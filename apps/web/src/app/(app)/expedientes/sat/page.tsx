@@ -3,8 +3,8 @@ import { leerSesion } from "@/lib/auth";
 import { DESTINATARIO_SAT, renglonesParaNotaSat } from "@/lib/expedientes";
 import { numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
-import { CSS_IMPRESION_NOTA, NotaSat } from "../nota-sat";
-import { GenerarNota } from "./generar-nota";
+import { CSS_IMPRESION_NOTA } from "../nota-sat";
+import { EditorNota } from "./editor-nota";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -47,19 +47,7 @@ export default async function PaginaPrevisualizacionSat() {
             </span>
           </div>
 
-          <NotaSat
-            numero={null}
-            destinatario={DESTINATARIO_SAT}
-            renglones={renglones}
-          />
-
-          {puedeGenerar ? (
-            <GenerarNota cantidad={renglones.length} />
-          ) : (
-            <p className="mt-4 text-center text-xs text-texto-3">
-              Registrar la nota es tarea de planificación o atención ciudadana; tu rol solo puede verla.
-            </p>
-          )}
+          <EditorNota renglones={renglones} destinatario={DESTINATARIO_SAT} puedeGenerar={puedeGenerar} />
         </>
       )}
     </div>
