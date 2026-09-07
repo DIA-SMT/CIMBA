@@ -183,9 +183,16 @@ export function FilaCierre({
                 {pendiente ? "Cerrando…" : "Confirmar cierre"}
               </button>
             </div>
-            <p className="mt-1.5 text-[11px] text-texto-3">
-              La respuesta es opcional y queda en el historial del reclamo, para responderle al vecino por el
-              canal por donde pidió.
+            <p className="mt-1.5 text-[11px] leading-relaxed text-texto-3">
+              <b className="text-texto-2">¿A dónde va esto?</b> El reclamo pasa a <b>cerrado</b> y la
+              respuesta queda guardada en su ficha (
+              <Link href={`/demandas/${demanda.demandaId}`} className="font-semibold text-celeste hover:underline">
+                verla acá
+              </Link>
+              ), con tu nombre y la fecha — también aparece en Actividad. Por ahora <b>no le llega sola al
+              vecino</b>: cuando Innovación habilite el cierre de tickets del 147, este mismo botón va a
+              cerrar el ticket y mandarle esta respuesta con las fotos. Mientras tanto, es el texto listo
+              para responder por el canal que corresponda.
             </p>
             {error && <p className="mt-2 text-sm text-peligro">{error}</p>}
           </td>

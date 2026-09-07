@@ -34,6 +34,23 @@ function perfilSuspendido(perfil: { activo: boolean }): NextResponse | null {
 // (la contraparte que GENERA claves vive en lib/acciones-ordenes.ts).
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
+/**
+ * El ingreso como evento auditado (convención de la migración 0011):
+ * entidad 'sesion', accion 'ingreso', entidad_id = id_persona (la columna es
+ * bigint). De acá sale el "quién usa la app y quién no" de /actividad.
+ * Best-effort: si la auditoría falla, el login entra igual.
+ */
+async function auditarIngreso(perfilId: string, idPersona: number, rol: string, via: string) {
+  try {
+    await getDb().execute(sql`
+      insert into auditoria (entidad, entidad_id, accion, actor, diff)
+      values ('sesion', ${idPersona}, 'ingreso', ${perfilId}::uuid, ${JSON.stringify({ rol, via })}::jsonb)
+    `);
+  } catch {
+    // sin registro no se cae el ingreso
+  }
+}
+
 export async function POST(req: NextRequest) {
   const cuerpo = cuerpoSchema.safeParse(await req.json().catch(() => null));
   if (!cuerpo.success) {
@@ -64,6 +81,7 @@ export async function POST(req: NextRequest) {
       nombre: perfil.nombre,
     });
     await escribirCookieSesion(jwt);
+    await auditarIngreso(perfil.id, perfil.id_persona, perfil.rol, "admin");
     return NextResponse.json({ ok: true, destino: "/mapa" });
   }
 
@@ -89,6 +107,7 @@ export async function POST(req: NextRequest) {
       nombre: perfil.nombre,
     });
     await escribirCookieSesion(jwt);
+    await auditarIngreso(perfil.id, perfil.id_persona, perfil.rol, "bacheo");
     return NextResponse.json({ ok: true, destino: perfil.rol === "planificacion" ? "/ordenes" : "/mapa" });
   }
 
@@ -128,6 +147,7 @@ export async function POST(req: NextRequest) {
     });
     await escribirCookieSesion(jwt);
     await getDb().execute(sql`update perfiles set ultimo_ingreso = now() where id = ${local.id}::uuid`);
+    await auditarIngreso(local.id, Number(local.id_persona), local.rol, "usuario");
     // Clave temporal: se lo lleva derecho a cambiarla antes que a trabajar.
     const destino = local.clave_temporal
       ? "/clave"
@@ -168,6 +188,7 @@ export async function POST(req: NextRequest) {
       id_empresa: Number(empresa.id),
     });
     await escribirCookieSesion(jwt);
+    await auditarIngreso(perfil.id, perfil.id_persona, "empresa", `empresa:${empresa.slug}`);
     return NextResponse.json({ ok: true, destino: "/empresa" });
   }
 

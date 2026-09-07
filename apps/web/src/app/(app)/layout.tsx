@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
+  Activity as ActivityIcon,
   CheckCheck,
   ClipboardList,
   FileSignature,
@@ -20,7 +21,15 @@ import { BotonTema } from "@/components/boton-tema";
 import { MigueChat } from "@/components/migue-chat";
 import { BotonPush } from "@/components/boton-push";
 
-const NAV = [
+interface ItemNav {
+  href: string;
+  etiqueta: string;
+  icono: typeof MapIcon;
+  /** Sin roles: lo ve todo el personal. Con roles: solo esos. */
+  roles?: string[];
+}
+
+const NAV: ItemNav[] = [
   { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
   { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
   { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
@@ -32,6 +41,8 @@ const NAV = [
   { href: "/cargar", etiqueta: "Cargar", icono: Upload },
   { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
   { href: "/campo", etiqueta: "Campo", icono: Smartphone },
+  // Trazabilidad de uso: solo la conducción (admin y el Director).
+  { href: "/actividad", etiqueta: "Actividad", icono: ActivityIcon, roles: ["admin", "planificacion"] },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -68,7 +79,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       <div className="flex min-h-0 flex-1">
         <nav className="z-20 flex w-16 shrink-0 flex-col items-center gap-1 border-r border-borde bg-panel py-3 md:w-44 md:items-stretch md:px-3">
-          {NAV.map(({ href, etiqueta, icono: Icono }) => (
+          {NAV.filter((i) => !i.roles || i.roles.includes(sesion.rol_cimba)).map(({ href, etiqueta, icono: Icono }) => (
             <Link
               key={href}
               href={href}
