@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { EstadoIncidente } from "@cimba/domain";
 import { priorizarIncidente, programarIntervencion, verificarIncidente } from "@/lib/acciones";
+import { GLOSARIO } from "@/lib/glosario";
 
 export function AccionesIncidente({
   incidenteId,
@@ -39,6 +40,7 @@ export function AccionesIncidente({
       <button
         disabled={pendiente}
         onClick={() => ejecutar(() => priorizarIncidente({ incidenteId }))}
+        title={GLOSARIO.priorizar.texto}
         className="rounded-md border border-amarillo/50 bg-amarillo/10 px-2.5 py-1 text-[11px] font-semibold text-amarillo transition hover:bg-amarillo/20 disabled:opacity-50"
       >
         Priorizar
@@ -68,6 +70,7 @@ export function AccionesIncidente({
       <button
         disabled={pendiente}
         onClick={() => setEligiendo(true)}
+        title={GLOSARIO.programar.texto}
         className="rounded-md border border-celeste/50 bg-celeste/10 px-2.5 py-1 text-[11px] font-semibold text-celeste transition hover:bg-celeste/20 disabled:opacity-50"
       >
         Programar
@@ -80,6 +83,7 @@ export function AccionesIncidente({
       <button
         disabled={pendiente}
         onClick={() => ejecutar(() => verificarIncidente({ incidenteId }))}
+        title={GLOSARIO.verificar.texto}
         className="rounded-md border border-resuelto/50 bg-resuelto/10 px-2.5 py-1 text-[11px] font-semibold text-resuelto transition hover:bg-resuelto/20 disabled:opacity-50"
       >
         Verificar ✓

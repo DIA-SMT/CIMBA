@@ -59,6 +59,7 @@ import {
   pasoDeEstado,
   semaforoHex,
 } from "@/lib/formato";
+import { GLOSARIO } from "@/lib/glosario";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 import { vincularDemanda } from "@/lib/acciones";
@@ -3715,8 +3716,11 @@ function MapaInterno({
             <HelpCircle size={14} className={guiaConocida ? "" : "animate-pulse"} />
           </button>
 
-          {/* Menú de acciones (solo mobile): todo con nombre y explicación */}
-          <div className="relative sm:hidden">
+          {/* Menú de acciones: todo con nombre y explicación. Vive en TODOS
+              los anchos — en desktop convive con los botones sueltos, porque
+              el menú es la versión "con explicación" de los mismos ("antes
+              aparecía Acciones y ahora no"). */}
+          <div className="relative">
             <button
               onClick={() => {
                 setMenuAcciones((v) => !v);
@@ -3973,6 +3977,12 @@ function MapaInterno({
             </button>
           </div>
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-[13px]">
+            {/* Qué es esto, en una línea: "tampoco sé bien qué hace cotejar". */}
+            <p className="rounded-lg bg-panel-2/70 px-2.5 py-1.5 text-[11px] leading-snug text-texto-2">
+              Los hilos amarillos son los trabajos a menos de 60 m de este pedido. Si uno corresponde,{" "}
+              <b>vinculalo</b>: el pedido deja de contar como deuda y queda listo para responderle al vecino.
+              Si ninguno corresponde, es <b>brecha real</b>: falta obra. Nada se borra.
+            </p>
             <div>
               <p className="font-semibold">{String(cotejo.demanda.direccion ?? `Pedido #${String(cotejo.demanda.id)}`)}</p>
               <p className="text-[11px] text-texto-3">
@@ -4456,7 +4466,7 @@ function MapaInterno({
                 <button
                   key={clave}
                   onClick={() => setFiltroBrecha(activo ? null : clave)}
-                  title={activo ? "Quitar filtro" : "Mostrar solo esta categoría"}
+                  title={`${GLOSARIO[clave].texto}${activo ? " — Tocá para quitar el filtro." : " — Tocá para ver solo esta categoría."}`}
                   className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition ${
                     activo ? "border-celeste bg-celeste/15" : "border-transparent hover:border-borde-2"
                   }`}
@@ -5307,7 +5317,7 @@ function Seccion({
   return (
     <button
       onClick={alConmutar}
-      className="mt-2 mb-1.5 flex w-full items-center gap-1.5 text-[10px] font-semibold tracking-wider text-texto-3 uppercase transition first:mt-0 hover:text-texto"
+      className="mt-4 mb-2 flex w-full items-center gap-1.5 border-t border-borde/60 pt-3 text-[10px] font-semibold tracking-wider text-texto-3 uppercase transition first:mt-0 first:border-0 first:pt-0 hover:text-texto"
     >
       <ChevronDown size={12} className={`transition-transform ${abierta ? "" : "-rotate-90"}`} />
       <span className="flex-1 text-left">{titulo}</span>

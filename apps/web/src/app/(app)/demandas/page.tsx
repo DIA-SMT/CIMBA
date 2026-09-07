@@ -3,6 +3,7 @@ import { FUENTES_DEMANDA, ESTADOS_DEMANDA, type FuenteDemanda } from "@cimba/dom
 import { leerSesion } from "@/lib/auth";
 import { listarDemandas, resumenDemandas } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
+import { GLOSARIO, type ClaveGlosario } from "@/lib/glosario";
 import { CadenaFlujo } from "@/components/cadena-flujo";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
@@ -65,16 +66,19 @@ export default async function PaginaDemandas({
         >
           Todas <span className="num">{numero(resumen.total)}</span>
         </Link>
+        {/* Los textos salen del GLOSARIO (una sola fuente de verdad): el
+            mismo que explican las ⓘ del resto del sistema. */}
         {(
           [
-            ["recibida", "#3987e5", "Llegaron y nadie las revisó todavía: acá está el trabajo pendiente"],
-            ["en_validacion", "var(--color-amarillo)", "Alguien las está revisando o esperan un dato"],
-            ["vinculada", "#199e70", "Ya cotejadas: apuntan a un problema real del territorio"],
-            ["cerrada", "#199e70", "Circuito completo: el problema se reparó y se le respondió al vecino"],
-            ["descartada", "#6b7280", "Revisadas y descartadas con motivo"],
-            ["fuera_de_alcance", "#6b7280", "No corresponden a bacheo (otra área)"],
+            ["recibida", "var(--color-sin-atencion)"],
+            ["en_validacion", "var(--color-en-cola)"],
+            ["vinculada", "var(--color-en-obra)"],
+            ["cerrada", "var(--color-hecho)"],
+            ["descartada", "var(--color-inactivo)"],
+            ["fuera_de_alcance", "var(--color-inactivo)"],
           ] as const
-        ).map(([e, color, ayuda]) => {
+        ).map(([e, color]) => {
+          const ayuda = GLOSARIO[e as ClaveGlosario].texto;
           const n = resumen.porEstado[e] ?? 0;
           if (n === 0) return null;
           return (

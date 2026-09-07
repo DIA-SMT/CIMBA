@@ -4,6 +4,7 @@ import { ESTADOS_INCIDENTE, TIPOS_PROBLEMA, type EstadoIncidente } from "@cimba/
 import { leerSesion } from "@/lib/auth";
 import { listarCuadrillas, listarIncidentes, resumenIncidentes } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, SEMAFORO, fechaCorta, numero, pasoDeEstado } from "@/lib/formato";
+import { GLOSARIO, type ClaveGlosario } from "@/lib/glosario";
 import { BadgeEstadoIncidente, BadgeTipo, Panel, TituloPagina } from "@/components/ui";
 import { AccionesIncidente } from "./acciones-incidente";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
@@ -45,7 +46,7 @@ export default async function PaginaIncidentes({
     <div className="mx-auto max-w-6xl p-6">
       <TituloPagina
         titulo="Cola de incidentes: qué se repara primero"
-        sub="Cada fila es un problema del territorio. El score de prioridad ordena la fila: más alto, antes le toca."
+        sub="Cada fila es un problema del territorio y recorre siempre el mismo camino: detectado → priorizado (entra en la cola) → programado (tiene cuadrilla u orden) → en ejecución → reparado → verificado (supervisión constató el trabajo). El score ordena la cola: más alto, antes le toca. Pasá el cursor por cualquier estado o botón y te explica qué es."
       />
 
       <CadenaFlujo actual={2} />
@@ -70,7 +71,7 @@ export default async function PaginaIncidentes({
             <Link
               key={e}
               href={`/incidentes?estado=${e}`}
-              title={`Ver solo los ${ETIQUETA_ESTADO_INCIDENTE[e].toLowerCase()}`}
+              title={`${e in GLOSARIO ? GLOSARIO[e as ClaveGlosario].texto + " — " : ""}Tocá para ver solo los ${ETIQUETA_ESTADO_INCIDENTE[e].toLowerCase()}.`}
               className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${activo ? "border-borde-2 bg-panel-2 text-texto" : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"}`}
             >
               <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
