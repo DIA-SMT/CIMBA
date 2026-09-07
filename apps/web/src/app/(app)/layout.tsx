@@ -29,20 +29,46 @@ interface ItemNav {
   roles?: string[];
 }
 
-const NAV: ItemNav[] = [
-  { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
-  { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
-  { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
-  { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
-  { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
-  { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
-  { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
-  { href: "/calidad", etiqueta: "Tratamiento", icono: ShieldCheck },
-  { href: "/cargar", etiqueta: "Cargar", icono: Upload },
-  { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
-  { href: "/campo", etiqueta: "Campo", icono: Smartphone },
-  // Trazabilidad de uso: solo la conducción (admin y el Director).
-  { href: "/actividad", etiqueta: "Actividad", icono: ActivityIcon, roles: ["admin", "planificacion"] },
+/**
+ * El menú agrupado por TRABAJO, no por tabla — "que no queden tantos botones,
+ * ver a dónde se agrupa cada cosa" (el Director, 7/9). Cuatro grupos con
+ * rótulo: mirar la ciudad, mandar el trabajo, responderle al vecino y
+ * administrar el sistema. Las rutas no cambian: solo el orden y el aire.
+ */
+const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
+  {
+    etiqueta: null,
+    items: [
+      { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
+      { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
+    ],
+  },
+  {
+    etiqueta: "El trabajo",
+    items: [
+      { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
+      { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
+      { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
+      { href: "/campo", etiqueta: "Campo", icono: Smartphone },
+    ],
+  },
+  {
+    etiqueta: "El vecino",
+    items: [
+      { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
+      { href: "/calidad", etiqueta: "Tratamiento", icono: ShieldCheck },
+      { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
+      { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
+    ],
+  },
+  {
+    etiqueta: "Sistema",
+    items: [
+      { href: "/cargar", etiqueta: "Cargar", icono: Upload },
+      // Trazabilidad de uso: solo la conducción (admin y el Director).
+      { href: "/actividad", etiqueta: "Actividad", icono: ActivityIcon, roles: ["admin", "planificacion"] },
+    ],
+  },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -79,20 +105,39 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       <div className="flex min-h-0 flex-1">
         <nav className="z-20 flex w-16 shrink-0 flex-col items-center gap-1 border-r border-borde bg-panel py-3 md:w-44 md:items-stretch md:px-3">
-          {NAV.filter((i) => !i.roles || i.roles.includes(sesion.rol_cimba)).map(({ href, etiqueta, icono: Icono }) => (
-            <Link
-              key={href}
-              href={href}
-              // En pantallas angostas el menú es solo ícono: sin el title había
-              // que entrar uno por uno para saber qué era cada cosa.
-              title={etiqueta}
-              aria-label={etiqueta}
-              className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-texto-2 transition hover:bg-panel-2 hover:text-texto"
-            >
-              <Icono size={17} className="shrink-0 transition group-hover:text-celeste" />
-              <span className="hidden text-[13px] font-medium md:inline">{etiqueta}</span>
-            </Link>
-          ))}
+          {NAV_GRUPOS.map((grupo, gi) => {
+            const items = grupo.items.filter((i) => !i.roles || i.roles.includes(sesion.rol_cimba));
+            if (items.length === 0) return null;
+            return (
+              <div key={gi} className="w-full">
+                {grupo.etiqueta ? (
+                  <>
+                    {/* Con nombres: el rótulo del grupo. Solo íconos: una línea. */}
+                    <p className="mt-3 mb-1 hidden px-3 text-[9px] font-bold tracking-[0.14em] text-texto-3 uppercase md:block">
+                      {grupo.etiqueta}
+                    </p>
+                    <div className="mx-auto my-2 h-px w-6 bg-borde md:hidden" />
+                  </>
+                ) : null}
+                <div className="flex flex-col items-center gap-1 md:items-stretch">
+                  {items.map(({ href, etiqueta, icono: Icono }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      // En pantallas angostas el menú es solo ícono: sin el title
+                      // había que entrar uno por uno para saber qué era cada cosa.
+                      title={etiqueta}
+                      aria-label={etiqueta}
+                      className="group flex items-center gap-3 rounded-lg px-3 py-2 text-texto-2 transition hover:bg-panel-2 hover:text-texto"
+                    >
+                      <Icono size={17} className="shrink-0 transition group-hover:text-celeste" />
+                      <span className="hidden text-[13px] font-medium md:inline">{etiqueta}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
           <div className="mt-auto hidden px-3 pb-1 md:block">
             <p className="text-[9px] leading-relaxed text-texto-3">
               CIMBA v0.1

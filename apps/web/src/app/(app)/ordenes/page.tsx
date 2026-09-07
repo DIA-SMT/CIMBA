@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bell } from "lucide-react";
+import { Bell, ChevronDown } from "lucide-react";
 import { ESTADOS_ORDEN, type EstadoOrden } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, listarOrdenes, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
@@ -60,28 +60,36 @@ export default async function PaginaOrdenes({
         sub="El circuito como unidad de planificación: qué se releva, quién lo trabaja y con qué prioridad."
         extra={
           <div className="flex items-center gap-3">
-            <Link
-              href="/ordenes/productividad"
-              className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
-            >
-              Productividad
-            </Link>
-            <Link
-              href="/ordenes/avisos"
-              className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
-            >
-              <Bell size={14} /> Avisos
-            </Link>
-            <Link
-              href="/ordenes/empresas"
-              className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
-            >
-              Empresas y accesos
-            </Link>
+            {/* Un solo desplegable en vez de una hilera de botones: la acción
+                del día (+ Nueva orden) queda sola y primaria; el resto es
+                gestión que se usa cada tanto. <details> nativo: cero JS. */}
+            <details className="relative">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition select-none hover:border-celeste/50 hover:text-celeste [&::-webkit-details-marker]:hidden">
+                Gestión <ChevronDown size={14} />
+              </summary>
+              <div className="panel-vidrio absolute right-0 z-20 mt-1.5 w-60 rounded-xl p-1.5 text-sm">
+                <Link href="/ordenes/productividad" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Productividad
+                  <span className="block text-[11px] font-normal text-texto-3">Baches por día y por mes, por ejecutor</span>
+                </Link>
+                <Link href="/ordenes/simulador" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Simulador de escenarios
+                  <span className="block text-[11px] font-normal text-texto-3">¿En cuántos días baja la deuda con N cuadrillas?</span>
+                </Link>
+                <Link href="/ordenes/avisos" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Avisos
+                  <span className="block text-[11px] font-normal text-texto-3">Quién se entera de qué, por push o email</span>
+                </Link>
+                <Link href="/ordenes/empresas" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Empresas y accesos
+                  <span className="block text-[11px] font-normal text-texto-3">Cuadrillas, turnos, claves y vista espejo</span>
+                </Link>
+              </div>
+            </details>
             {puedePlanificar && (
               <Link
                 href="/ordenes/nueva"
-                className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110"
+                className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold whitespace-nowrap text-white transition hover:brightness-110"
               >
                 + Nueva orden
               </Link>

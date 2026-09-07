@@ -1026,6 +1026,41 @@ const capaDemandasBrecha = (p: Paleta): LayerProps => ({
  * y el radio son las dos únicas variables de forma disponibles — alcanzan para
  * que la marca se lea en escala de grises.
  */
+/** El emoji de cada cola: los glifos de fuente del basemap no traen emoji,
+ *  así que viajan como IMÁGENES ("emoji-sat", etc.) que registra el efecto de
+ *  styleimagemissing — sobreviven al cambio de estilo (satélite ↔ callejero).
+ *  Símbolos con allow-overlap en falso: MapLibre muestra los que entran y va
+ *  sumando al acercar, así 977 gotas no se vuelven sopa en zoom ciudad. */
+const capaDemandasDestinoEmoji: LayerProps = {
+  id: "demandas-destino-emoji",
+  type: "symbol",
+  source: "demandas",
+  minzoom: 12,
+  filter: ["match", ["get", "destino"], ["sat", "ingenieria"], true, false],
+  layout: {
+    "icon-image": ["match", ["get", "destino"], "sat", "emoji-sat", "emoji-ingenieria"],
+    "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.32, 15, 0.45, 18, 0.62],
+    "icon-anchor": "bottom",
+    "icon-offset": [0, -4],
+    "icon-allow-overlap": false,
+  },
+};
+/** El bache, recién en zoom de cuadra: de lejos su identidad es el semáforo. */
+const capaDemandasBacheoEmoji: LayerProps = {
+  id: "demandas-bacheo-emoji",
+  type: "symbol",
+  source: "demandas",
+  minzoom: 16,
+  filter: ["==", ["get", "destino"], "bacheo"],
+  layout: {
+    "icon-image": "emoji-bacheo",
+    "icon-size": ["interpolate", ["linear"], ["zoom"], 16, 0.4, 19, 0.6],
+    "icon-anchor": "bottom",
+    "icon-offset": [0, -5],
+    "icon-allow-overlap": false,
+  },
+};
+
 const capaDemandasDestino = (p: Paleta): LayerProps => ({
   id: "demandas-destino-anillo",
   type: "circle",
@@ -1274,6 +1309,69 @@ function MapaInterno({
       // sin persistencia: pulsará de nuevo la próxima, no es grave
     }
   };
+  /**
+   * Emoji de las colas como imágenes del mapa (los glifos PBF no traen emoji).
+   * Mismo patrón que el realce de calles: reintento corto hasta que el mapa
+   * exista, y re-registro en cada styledata (cambiar a satélite crea un estilo
+   * nuevo sin las imágenes del anterior). El onLoad de react-map-gl no sirve
+   * acá: no llegaba a disparar y las capas quedaban sin ícono.
+   */
+  useEffect(() => {
+    let cancelado = false;
+    const EMOJIS: Record<string, string> = {
+      "emoji-bacheo": "🛠️",
+      "emoji-sat": "💧",
+      "emoji-ingenieria": "🚜",
+    };
+    const agregar = (): boolean => {
+      const mapa = mapRef.current?.getMap();
+      if (!mapa) return false;
+      for (const [id, emoji] of Object.entries(EMOJIS)) {
+        if (mapa.hasImage(id)) continue;
+        const lado = 64;
+        const canvas = document.createElement("canvas");
+        canvas.width = lado;
+        canvas.height = lado;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+        // Halo blanco suave para que se lea sobre satélite y sobre callejero.
+        ctx.font = `${lado - 14}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "rgba(255,255,255,0.9)";
+        ctx.shadowBlur = 6;
+        ctx.fillText(emoji, lado / 2, lado / 2 + 3);
+        try {
+          mapa.addImage(id, ctx.getImageData(0, 0, lado, lado), { pixelRatio: 2 });
+        } catch {
+          // ya estaba (carrera con otro styledata): no pasa nada
+        }
+      }
+      return true;
+    };
+    const enganchar = (): boolean => {
+      const mapa = mapRef.current?.getMap();
+      if (!mapa) return false;
+      agregar();
+      mapa.on("styledata", agregar);
+      return true;
+    };
+    if (!enganchar()) {
+      const id = setInterval(() => {
+        if (cancelado || enganchar()) clearInterval(id);
+      }, 300);
+      return () => {
+        cancelado = true;
+        clearInterval(id);
+        mapRef.current?.getMap()?.off("styledata", agregar);
+      };
+    }
+    return () => {
+      cancelado = true;
+      mapRef.current?.getMap()?.off("styledata", agregar);
+    };
+  }, []);
+
   // Menú de acciones en mobile: una sola lista con nombre y explicación,
   // en vez de una hilera de íconos crípticos que se cortaban.
   const [menuAcciones, setMenuAcciones] = useState(false);
@@ -3213,9 +3311,17 @@ function MapaInterno({
             )}
             {/* El anillo de destino se monta encima del punto y solo si hay
                 alguna cola ajena prendida: con solo bacheo no dibuja nada. */}
+            {/* Sin fragmento: <Source> clona a sus hijos para inyectarles el
+                source id, y un Fragment no acepta props. */}
             {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
               <Layer {...capas.demandasDestino} />
             )}
+            {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
+              <Layer {...capaDemandasDestinoEmoji} />
+            )}
+            {/* El bache con su emoji recién en zoom de cuadra: de lejos su
+                identidad es el punto del semáforo. */}
+            {verDemandas && <Layer {...capaDemandasBacheoEmoji} />}
           </Source>
         )}
 
@@ -3520,7 +3626,7 @@ function MapaInterno({
                     }`}
                     style={activo && marca ? { borderColor: marca, color: marca } : undefined}
                   >
-                    {d === "bacheo" ? <Construction size={12} /> : d === "sat" ? <Droplets size={12} /> : <Ruler size={12} />}
+                    <span aria-hidden>{d === "bacheo" ? "🛠️" : d === "sat" ? "💧" : "🚜"}</span>
                     {ETIQUETA_DESTINO[d]}
                     <span className="num opacity-70">{numero(cuentasDestino[d])}</span>
                   </button>
@@ -5238,9 +5344,9 @@ function LeyendaSemaforo({
   /** Las dos colas ajenas, con el MISMO grosor de anillo que usa el mapa: la
    *  SAT fino, Ingeniería grueso (ver capaDemandasDestino). */
   const marcas: Array<[string, string, string]> = [
-    ...(destinos.sat === true ? ([[colorSat, "SAT (agua)", "border-2"]] as Array<[string, string, string]>) : []),
+    ...(destinos.sat === true ? ([[colorSat, "💧 SAT (agua)", "border-2"]] as Array<[string, string, string]>) : []),
     ...(destinos.ingenieria === true
-      ? ([[colorIngenieria, "Ingeniería (ripio)", "border-[3px]"]] as Array<[string, string, string]>)
+      ? ([[colorIngenieria, "🚜 Ingeniería (ripio)", "border-[3px]"]] as Array<[string, string, string]>)
       : []),
   ];
 
