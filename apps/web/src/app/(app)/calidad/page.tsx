@@ -105,8 +105,8 @@ export default async function PaginaCalidad() {
         <TarjetaProblema
           n={c.geocodBaja}
           titulo="Geocodificación imprecisa"
-          descripcion="La dirección no se pudo ubicar con confianza (ej: 'Cris Alvarez' abreviado, esquinas ambiguas). No se auto-vinculan jamás: hay que corregir el punto."
-          href="/demandas?calidad=geocod_baja"
+          descripcion="La dirección no se pudo ubicar con confianza: el sistema no los trabaja solos. La IA propone correcciones por tandas de 20 y vos confirmás — lo que no clava, va a mano."
+          href="/calidad/pines"
         />
         <TarjetaProblema
           n={c.sinUbicacion}
