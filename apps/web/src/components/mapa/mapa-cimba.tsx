@@ -1682,6 +1682,10 @@ function MapaInterno({
   const [colectivosGeo, setColectivosGeo] = useState<FCLinea | null>(null);
   const [verBacheoIntegral, setVerBacheoIntegral] = useState(false);
   const [bacheoIntegralGeo, setBacheoIntegralGeo] = useState<FCPoligono | null>(null);
+  // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
+  // recién cuando se prende — son ~600 tramos, no una alfombra.
+  const [verRiesgo, setVerRiesgo] = useState(false);
+  const [riesgoGeo, setRiesgoGeo] = useState<FCLinea | null>(null);
   // Detalle del sector de licitación clickeado (hormigón o cuadrante)
   const [sectorSel, setSectorSel] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
@@ -1700,6 +1704,10 @@ function MapaInterno({
     if (!verBacheoIntegral || bacheoIntegralGeo) return;
     fetch("/data/bacheo-integral.json").then((r) => r.json()).then(setBacheoIntegralGeo).catch(() => {});
   }, [verBacheoIntegral, bacheoIntegralGeo]);
+  useEffect(() => {
+    if (!verRiesgo || riesgoGeo) return;
+    fetch("/api/geodata-riesgo").then((r) => r.json()).then(setRiesgoGeo).catch(() => {});
+  }, [verRiesgo, riesgoGeo]);
   useEffect(() => {
     if (!verSectores || sectoresGeo) return;
     fetch("/data/sectores-licitacion.json")
@@ -2892,7 +2900,11 @@ function MapaInterno({
     // un clic sobre ellos no debe abrir ni cerrar nada — se busca el siguiente
     // feature útil.
     const feature = e.features?.find(
-      (f) => f.layer.id !== "colectivos-linea" && f.layer.id !== "barrios-relleno" && f.layer.id !== "bacheo-integral-relleno",
+      (f) =>
+        f.layer.id !== "colectivos-linea" &&
+        f.layer.id !== "barrios-relleno" &&
+        f.layer.id !== "bacheo-integral-relleno" &&
+        f.layer.id !== "riesgo-linea",
     );
     if (!feature) {
       setSeleccion(null);
@@ -3013,6 +3025,7 @@ function MapaInterno({
           ...(verSectores && sectoresGeo ? ["sectores-hormigon-relleno", "sectores-cuadrante-relleno"] : []),
           ...(verColectivos && colectivosGeo ? ["colectivos-linea"] : []),
           ...(verBacheoIntegral && bacheoIntegralGeo ? ["bacheo-integral-relleno"] : []),
+          ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
         ]}
         onClick={alClick}
         onContextMenu={(e) => {
@@ -3143,6 +3156,14 @@ function MapaInterno({
                     ? "con problemas reportados"
                     : "sin problemas reportados",
             ];
+          } else if (f.layer.id === "riesgo-linea") {
+            // El porqué del puntaje, en una línea: sin caja negra.
+            lineas = [
+              "Riesgo " + String(p.score) + "/100" + (p.direccion ? " — " + String(p.direccion) : ""),
+              String(p.reincidentes ?? 0) + " volvieron tras reparar · " + String(p.abiertos ?? 0) +
+                " abiertos · " + String(p.reparaciones ?? 0) + " reparaciones previas · el más viejo hace " +
+                String(p.antiguedad_dias ?? 0) + " días",
+            ];
           } else if (f.layer.id === "bacheo-integral-relleno") {
             // La zona del programa: nombre, obra y el detalle del KML (monto,
             // plazo, objetivo) sin tener que entrar a ningún lado.
@@ -3232,6 +3253,25 @@ function MapaInterno({
         {verColectivos && colectivosGeo && (
           <Source id="colectivos" type="geojson" data={colectivosGeo}>
             <Layer {...capas.colectivos} />
+          </Source>
+        )}
+        {verRiesgo && riesgoGeo && (
+          <Source id="riesgo" type="geojson" data={riesgoGeo}>
+            <Layer
+              id="riesgo-linea"
+              type="line"
+              paint={{
+                "line-color": [
+                  "interpolate", ["linear"], ["get", "score"],
+                  25, pal.oscuro ? "#ffc233" : "#c08a00",
+                  55, pal.oscuro ? "#ff8c1a" : "#e8590c",
+                  85, pal.oscuro ? "#ff453a" : "#d42d20",
+                ],
+                "line-width": ["interpolate", ["linear"], ["get", "score"], 25, 2.5, 100, 6],
+                "line-opacity": 0.85,
+              }}
+              layout={{ "line-cap": "round" }}
+            />
           </Source>
         )}
         {verBacheoIntegral && bacheoIntegralGeo && (
@@ -4701,6 +4741,15 @@ function MapaInterno({
               <input type="checkbox" checked={verHex} onChange={(e) => setVerHex(e.target.checked)} className="accent-[#0066ff]" />
               <Boxes size={13} className="shrink-0 text-celeste" />
               <span className="min-w-0 truncate">Densidad 3D</span>
+            </label>
+            <label
+              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="BACHEO PREVENTIVO: las cuadras pavimentadas con más riesgo de romperse, puntuadas 0-100 por reincidencia (pedidos posteriores a la última reparación), presión abierta, antigüedad e historial de intervenciones. Pasá el mouse por una línea para ver el desglose. Se recalcula cada 6 horas."
+            >
+              <input type="checkbox" checked={verRiesgo} onChange={(e) => setVerRiesgo(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: "linear-gradient(90deg,#c08a00,#d42d20)" }} />
+              <span className="min-w-0 flex-1 truncate">Riesgo preventivo</span>
+              {verRiesgo && riesgoGeo && <span className="num text-[10px] text-texto-3">{numero(riesgoGeo.features.length)}</span>}
             </label>
             {fuentesPresentes.length > 0 && (
               <div className="flex flex-wrap gap-1">

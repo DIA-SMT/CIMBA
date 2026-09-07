@@ -134,6 +134,12 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
     como: "Tocá el ícono de luna (o sol) arriba a la derecha.",
   },
   {
+    id: "riesgo",
+    titulo: "Riesgo preventivo",
+    desc: "La capa que se adelanta: pinta de ámbar a rojo las cuadras pavimentadas con más riesgo de romperse, puntuadas 0-100 por cuatro factores explicables — pedidos que VOLVIERON después de la última reparación (el más grave), pedidos abiertos, antigüedad del más viejo e historial de intervenciones. Pasando el mouse se ve el desglose. De apagar incendios a bacheo preventivo.",
+    como: "Panel de Capas → Lo pedido → «Riesgo preventivo». Se recalcula cada 6 horas.",
+  },
+  {
     id: "capas-viales",
     titulo: "Red vial y licitaciones",
     desc: "En Capas → Territorio hay cuatro capas nuevas: avenidas primarias y secundarias, pavimento/ripio/cordón cuneta por cuadra (el ripio bien visible: ahí no se bachea, se pasa la máquina), los sectores de licitación con su empresa adjudicataria (hormigón y asfalto), las zonas del programa Bacheo integral (SE, SO y Centro-Este, con n° de obra, monto y plazo al pasar el mouse) y los recorridos de colectivos. Con la red vial, cada reclamo se clasifica solo: bacheo, SAT o ingeniería.",
