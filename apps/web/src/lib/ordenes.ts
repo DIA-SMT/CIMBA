@@ -131,6 +131,34 @@ export async function pendientesEnCircuito(
   });
 }
 
+/**
+ * Cuántos pedidos ROJOS limpios del circuito esperan relevamiento — la misma
+ * condición exacta que relevarCircuito (acciones-ordenes.ts): si cambia una,
+ * cambia la otra, o el botón promete un número y releva otro.
+ */
+export async function rojasRelevablesEnCircuito(sesion: Sesion, circuitoId: number): Promise<number> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select count(*)::int as n
+      from demandas d
+      join circuitos c on c.id = ${circuitoId} and st_contains(c.geom, d.geom)
+      where d.estado in ('recibida', 'en_validacion')
+        and d.geom is not null
+        and coalesce(d.destino::text, 'bacheo') = 'bacheo'
+        and coalesce(d.geocod_confianza, 0) >= 0.75
+        and d.tipo is not null
+        and not exists (
+          select 1 from incidentes i
+          where st_dwithin(i.geom::geography, d.geom::geography, 40)
+            and (i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                 or (i.estado in ('reparado','verificado')
+                     and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)))
+        )
+    `)) as unknown as Array<{ n: number }>;
+    return Number(filas[0]?.n ?? 0);
+  });
+}
+
 // ── Empresas: la oferta ──────────────────────────────────────────────────────
 
 export interface EmpresaResumen {

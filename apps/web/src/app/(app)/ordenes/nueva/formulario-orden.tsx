@@ -55,6 +55,11 @@ export function FormularioOrden({
   // ── La demanda ─────────────────────────────────────────────────────────────
   const [circuitoId, setCircuitoId] = useState<number>(0);
   const [pendientes, setPendientes] = useState<PendienteCircuito[]>([]);
+  // Pedidos ROJOS limpios del circuito que todavía no son incidentes: el
+  // botón de relevar los convierte en cola de un paso.
+  const [rojas, setRojas] = useState(0);
+  const [relevando, setRelevando] = useState(false);
+  const [avisoRelevar, setAvisoRelevar] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [seleccion, setSeleccion] = useState<Set<number>>(new Set());
@@ -77,15 +82,18 @@ export function FormularioOrden({
     setSeleccion(new Set());
     setPendientes([]);
     setErrorCarga(null);
+    setRojas(0);
+    setAvisoRelevar(null);
     if (!id) return;
     const pedido = ++pedidoRef.current;
     setCargando(true);
     try {
       const r = await fetch(`/api/ordenes/pendientes?circuito=${id}`);
       if (!r.ok) throw new Error("No se pudieron cargar los pendientes del circuito");
-      const j = (await r.json()) as { pendientes: PendienteCircuito[] };
+      const j = (await r.json()) as { pendientes: PendienteCircuito[]; rojas?: number };
       if (pedido !== pedidoRef.current) return;
       setPendientes(j.pendientes);
+      setRojas(j.rojas ?? 0);
       // Si el circuito ya tiene empresa asignada, se propone sola.
       const c = circuitos.find((x) => x.id === id);
       if (c?.empresaId && !empresaId) setEmpresaId(c.empresaId);
@@ -244,6 +252,47 @@ export function FormularioOrden({
               </div>
             </div>
 
+            {/* La brecha roja del circuito, convertible en cola con un botón:
+                sin esto, cada pedido rojo era una ficha a mano. */}
+            {!cargando && rojas > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde bg-encurso/10 px-4 py-2.5">
+                <p className="text-xs leading-snug text-texto-2">
+                  Este circuito tiene <b className="num text-encurso">{numero(rojas)}</b> pedidos{" "}
+                  <b>sin atención</b> que todavía no son incidentes (ubicación confiable, tipo claro, nada
+                  trabajándose cerca). Relevarlos los agrupa (~25 m) y los suma a esta lista, ya priorizados
+                  y con sus reclamos vinculados.
+                </p>
+                <button
+                  type="button"
+                  disabled={relevando}
+                  onClick={async () => {
+                    setRelevando(true);
+                    setAvisoRelevar(null);
+                    try {
+                      const { relevarCircuito } = await import("@/lib/acciones-ordenes");
+                      const r = await relevarCircuito({ circuitoId });
+                      // elegirCircuito limpia el aviso: el mensaje va DESPUÉS.
+                      await elegirCircuito(circuitoId);
+                      setAvisoRelevar(
+                        `Relevado: ${r.demandas} pedidos agrupados en ${r.incidentes} incidentes, ya en la lista.`,
+                      );
+                    } catch (e) {
+                      setAvisoRelevar(e instanceof Error ? e.message : "No se pudo relevar el circuito");
+                    } finally {
+                      setRelevando(false);
+                    }
+                  }}
+                  className="shrink-0 rounded-lg bg-azul px-3 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
+                >
+                  {relevando ? "Relevando…" : `Relevar el circuito (${numero(rojas)})`}
+                </button>
+              </div>
+            )}
+            {avisoRelevar && (
+              <p className="border-b border-borde px-4 py-2 text-xs font-semibold" style={{ color: "var(--color-hecho)" }}>
+                {avisoRelevar}
+              </p>
+            )}
             {cargando ? (
               <p className="px-4 py-8 text-center text-sm text-texto-3">Cargando pendientes…</p>
             ) : pendientes.length === 0 ? (

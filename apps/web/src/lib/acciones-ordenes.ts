@@ -1053,3 +1053,119 @@ export async function corregirTipoIntervencion(entrada: { intervencionId: number
   revalidatePath("/incidentes");
   return { ok: true };
 }
+
+// ── Relevar el circuito: de la brecha roja a la cola de trabajo, en un paso ──
+
+/**
+ * EL ESLABÓN QUE FALTABA en la línea de montaje: los pedidos "sin atención"
+ * son demandas crudas y el armado de órdenes solo ve INCIDENTES — hasta acá,
+ * pasar un rojo a la cola era ficha por ficha. Relevar el circuito toma todos
+ * los pedidos rojos LIMPIOS del circuito (destino bacheo, ubicación confiable
+ * ≥75%, tipo claro, nada trabajándose a <40 m), agrupa los que están a menos
+ * de ~25 m entre sí (diez vecinos, un pozo) y crea UN incidente por grupo, ya
+ * PRIORIZADO — listo para elegirse en la orden. Cada pedido queda vinculado:
+ * cuando el bache se tape, todos sus vecinos aparecen en Cierres.
+ *
+ * Lo que NO entra (a propósito): geocodificación dudosa (se corrige antes en
+ * Demandas), destino SAT/Ingeniería (van por Tratamiento y la nota), y lo que
+ * ya tiene un trabajo cerca (eso se coteja, no se duplica).
+ */
+export async function relevarCircuito(entrada: { circuitoId: number }) {
+  const sesion = await requerirRol("planificacion");
+  const { circuitoId } = z.object({ circuitoId: z.number().int().positive() }).parse(entrada);
+
+  const resultado = await conRls(claims(sesion), async (tx) => {
+    // Dos clics seguidos (o dos personas) sobre el mismo circuito no pueden
+    // duplicar incidentes: el segundo espera y encuentra la cola ya relevada.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"relevar-circuito-" + circuitoId}))`);
+
+    const grupos = (await tx.execute(sql`
+      with candidatas as (
+        select d.id, d.tipo, d.geom, d.creado_en,
+               coalesce(d.direccion_normalizada, d.direccion_texto) as direccion
+        from demandas d
+        join circuitos c on c.id = ${circuitoId} and st_contains(c.geom, d.geom)
+        where d.estado in ('recibida', 'en_validacion')
+          and d.geom is not null
+          and coalesce(d.destino::text, 'bacheo') = 'bacheo'
+          and coalesce(d.geocod_confianza, 0) >= 0.75
+          and d.tipo is not null
+          and not exists (
+            select 1 from incidentes i
+            where st_dwithin(i.geom::geography, d.geom::geography, 40)
+              and (i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                   or (i.estado in ('reparado','verificado')
+                       and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)))
+          )
+      ),
+      agrupadas as (
+        -- ~25 m: el mismo radio del cotejo automático. minpoints 1: un pedido
+        -- solo también es un pozo real — la corroboración acá la pone el
+        -- planificador al relevar, no la estadística.
+        select *, st_clusterdbscan(geom, eps := 0.00025, minpoints := 1) over () as grupo
+        from candidatas
+      )
+      select grupo,
+             array_agg(id order by creado_en) as ids,
+             (array_agg(tipo order by creado_en))[1] as tipo,
+             (array_agg(direccion order by creado_en))[1] as direccion,
+             min(creado_en) as detectado_en,
+             st_centroid(st_collect(geom)) as geom
+      from agrupadas
+      group by grupo
+      order by count(*) desc
+    `)) as unknown as Array<{
+      ids: number[]; tipo: string; direccion: string | null; detectado_en: string; geom: unknown;
+    }>;
+
+    const aIds = (v: unknown): number[] =>
+      Array.isArray(v)
+        ? v.map(Number)
+        : String(v ?? "").replace(/[{}]/g, "").split(",").filter(Boolean).map(Number);
+
+    let demandasVinculadas = 0;
+    const incidentes: number[] = [];
+    for (const g of grupos) {
+      const ids = aIds(g.ids).filter((x) => Number.isInteger(x) && x > 0);
+      if (ids.length === 0) continue;
+      const listaIds = sql.join(ids.map((x) => sql`${x}`), sql`, `);
+      const creado = (await tx.execute(sql`
+        insert into incidentes (tipo, estado, geom, direccion, creado_por, detectado_en, metadata)
+        values (
+          ${g.tipo}::tipo_problema,
+          'priorizado',
+          (select st_centroid(st_collect(d.geom)) from demandas d where d.id in (${listaIds})),
+          ${g.direccion},
+          ${sesion.sub}::uuid,
+          ${g.detectado_en}::timestamptz,
+          jsonb_build_object('relevamiento_circuito', ${circuitoId}::int)
+        )
+        returning id
+      `)) as unknown as Array<{ id: number }>;
+      const inc = creado[0];
+      if (!inc) continue;
+      await tx.execute(sql`
+        insert into demanda_incidente (demanda_id, incidente_id, vinculado_por, automatico)
+        select d.id, ${inc.id}, ${sesion.sub}::uuid, true
+        from demandas d where d.id in (${listaIds})
+        on conflict do nothing
+      `);
+      await tx.execute(sql`
+        update demandas set estado = 'vinculada'
+        where id in (${listaIds}) and estado in ('recibida','en_validacion')
+      `);
+      const { recalcularScore } = await import("./acciones");
+      await recalcularScore(tx, inc.id);
+      incidentes.push(inc.id);
+      demandasVinculadas += ids.length;
+    }
+    return { incidentes: incidentes.length, demandas: demandasVinculadas };
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/incidentes");
+  revalidatePath("/demandas");
+  revalidatePath("/brecha");
+  revalidatePath("/calidad");
+  return { ok: true, ...resultado };
+}

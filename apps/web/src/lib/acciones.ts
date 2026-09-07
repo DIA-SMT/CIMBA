@@ -11,7 +11,7 @@ const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona:
 
 // ── Score de prioridad (recalculado en cada evento relevante) ───────────────
 
-async function recalcularScore(tx: { execute: (q: SQL) => Promise<unknown> }, incidenteId: number) {
+export async function recalcularScore(tx: { execute: (q: SQL) => Promise<unknown> }, incidenteId: number) {
   const filas = (await tx.execute(sql`
     select i.tipo, i.direccion, i.detectado_en,
            (select count(*) from demanda_incidente di where di.demanda_id is not null and di.incidente_id = i.id) as demandas,

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { leerSesion } from "@/lib/auth";
-import { pendientesEnCircuito } from "@/lib/ordenes";
+import { pendientesEnCircuito, rojasRelevablesEnCircuito } from "@/lib/ordenes";
 
 /**
  * Los pendientes de un circuito, para el armado de órdenes: la tabla es
@@ -22,6 +22,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "circuito inválido" }, { status: 400 });
   }
 
-  const pendientes = await pendientesEnCircuito(sesion, circuito);
-  return NextResponse.json({ pendientes });
+  const [pendientes, rojas] = await Promise.all([
+    pendientesEnCircuito(sesion, circuito),
+    rojasRelevablesEnCircuito(sesion, circuito),
+  ]);
+  return NextResponse.json({ pendientes, rojas });
 }
