@@ -4,6 +4,8 @@ import { leerSesion } from "@/lib/auth";
 import { feedActividad, usoPorPersona, type EventoActividad } from "@/lib/actividad";
 import { fechaCorta, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
+import { FormularioUsuario } from "./formulario-usuario";
+import { BotonClaveUsuario } from "./boton-clave-usuario";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -100,12 +102,14 @@ export default async function PaginaActividad({
   ]);
 
   const sinUso = personas.filter((p) => p.activo && p.ingresos30 === 0 && p.acciones30 === 0);
+  const esSuperadmin = sesion.rol_cimba === "admin";
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
       <TituloPagina
         titulo="Actividad"
         sub="Quién usa el sistema, quién no, y qué hizo cada uno. Sale de la auditoría automática de la base: acá nada se puede editar ni borrar."
+        extra={esSuperadmin ? <FormularioUsuario /> : undefined}
       />
 
       {/* Quién usa y quién no */}
@@ -126,6 +130,7 @@ export default async function PaginaActividad({
               <th className="px-3 py-2 text-right">Ingresos (30d)</th>
               <th className="px-3 py-2 text-right">Acciones (30d)</th>
               <th className="px-3 py-2">Última actividad</th>
+              {esSuperadmin && <th className="px-3 py-2">Acceso</th>}
               <th className="px-5 py-2 text-right">Ver</th>
             </tr>
           </thead>
@@ -147,6 +152,11 @@ export default async function PaginaActividad({
                       <span className={dormida ? "font-semibold text-encurso" : "text-texto-3"}>nunca entró</span>
                     )}
                   </td>
+                  {esSuperadmin && (
+                    <td className="px-3 py-2.5">
+                      {p.usuario ? <BotonClaveUsuario perfilId={p.id} /> : <span className="text-[10px] text-texto-3">—</span>}
+                    </td>
+                  )}
                   <td className="px-5 py-2.5 text-right">
                     <Link href={`/actividad?usuario=${p.id}`} className="text-xs font-semibold text-celeste hover:underline">
                       sus movimientos →
