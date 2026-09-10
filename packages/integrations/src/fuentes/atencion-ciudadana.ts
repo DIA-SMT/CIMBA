@@ -130,7 +130,7 @@ const TIPO_CIMBA_POR_TRECLAMO: Record<number, TipoProblema> = {
   105: "pavimento_deteriorado", // Calle de pavimento en mal estado
   126: "sumidero", //     Tapa rota u obstruída de desagüe o boca tormenta
   135: "otro", //    Pasar máquina en calle
-  148: "otro", //    Reparación o construcción de cordón cuneta
+  148: "cuneta_rota", // Reparación o construcción de cordón cuneta
 };
 
 export interface OpcionesBarridoAc {

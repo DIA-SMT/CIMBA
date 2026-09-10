@@ -19,6 +19,9 @@ export const ETIQUETA_TIPO: Record<TipoProblema, string> = {
   sumidero: "Sumidero",
   tapa_registro: "Tapa de registro",
   perdida_agua: "Pérdida de agua",
+  bocacalle_rota: "Bocacalle rota",
+  cuneta_rota: "Cuneta rota",
+  cuadra_completa: "Cuadra completa",
   otro: "Otro",
 };
 

@@ -50,9 +50,9 @@ export type PuntoGas = z.infer<typeof puntoGasSchema>;
 /** Tipo de falla del formulario → tipo de problema de CIMBA. */
 const TIPO_POR_FALLA: Record<string, TipoProblema> = {
   "bache": "bache",
-  "bocacalle rota": "bache",
-  "cuneta rota": "pavimento_deteriorado",
-  "cuadra completa a realizar": "pavimento_deteriorado",
+  "bocacalle rota": "bocacalle_rota",
+  "cuneta rota": "cuneta_rota",
+  "cuadra completa a realizar": "cuadra_completa",
   "pérdida de agua": "perdida_agua",
   "perdida de agua": "perdida_agua",
   "cámara / tapa de cloaca rota": "tapa_registro",

@@ -22,6 +22,12 @@ export const TIPOS_PROBLEMA = [
   "fisura",
   "sumidero",
   "tapa_registro",
+  // Del protocolo oficial de la DOV (jun 2026): la bocacalle y la cuneta son
+  // intervención vial directa (llevan tipo de obra y m²); la cuadra completa
+  // es la señal de que ese tramo ya no se arregla bacheando.
+  "bocacalle_rota",
+  "cuneta_rota",
+  "cuadra_completa",
   "perdida_agua",
   "otro",
 ] as const;

@@ -24,6 +24,18 @@ const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }
   { valor: "enripiado", etiqueta: "Enripiado" },
 ];
 
+/**
+ * Modalidad de bacheo del protocolo de la DOV: es el dato con el que se
+ * certifica el pago. "Extendido" no es una opinión — el protocolo lo define
+ * por encima de 4 m², así que se preselecciona sola con la medida cargada.
+ */
+const OPCIONES_OBRA: Array<{ valor: string; etiqueta: string }> = [
+  { valor: "planificado", etiqueta: "Planificado" },
+  { valor: "provisorio", etiqueta: "Provisorio (urgencia)" },
+  { valor: "extendido", etiqueta: "Extendido (+4 m²)" },
+  { valor: "sobre_adoquin", etiqueta: "Sobre adoquín" },
+];
+
 /** El teclado del teléfono mete coma decimal: se normaliza antes de parsear. */
 const aNumero = (s: string) => Number(s.trim().replace(",", "."));
 
@@ -125,6 +137,9 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const [tipoIntervencion, setTipoIntervencion] = useState<TipoIntervencion>(
     item.tipoTrabajo === "carpeta" ? "carpeta" : "bacheo",
   );
+
+  // Modalidad del protocolo: null = seguir la sugerencia automática por medida.
+  const [tipoObra, setTipoObra] = useState<string | null>(null);
 
   // "ya estaba hecho": mini-form aparte, con su propia foto obligatoria
   const [yaAbierto, setYaAbierto] = useState(false);
@@ -288,6 +303,7 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
     fd.set("largoM", String(largoN));
     fd.set("espesorCm", String(aNumero(espesor)));
     fd.set("tipoIntervencion", tipoIntervencion);
+    if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     // Solo se manda ubicación si es una corrección: si es la de la orden,
     // la acción ya la toma del propio item.
@@ -582,6 +598,37 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
             </div>
             <p className="mt-1 text-xs leading-relaxed text-texto-3">
               Si empezó como bacheo pero terminaron cambiando el paño, marcá lo que realmente se hizo.
+            </p>
+          </div>
+
+          {/* Modalidad del protocolo: es lo que se certifica para el pago */}
+          <div>
+            <p className="mb-1.5 text-xs font-semibold text-texto-2">¿Bajo qué modalidad?</p>
+            <div className="grid grid-cols-2 gap-2">
+              {OPCIONES_OBRA.map((op) => {
+                // Sin elección explícita se muestra marcada la que corresponde
+                // por medida, que es la que va a viajar igual.
+                const sugerida = superficie != null && superficie > 4 ? "extendido" : "planificado";
+                const activa = (tipoObra ?? sugerida) === op.valor;
+                return (
+                  <button
+                    key={op.valor}
+                    type="button"
+                    onClick={() => setTipoObra(op.valor)}
+                    className={`min-h-12 rounded-xl border-2 px-3 py-2 text-[13px] leading-snug font-bold transition active:scale-[0.99] ${
+                      activa
+                        ? "border-azul bg-azul/15 text-celeste"
+                        : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
+                    }`}
+                  >
+                    {op.etiqueta}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-texto-3">
+              Provisorio es el arreglo de urgencia que después hay que rehacer. Con más de 4 m² el protocolo
+              lo cuenta como extendido.
             </p>
           </div>
 

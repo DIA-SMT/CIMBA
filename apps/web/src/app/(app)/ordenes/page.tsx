@@ -68,6 +68,10 @@ export default async function PaginaOrdenes({
                 Gestión <ChevronDown size={14} />
               </summary>
               <div className="panel-vidrio absolute right-0 z-20 mt-1.5 w-60 rounded-xl p-1.5 text-sm">
+                <Link href="/ordenes/ipi" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Prioridad de corredores (IPI)
+                  <span className="block text-[11px] font-normal text-texto-3">El índice oficial: qué eje se interviene primero en cada sector</span>
+                </Link>
                 <Link href="/ordenes/productividad" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Productividad
                   <span className="block text-[11px] font-normal text-texto-3">Baches por día y por mes, por ejecutor</span>

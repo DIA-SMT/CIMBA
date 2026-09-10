@@ -26,7 +26,14 @@ const PESO_TIPO: Record<TipoProblema, number> = {
   hundimiento: 1.0,
   perdida_agua: 0.9,
   bache: 0.85,
+  // La bocacalle rota es un bache en el punto de mayor exposición: la cruzan
+  // todos los giros y ahí es donde se rompen las cubiertas.
+  bocacalle_rota: 0.85,
+  // La cuadra completa ya no es un bache: es la señal de que ese tramo pide
+  // obra estructural, y pesa como el peor de los casos localizados.
+  cuadra_completa: 0.75,
   sumidero: 0.7,
+  cuneta_rota: 0.65,
   tapa_registro: 0.7,
   pavimento_deteriorado: 0.6,
   fisura: 0.4,

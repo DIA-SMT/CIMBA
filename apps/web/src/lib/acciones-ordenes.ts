@@ -253,6 +253,9 @@ export async function reportarItemHecho(formData: FormData) {
       // Cómo se resolvió: bacheo / paño de hormigón / carpeta / enripiado.
       // Opcional: sin dato, se infiere del tipo de trabajo del item.
       tipoIntervencion: tipoIntervencionSchema.optional(),
+      // Modalidad del protocolo DOV: es lo que se certifica. Distinta de
+      // tipoIntervencion, que dice QUÉ se hizo, no bajo qué régimen.
+      tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
     })
     .parse({
       itemId: formData.get("itemId"),
@@ -264,6 +267,7 @@ export async function reportarItemHecho(formData: FormData) {
       lon: formData.get("lon") || undefined,
       direccionCorregida: formData.get("direccionCorregida") || undefined,
       tipoIntervencion: formData.get("tipoIntervencion") || undefined,
+      tipoObra: formData.get("tipoObra") || undefined,
     });
 
   /**
@@ -446,14 +450,22 @@ export async function reportarItemHecho(formData: FormData) {
     // promediarse con baches de 4 m² (misma regla que SIGOV).
     const esObra =
       tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
+    /**
+     * Tipo de obra del protocolo DOV. Si la empresa no lo declara se infiere
+     * con la única regla objetiva que da el protocolo: pasado los 4 m² el
+     * bacheo es "extendido". El resto (provisorio, sobre adoquín) depende del
+     * criterio de quien ejecuta y no se adivina.
+     */
+    const tipoObra = datos.tipoObra ?? (superficie > 4 ? "extendido" : "planificado");
+    const volumen = Math.round(superficie * (datos.espesorCm / 100) * 100) / 100;
     const iv = (await tx.execute(sql`
       insert into intervenciones (
         incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
-        superficie_m2, tipo_intervencion, materiales, observaciones, metadata
+        superficie_m2, volumen_m3, tipo_obra, tipo_intervencion, materiales, observaciones, metadata
       ) values (
         ${incidenteId}, 'finalizada',
         st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-        now(), now(), ${superficie}, ${tipoIntervencion},
+        now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
         ${JSON.stringify({ ancho_m: datos.anchoM, largo_m: datos.largoM, espesor_cm: datos.espesorCm })}::jsonb,
         ${datos.observaciones ?? null},
         ${JSON.stringify({
@@ -492,6 +504,7 @@ export async function reportarItemHecho(formData: FormData) {
         estado = 'hecho',
         ancho_m = ${datos.anchoM}, largo_m = ${datos.largoM}, espesor_cm = ${datos.espesorCm},
         superficie_m2 = ${superficie},
+        tipo_obra = ${tipoObra}::tipo_obra_bacheo,
         intervencion_id = ${intervencionId},
         reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
         observaciones = ${datos.observaciones ?? null},

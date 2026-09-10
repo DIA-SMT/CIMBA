@@ -39,6 +39,9 @@ const DESCRIPCIONES: Record<TipoProblema, string[]> = {
   tapa_registro: ["Falta tapa de boca de registro", "Tapa de cámara hundida"],
   fisura: ["Fisuras longitudinales en la calzada"],
   sumidero: ["Sumidero tapado que acumula agua"],
+  bocacalle_rota: ["Bocacalle rota en el cruce"],
+  cuneta_rota: ["Cordón cuneta roto"],
+  cuadra_completa: ["La cuadra entera pide reparación"],
   otro: ["Reclamo vial sin clasificar"],
 };
 
