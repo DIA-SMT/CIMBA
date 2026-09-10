@@ -104,6 +104,7 @@ export function FormularioOrden({
   colectores,
   empresas,
   parametros,
+  recorrido,
 }: {
   circuitos: CircuitoOpcion[];
   distritos: OpcionAmbito[];
@@ -112,6 +113,8 @@ export function FormularioOrden({
   colectores: Array<{ colector: string; total: number; malos: number }>;
   empresas: EmpresaResumen[];
   parametros: ParametrosCapacidad;
+  /** Trazado dibujado en el mapa: entra como un tramo ya armado. */
+  recorrido?: Array<[number, number]>;
 }) {
   const router = useRouter();
 
@@ -131,7 +134,10 @@ export function FormularioOrden({
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [seleccion, setSeleccion] = useState<Set<number>>(new Set());
-  const [tramos, setTramos] = useState<Tramo[]>([]);
+  // Si vino un recorrido del mapa, el formulario abre con ese tramo puesto.
+  const [tramos, setTramos] = useState<Tramo[]>(
+    recorrido ? [{ direccion: "Recorrido dibujado en el mapa", tipoTrabajo: "tramo", recorrido }] : [],
+  );
   // Evita que una respuesta lenta de un circuito anterior pise a la actual.
   const pedidoRef = useRef(0);
 

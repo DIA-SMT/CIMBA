@@ -22,6 +22,7 @@ import {
   Menu,
   Printer,
   Radar,
+  Route,
   RotateCcw,
   Ruler,
   Satellite,
@@ -1477,6 +1478,14 @@ function MapaInterno({
   // (doble clic o clic sobre el primer vértice) el polígono mide.
   const [formaZona, setFormaZona] = useState<"circulo" | "poligono">("circulo");
   const [vertsZona, setVertsZona] = useState<Array<[number, number]>>([]);
+  /**
+   * DIBUJAR UN RECORRIDO. Leo, 10/9: se enteraron de una procesión y llamaron
+   * al cura para que dictara por dónde iba; con eso salió la orden de bacheo.
+   * "Vos vas a apretar un checklist corredor y vas a hacer esto, esto, esto."
+   * Clic a clic se traza la línea, y de ahí sale una orden de trabajo.
+   */
+  const [dibujandoRuta, setDibujandoRuta] = useState(false);
+  const [ruta, setRuta] = useState<Array<[number, number]>>([]);
   const [zonaCerrada, setZonaCerrada] = useState(false);
   // Densidad 3D en hexágonos
   const [verHex, setVerHex] = useState(inicial?.hex ?? false);
@@ -1506,6 +1515,8 @@ function MapaInterno({
   // polígono necesita leer el estado vivo, no el del cierre del callback.
   const formaZonaRef = useRef(formaZona);
   formaZonaRef.current = formaZona;
+  const dibujandoRutaRef = useRef(dibujandoRuta);
+  dibujandoRutaRef.current = dibujandoRuta;
   const vertsZonaRef = useRef(vertsZona);
   vertsZonaRef.current = vertsZona;
   const zonaCerradaRef = useRef(zonaCerrada);
@@ -3002,6 +3013,12 @@ function MapaInterno({
   };
 
   const alClick = useCallback((e: MapLayerMouseEvent) => {
+    // Trazando el recorrido, cada clic es un vértice y nada más: no abre
+    // fichas ni cierra paneles.
+    if (dibujandoRutaRef.current) {
+      setRuta((r) => [...r, [e.lngLat.lng, e.lngLat.lat]]);
+      return;
+    }
     if (modoAnalisisRef.current) {
       if (formaZonaRef.current === "poligono") {
         // Dibujo clic a clic. Un clic con el polígono ya cerrado arranca uno
@@ -3418,6 +3435,45 @@ function MapaInterno({
         {verColectivos && colectivosGeo && (
           <Source id="colectivos" type="geojson" data={colectivosGeo}>
             <Layer {...capas.colectivos} />
+          </Source>
+        )}
+        {/* El recorrido que se está trazando: la línea y sus vértices */}
+        {ruta.length > 0 && (
+          <Source
+            id="ruta-dibujada"
+            type="geojson"
+            data={{
+              type: "FeatureCollection",
+              features: [
+                ...(ruta.length >= 2
+                  ? [{ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: ruta } }]
+                  : []),
+                ...ruta.map((p) => ({
+                  type: "Feature" as const,
+                  properties: {},
+                  geometry: { type: "Point" as const, coordinates: p },
+                })),
+              ],
+            }}
+          >
+            <Layer
+              id="ruta-linea"
+              type="line"
+              filter={["==", ["geometry-type"], "LineString"]}
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{ "line-color": pal.acento, "line-width": 4, "line-opacity": 0.9 }}
+            />
+            <Layer
+              id="ruta-vertice"
+              type="circle"
+              filter={["==", ["geometry-type"], "Point"]}
+              paint={{
+                "circle-color": pal.acento,
+                "circle-radius": 5,
+                "circle-stroke-width": 1.5,
+                "circle-stroke-color": pal.tinta,
+              }}
+            />
           </Source>
         )}
         {verImbornales && imbornalesGeo && (
@@ -4176,6 +4232,20 @@ function MapaInterno({
                       lugar: si vuelven a hacer falta, es volver a colgarlos
                       acá — pero mientras tanto no ocupan la pantalla. */}
                   <ItemAccion
+                    icono={<Route size={15} />}
+                    titulo={dibujandoRuta ? "Salir del recorrido" : "Dibujar un recorrido"}
+                    desc="Marcá por dónde va el trabajo y emití la orden con ese trazado"
+                    activo={dibujandoRuta}
+                    onClick={() => {
+                      setMenuAcciones(false);
+                      const activo = !dibujandoRuta;
+                      setDibujandoRuta(activo);
+                      if (!activo) setRuta([]);
+                      // Los dos modos dibujan con el clic: no pueden convivir.
+                      if (activo) setModoAnalisis(false);
+                    }}
+                  />
+                  <ItemAccion
                     icono={<Radar size={15} />}
                     titulo={modoAnalisis ? "Salir del analizador" : "Analizar zona"}
                     desc="Dibujá un círculo y mirá sus estadísticas al toque"
@@ -4366,6 +4436,55 @@ function MapaInterno({
               className="mt-1.5 h-28 w-full rounded-md object-cover"
             />
           )}
+        </div>
+      )}
+
+      {/* Trazando un recorrido: el panel con lo que se lleva dibujado */}
+      {dibujandoRuta && (
+        <div className="panel-vidrio pointer-events-auto absolute top-1/2 left-3 z-30 max-w-64 -translate-y-1/2 rounded-xl p-3">
+          <p className="text-[13px] font-bold">Dibujando un recorrido</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-texto-3">
+            Hacé clic en cada esquina por donde pasa. Con dos puntos ya se puede emitir la orden.
+          </p>
+          <p className="num mt-2 text-2xl font-bold" style={{ color: pal.acento }}>
+            {ruta.length}
+            <span className="ml-1 font-sans text-[11px] font-normal text-texto-3">puntos</span>
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setRuta((r) => r.slice(0, -1))}
+              disabled={ruta.length === 0}
+              className="rounded-md border border-borde-2 px-2 py-1 text-[11px] font-semibold text-texto-2 transition hover:text-texto disabled:opacity-40"
+            >
+              Deshacer
+            </button>
+            <button
+              onClick={() => setRuta([])}
+              disabled={ruta.length === 0}
+              className="rounded-md border border-borde-2 px-2 py-1 text-[11px] font-semibold text-texto-2 transition hover:text-peligro disabled:opacity-40"
+            >
+              Borrar
+            </button>
+            <button
+              onClick={() => {
+                setDibujandoRuta(false);
+                setRuta([]);
+              }}
+              className="rounded-md border border-borde-2 px-2 py-1 text-[11px] font-semibold text-texto-3 transition hover:text-texto"
+            >
+              Salir
+            </button>
+          </div>
+          <a
+            href={`/ordenes/nueva?recorrido=${encodeURIComponent(
+              ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+            )}`}
+            className={`mt-2 block rounded-lg px-3 py-2 text-center text-[12px] font-semibold text-white transition ${
+              ruta.length >= 2 ? "bg-azul hover:brightness-110" : "pointer-events-none bg-azul/40"
+            }`}
+          >
+            Crear orden con este recorrido
+          </a>
         </div>
       )}
 
