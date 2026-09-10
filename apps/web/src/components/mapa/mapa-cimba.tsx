@@ -289,6 +289,11 @@ function paleta(tema: Tema) {
     /** Zonas del programa "Bacheo integral" (KML del Director): teal — es un
      *  ÁREA translúcida de programa, no un estado, y queda lejos del semáforo. */
     bacheoIntegral: oscuro ? "#2dd4bf" : "#0d9488",
+    /** Anegamiento: azul profundo de agua. Comparte familia con el celeste
+     *  SIGOV, así que se separa por FORMA (halo ancho) y por saturación —
+     *  nunca aparecen en la misma lectura porque uno es procedencia de una
+     *  obra y el otro un punto de riesgo hídrico. */
+    anegamiento: oscuro ? "#4d7cfe" : "#1e40af",
     /** Trazo fuerte de lo que está comprometido o pasando ahora (programado y
      *  en ejecución): el color ya lo dice, el trazo lo pone por encima del
      *  archivo cuando conviven miles de puntos. */
@@ -805,6 +810,68 @@ const capaColectivos = (p: Paleta): LayerProps => ({
 });
 
 /**
+ * Imbornales relevados. El estado del relevamiento (leve → moderado → grave →
+ * colapsado) es una escala de DETERIORO, no de atención, pero se pinta con los
+ * mismos cuatro colores del semáforo y en el mismo orden de alarma: nadie
+ * tiene que aprender una segunda paleta para leer que rojo es lo peor. Los
+ * 398 sin dato quedan grises — que es lo honesto: nadie los calificó.
+ */
+const capaImbornales = (p: Paleta): LayerProps => ({
+  id: "imbornales-punto",
+  type: "circle",
+  source: "imbornales",
+  paint: {
+    "circle-color": [
+      "match",
+      ["coalesce", ["get", "estado"], "sin_dato"],
+      "colapsado", p.sinAtencion,
+      "grave", p.enCola,
+      "moderado", p.enObra,
+      "leve", p.resuelto,
+      p.inactivo,
+    ],
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.2, 15, 4, 18, 7],
+    "circle-stroke-width": 0.6,
+    "circle-stroke-color": p.tinta,
+    "circle-opacity": 0.9,
+  },
+});
+
+/**
+ * Puntos críticos de anegamiento. Son diez, pero pesan: son la evidencia de
+ * "acá el problema no es el asfalto, es el agua" — la regla de escalamiento de
+ * la DOV manda estudio hidráulico antes que intervención vial. Se distinguen
+ * por FORMA (halo ancho escalado por el tirante que relataron los vecinos)
+ * antes que por matiz, para no pelear con el celeste institucional.
+ */
+const capaAnegamientoHalo = (p: Paleta): LayerProps => ({
+  id: "anegamiento-halo",
+  type: "circle",
+  source: "anegamiento",
+  paint: {
+    "circle-color": p.anegamiento,
+    "circle-opacity": 0.18,
+    "circle-radius": [
+      "interpolate", ["linear"], ["zoom"],
+      12, ["*", 4, ["coalesce", ["get", "tiranteM"], 1]],
+      17, ["*", 22, ["coalesce", ["get", "tiranteM"], 1]],
+    ],
+  },
+});
+
+const capaAnegamiento = (p: Paleta): LayerProps => ({
+  id: "anegamiento-punto",
+  type: "circle",
+  source: "anegamiento",
+  paint: {
+    "circle-color": p.anegamiento,
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 8],
+    "circle-stroke-width": 1.4,
+    "circle-stroke-color": p.tinta,
+  },
+});
+
+/**
  * La burbuja de cluster habla el semáforo, no densidad. Antes interpolaba
  * n_sin/point_count entre verde y rojo, y ahí mentía: un cluster de puros
  * 'en_ejecucion' — donde no hay NADA resuelto — daba 0 y se pintaba VERDE, que
@@ -1276,6 +1343,9 @@ function MapaInterno({
       cuadrantesBorde: capaCuadrantesBorde(pal),
       cuadrantesEtiqueta: capaCuadrantesEtiqueta(pal),
       colectivos: capaColectivos(pal),
+      imbornales: capaImbornales(pal),
+      anegamientoHalo: capaAnegamientoHalo(pal),
+      anegamiento: capaAnegamiento(pal),
       pulso: capaPulso(pal),
       clusters: capaClusters(pal),
       incidentes: capaIncidentes(pal),
@@ -1690,6 +1760,13 @@ function MapaInterno({
   const [colectivosGeo, setColectivosGeo] = useState<FCLinea | null>(null);
   const [verBacheoIntegral, setVerBacheoIntegral] = useState(false);
   const [bacheoIntegralGeo, setBacheoIntegralGeo] = useState<FCPoligono | null>(null);
+  // La red hidráulica del relevamiento de la DOV: los imbornales hablan el
+  // mismo semáforo que el resto (leve→colapsado) y los puntos de anegamiento
+  // son la evidencia de "acá el problema no es el asfalto, es el agua".
+  const [verImbornales, setVerImbornales] = useState(false);
+  const [imbornalesGeo, setImbornalesGeo] = useState<FC | null>(null);
+  const [verAnegamiento, setVerAnegamiento] = useState(false);
+  const [anegamientoGeo, setAnegamientoGeo] = useState<FC | null>(null);
   // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
   // recién cuando se prende — son ~600 tramos, no una alfombra.
   const [verRiesgo, setVerRiesgo] = useState(false);
@@ -1716,6 +1793,14 @@ function MapaInterno({
     if (!verRiesgo || riesgoGeo) return;
     fetch("/api/geodata-riesgo").then((r) => r.json()).then(setRiesgoGeo).catch(() => {});
   }, [verRiesgo, riesgoGeo]);
+  useEffect(() => {
+    if (!verImbornales || imbornalesGeo) return;
+    fetch("/data/imbornales.json").then((r) => r.json()).then(setImbornalesGeo).catch(() => {});
+  }, [verImbornales, imbornalesGeo]);
+  useEffect(() => {
+    if (!verAnegamiento || anegamientoGeo) return;
+    fetch("/data/zonas-inundables.json").then((r) => r.json()).then(setAnegamientoGeo).catch(() => {});
+  }, [verAnegamiento, anegamientoGeo]);
   useEffect(() => {
     if (!verSectores || sectoresGeo) return;
     fetch("/data/sectores-licitacion.json")
@@ -2960,6 +3045,8 @@ function MapaInterno({
         f.layer.id !== "colectivos-linea" &&
         f.layer.id !== "barrios-relleno" &&
         f.layer.id !== "bacheo-integral-relleno" &&
+        f.layer.id !== "imbornales-punto" &&
+        f.layer.id !== "anegamiento-punto" &&
         f.layer.id !== "riesgo-linea",
     );
     if (!feature) {
@@ -3086,6 +3173,8 @@ function MapaInterno({
           ...(verDemandas && destinos.sat === true && satGeo.features.length > 0 ? ["sat-cluster", "sat-emoji"] : []),
           ...(verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 ? ["ing-cluster", "ing-emoji"] : []),
           ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
+          ...(verImbornales && imbornalesGeo ? ["imbornales-punto"] : []),
+          ...(verAnegamiento && anegamientoGeo ? ["anegamiento-punto"] : []),
         ]}
         onClick={alClick}
         onContextMenu={(e) => {
@@ -3239,6 +3328,21 @@ function MapaInterno({
           } else if (f.layer.id === "colectivos-linea") {
             // "L4 · MERCOFRUT": la sensibilidad por transporte del ingeniero
             lineas = [String(p.linea ?? "") + " · " + String(p.ramal ?? ""), "recorrido de colectivo"];
+          } else if (f.layer.id === "imbornales-punto") {
+            // Qué es, cómo está y a dónde descarga: lo que hace falta para
+            // decidir si el bache de al lado es un bache o un problema de agua.
+            lineas = [
+              String(p.tipo ?? p.clase ?? "Imbornal") + (p.direccion ? " — " + String(p.direccion) : ""),
+              (p.estado ? "estado " + String(p.estado) : "sin calificar") +
+                (p.colector ? " · descarga a " + String(p.colector) : "") +
+                (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
+            ];
+          } else if (f.layer.id === "anegamiento-punto") {
+            lineas = [
+              "Anegamiento — " + String(p.direccion ?? ""),
+              (p.tiranteM ? "hasta " + String(p.tiranteM) + " m de agua · " : "") +
+                String(p.observaciones ?? "").toLowerCase(),
+            ];
           } else if (f.layer.id === "sectores-hormigon-relleno" || f.layer.id === "sectores-cuadrante-relleno") {
             lineas = [String(p.sector ?? ""), String(p.detalle ?? "") + " · clic para el detalle"];
           } else {
@@ -3318,6 +3422,17 @@ function MapaInterno({
         {verColectivos && colectivosGeo && (
           <Source id="colectivos" type="geojson" data={colectivosGeo}>
             <Layer {...capas.colectivos} />
+          </Source>
+        )}
+        {verImbornales && imbornalesGeo && (
+          <Source id="imbornales" type="geojson" data={imbornalesGeo}>
+            <Layer {...capas.imbornales} />
+          </Source>
+        )}
+        {verAnegamiento && anegamientoGeo && (
+          <Source id="anegamiento" type="geojson" data={anegamientoGeo}>
+            <Layer {...capas.anegamientoHalo} />
+            <Layer {...capas.anegamiento} />
           </Source>
         )}
         {verRiesgo && riesgoGeo && (
@@ -5057,6 +5172,22 @@ function MapaInterno({
               <input type="checkbox" checked={verColectivos} onChange={(e) => setVerColectivos(e.target.checked)} className="accent-[#0066ff]" />
               <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.colectivo }} />
               <span className="min-w-0 truncate">Recorridos de colectivos</span>
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Las 1.325 bocas de tormenta relevadas por la DOV, pintadas por su estado: verde leve, ámbar moderado, naranja grave, rojo colapsado (gris: nadie las calificó). Pasá el mouse por una para ver a qué colector descarga."
+            >
+              <input type="checkbox" checked={verImbornales} onChange={(e) => setVerImbornales(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.enCola }} />
+              <span className="min-w-0 truncate">Imbornales (estado)</span>
+            </label>
+            <label
+              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Puntos donde el agua se acumula: el halo crece con el tirante que relataron los vecinos. Donde hay anegamiento recurrente, la norma manda estudio hidráulico antes que intervención vial — bachear ahí es tirar plata."
+            >
+              <input type="checkbox" checked={verAnegamiento} onChange={(e) => setVerAnegamiento(e.target.checked)} className="accent-[#0066ff]" />
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
+              <span className="min-w-0 truncate">Puntos de anegamiento</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
