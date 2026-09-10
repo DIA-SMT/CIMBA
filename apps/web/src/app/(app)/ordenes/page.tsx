@@ -76,6 +76,10 @@ export default async function PaginaOrdenes({
                   Cuadras que ya no se bachean
                   <span className="block text-[11px] font-normal text-texto-3">Dónde seguir parchando es tirar plata: pasan a obra</span>
                 </Link>
+                <Link href="/ordenes/certificacion" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Certificación y calidad
+                  <span className="block text-[11px] font-normal text-texto-3">Qué inspeccionar hoy y qué está en condiciones de pagarse</span>
+                </Link>
                 <Link href="/ordenes/productividad" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Productividad
                   <span className="block text-[11px] font-normal text-texto-3">Baches por día y por mes, por ejecutor</span>
