@@ -8,6 +8,7 @@ import { Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
 import { PanelProyeccion } from "./panel-proyeccion";
+import { MapaOrdenes } from "./mapa-ordenes";
 import {
   COLOR_ESTADO_ORDEN,
   COLOR_PRIORIDAD,
@@ -109,6 +110,9 @@ export default async function PaginaOrdenes({
           </div>
         }
       />
+
+      {/* Dónde se está trabajando: el mapa de las órdenes del mes por empresa */}
+      <MapaOrdenes />
 
       {/* KPIs */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
