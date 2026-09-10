@@ -1760,6 +1760,17 @@ function MapaInterno({
   const [colectivosGeo, setColectivosGeo] = useState<FCLinea | null>(null);
   const [verBacheoIntegral, setVerBacheoIntegral] = useState(false);
   const [bacheoIntegralGeo, setBacheoIntegralGeo] = useState<FCPoligono | null>(null);
+  /**
+   * DOS MAPAS, no uno (Leo, 10/9): "a mí me importa que este mapa diga mapa
+   * bache y asfalto, y el otro mapa de sistema pluvial… no hace falta que
+   * estén vinculados, son cosas totalmente distintas, van por dos vías
+   * distintas". El pluvial no muestra pedidos ni vistas de bacheo: muestra la
+   * red de desagües. No se persiste: se vuelve siempre a bache y asfalto, que
+   * es el trabajo de todos los días.
+   */
+  const [mapaActivo, setMapaActivo] = useState<"bache" | "pluvial">("bache");
+  const enPluvial = mapaActivo === "pluvial";
+
   // La red hidráulica del relevamiento de la DOV: los imbornales hablan el
   // mismo semáforo que el resto (leve→colapsado) y los puntos de anegamiento
   // son la evidencia de "acá el problema no es el asfalto, es el agua".
@@ -1793,6 +1804,13 @@ function MapaInterno({
     if (!verRiesgo || riesgoGeo) return;
     fetch("/api/geodata-riesgo").then((r) => r.json()).then(setRiesgoGeo).catch(() => {});
   }, [verRiesgo, riesgoGeo]);
+  // En el mapa pluvial los imbornales y el anegamiento SON el contenido: se
+  // encienden solos al entrar. En el de bache y asfalto no aparecen nunca.
+  useEffect(() => {
+    if (!enPluvial) return;
+    setVerImbornales(true);
+    setVerAnegamiento(true);
+  }, [enPluvial]);
   useEffect(() => {
     if (!verImbornales || imbornalesGeo) return;
     fetch("/data/imbornales.json").then((r) => r.json()).then(setImbornalesGeo).catch(() => {});
@@ -2153,6 +2171,9 @@ function MapaInterno({
   }, [tiempoActivo, tiempoIdx, mesesTiempo]);
 
   const incidentesFiltrados = useMemo<FC>(() => {
+    // El mapa pluvial no habla de baches: se vacía en la fuente y no hace
+    // falta apagar capa por capa cada una de las que cuelgan de acá.
+    if (enPluvial) return { type: "FeatureCollection", features: [] };
     const features = (data?.incidentes.features ?? []).filter((f) => {
       if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (finMesCursor !== null) {
@@ -2193,7 +2214,7 @@ function MapaInterno({
         }
         return true;
       }),
-    [data, fuentes, tipos, soloDemandasAbiertas, corte, finMesCursor, distritoFoco],
+    [data, fuentes, tipos, soloDemandasAbiertas, corte, finMesCursor, distritoFoco, enPluvial],
   );
 
   /** El filtro de brecha solo existe dentro de la vista Brecha. */
@@ -2211,6 +2232,7 @@ function MapaInterno({
   }, [demandasBase, filtroBrechaActivo]);
 
   const demandasFiltradas = useMemo<FC>(() => {
+    if (enPluvial) return { type: "FeatureCollection", features: [] };
     const features = demandasBase.filter((f) => {
       if (destinos[destinoDe(f.properties.destino)] !== true) return false;
       if (filtroBrechaActivo && String(f.properties.brecha) !== filtroBrechaActivo) return false;
@@ -2231,7 +2253,7 @@ function MapaInterno({
       return { ...f, properties: { ...f.properties, edad_dias: edadDias } };
     });
     return { type: "FeatureCollection", features: conEdad };
-  }, [demandasBase, destinos, filtroBrechaActivo]);
+  }, [demandasBase, destinos, filtroBrechaActivo, enPluvial]);
 
   /** Cuántos pedidos pendientes hay en cada categoría de brecha, para la
    *  leyenda de esa vista. Respeta el destino prendido (si no, el chip decía
@@ -3893,9 +3915,32 @@ function MapaInterno({
           </div>
         )}
 
+        {/* QUÉ MAPA: dos mundos que no se mezclan. El de bache y asfalto es el
+            de todos los días; el pluvial es la red de desagües, que tiene otro
+            dueño, otro trabajo y otra lectura. */}
+        {!pantalla && (
+          <div className="panel-vidrio flex rounded-xl p-1">
+            {([
+              { clave: "bache" as const, etiqueta: "Bache y asfalto", desc: "Pedidos, incidentes y trabajo de bacheo" },
+              { clave: "pluvial" as const, etiqueta: "Sistema pluvial", desc: "Imbornales, colectores y puntos de anegamiento" },
+            ]).map((m) => (
+              <button
+                key={m.clave}
+                onClick={() => setMapaActivo(m.clave)}
+                title={m.desc}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition ${
+                  mapaActivo === m.clave ? "bg-azul text-white" : "text-texto-2 hover:text-texto"
+                }`}
+              >
+                {m.etiqueta}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Selector de vista — reemplazado por el aviso de Comparar mientras dura.
             En mobile no envuelve: se desliza de costado, nada se corta. */}
-        {comparar ? (
+        {enPluvial ? null : comparar ? (
           <div className="panel-vidrio rounded-xl px-3.5 py-2 text-xs font-semibold text-texto-2">
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
@@ -4152,27 +4197,10 @@ function MapaInterno({
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setMenuAcciones(false)} />
                 <div className="panel-vidrio absolute right-0 z-40 mt-1.5 max-h-[65vh] w-[min(310px,calc(100vw-48px))] overflow-y-auto rounded-xl p-1.5">
-                  {iaHabilitada && (
-                    <ItemAccion
-                      icono={<Sparkles size={15} />}
-                      titulo={generandoInforme ? "Generando informe…" : "Informe IA"}
-                      desc="Informe ejecutivo de lo visible en el mapa"
-                      onClick={() => {
-                        setMenuAcciones(false);
-                        void generarInforme();
-                      }}
-                    />
-                  )}
-                  <ItemAccion
-                    icono={<Columns2 size={15} />}
-                    titulo={comparar ? "Salir de Comparar" : "Comparar: pedido | hecho"}
-                    desc="Parte la pantalla: pendientes a la izquierda, trabajo hecho a la derecha — la brecha, zona por zona"
-                    activo={comparar}
-                    onClick={() => {
-                      setMenuAcciones(false);
-                      alternarComparar();
-                    }}
-                  />
+                  {/* Informe IA y Comparar salieron del menú (Leo, 10/9: "no
+                      estamos usando, no sirve todavía"). El código sigue en su
+                      lugar: si vuelven a hacer falta, es volver a colgarlos
+                      acá — pero mientras tanto no ocupan la pantalla. */}
                   <ItemAccion
                     icono={<Radar size={15} />}
                     titulo={modoAnalisis ? "Salir del analizador" : "Analizar zona"}
@@ -4312,7 +4340,7 @@ function MapaInterno({
       {/* KPIs — fila propia, informativa y fija (no forma parte de la barra movible).
           El top se mide en vivo contra el alto real de la barra de herramientas,
           para no superponerse sin importar en cuántas líneas envuelva esta. */}
-      {!despejado && (
+      {!despejado && !enPluvial && (
         <div
           data-tour="kpis"
           className="pointer-events-auto absolute left-3 right-3 z-10 flex gap-2 overflow-x-auto pb-1 sm:pointer-events-none sm:flex-wrap sm:overflow-visible sm:pb-0"
@@ -4360,7 +4388,7 @@ function MapaInterno({
       </div>
 
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
-      {balance && !comparar && !despejado && (balance.pend > 0 || balance.m2 > 0) && (
+      {balance && !comparar && !despejado && !enPluvial && (balance.pend > 0 || balance.m2 > 0) && (
         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
@@ -5401,7 +5429,7 @@ function MapaInterno({
       {/* La leyenda se va con Comparar: la cortina «Lo pedido | Lo hecho» tiene
           su propio lenguaje visual (dos mapas rotulados) y la leyenda le
           quedaba encima de la tarjeta "Lo pedido", que vive a bottom-16. */}
-      {!comparar && (
+      {!comparar && !enPluvial && (
         <LeyendaSemaforo
           vista={vista}
           modoBrecha={modoBrecha}
@@ -5411,6 +5439,35 @@ function MapaInterno({
           colorIngenieria={pal.destinoIngenieria}
           colorEdadReciente={pal.edadReciente}
         />
+      )}
+
+      {/* El pluvial tiene su propia leyenda: el estado del imbornal es una
+          escala de deterioro, no los pasos de atención del bacheo. */}
+      {enPluvial && !despejado && (
+        <div className="panel-vidrio pointer-events-auto absolute bottom-3 left-3 z-10 rounded-xl px-3 py-2 text-[11px]">
+          <p className="mb-1 font-bold tracking-wide text-texto-3 uppercase">Estado del imbornal</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {[
+              { c: pal.resuelto, t: "leve" },
+              { c: pal.enObra, t: "moderado" },
+              { c: pal.enCola, t: "grave" },
+              { c: pal.sinAtencion, t: "colapsado" },
+              { c: pal.inactivo, t: "sin calificar" },
+            ].map((x) => (
+              <span key={x.t} className="flex items-center gap-1.5 text-texto-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: x.c }} />
+                {x.t}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 text-texto-2">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: pal.anegamiento }} />
+              anegamiento
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-texto-3">
+            El halo del punto azul crece con el tirante que relataron los vecinos.
+          </p>
+        </div>
       )}
       </div>
 
