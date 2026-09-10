@@ -1516,7 +1516,7 @@ function MapaInterno({
   const [tiempoIdx, setTiempoIdx] = useState(0);
   const [reproduciendo, setReproduciendo] = useState(false);
   // Tooltip al pasar el mouse + acordeón del panel
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[] } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[]; foto?: string | null } | null>(null);
   // Acordeón del panel de capas. Las claves quedaron con su nombre histórico
   // aunque los títulos visibles sean otros (demandas → "Lo pedido",
   // incidentes → "Lo hecho"): así no se rompe nada que dependa de ellas.
@@ -3377,7 +3377,9 @@ function MapaInterno({
                 " · " + fechaCorta(String(p.creado_en)),
             ];
           }
-          setTooltip({ x: e.point.x, y: e.point.y, lineas });
+          // La foto del bache viaja en el geodata: verla al pasar el mouse
+          // evita entrar a la ficha para saber cómo quedó.
+          setTooltip({ x: e.point.x, y: e.point.y, lineas, foto: (p.foto as string) ?? null });
         }}
         attributionControl={{ compact: true }}
       >
@@ -4382,6 +4384,19 @@ function MapaInterno({
         >
           <p className="truncate text-[12px] font-semibold">{tooltip.lineas[0]}</p>
           {tooltip.lineas[1] && <p className="text-[10px] text-texto-2">{tooltip.lineas[1]}</p>}
+          {tooltip.foto && (
+            /* eslint-disable-next-line @next/next/no-img-element -- las fotos
+               viven en Drive de la empresa, fuera del optimizador de Next. */
+            <img
+              src={tooltip.foto}
+              alt=""
+              loading="lazy"
+              /* Sin esto Google devuelve 403: lh3 rechaza el pedido cuando
+                 llega con un Referer de un origen que no conoce. */
+              referrerPolicy="no-referrer"
+              className="mt-1.5 h-28 w-full rounded-md object-cover"
+            />
+          )}
         </div>
       )}
 

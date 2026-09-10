@@ -25,6 +25,17 @@ const tramoSchema = z.object({
   tipoTrabajo: z.enum(["bache", "carpeta", "tramo"]).default("tramo"),
   lat: z.number().min(-27.2).max(-26.5).optional(),
   lon: z.number().min(-65.6).max(-64.9).optional(),
+  /**
+   * Segundo extremo del tramo: con él el item deja de ser un punto y pasa a
+   * ser una línea ("Corrientes del 400 al 1000"). Las alturas se guardan para
+   * poder reimprimir la orden con las mismas palabras con que se dictó.
+   */
+  latHasta: z.number().min(-27.2).max(-26.5).optional(),
+  lonHasta: z.number().min(-65.6).max(-64.9).optional(),
+  alturaDesde: z.number().int().min(0).max(99999).optional(),
+  alturaHasta: z.number().int().min(0).max(99999).optional(),
+  /** Recorrido dibujado a mano sobre el mapa: [[lon, lat], …]. */
+  recorrido: z.array(z.tuple([z.number(), z.number()])).min(2).max(500).optional(),
 });
 
 export async function crearOrden(entrada: {
@@ -127,11 +138,22 @@ export async function crearOrden(entrada: {
       `);
     }
     for (const t of datos.tramos) {
+      /**
+       * Tres formas de ubicar un tramo, de la más precisa a la más simple:
+       * el recorrido dibujado, el intervalo de altura (dos extremos
+       * geocodificados) y el punto suelto de siempre.
+       */
+      const geom = t.recorrido
+        ? sql`st_setsrid(st_geomfromgeojson(${JSON.stringify({ type: "LineString", coordinates: t.recorrido })}), 4326)`
+        : t.lat != null && t.lon != null && t.latHasta != null && t.lonHasta != null
+          ? sql`st_setsrid(st_makeline(st_makepoint(${t.lon}, ${t.lat}), st_makepoint(${t.lonHasta}, ${t.latHasta})), 4326)`
+          : t.lat != null && t.lon != null
+            ? sql`st_setsrid(st_makepoint(${t.lon}, ${t.lat}), 4326)`
+            : sql`null`;
       await tx.execute(sql`
-        insert into orden_items (orden_id, direccion, geom, tipo_trabajo)
-        values (${orden.id}, ${t.direccion},
-          ${t.lat != null && t.lon != null ? sql`st_setsrid(st_makepoint(${t.lon}, ${t.lat}), 4326)` : sql`null`},
-          ${t.tipoTrabajo})
+        insert into orden_items (orden_id, direccion, geom, tipo_trabajo, altura_desde, altura_hasta)
+        values (${orden.id}, ${t.direccion}, ${geom}, ${t.tipoTrabajo},
+                ${t.alturaDesde ?? null}, ${t.alturaHasta ?? null})
       `);
     }
     /**

@@ -74,9 +74,17 @@ interface Tramo {
   tipoTrabajo: "bache" | "carpeta" | "tramo";
   lat?: number;
   lon?: number;
+  /** Segundo extremo, cuando el tramo se dicta por intervalo de altura. */
+  latHasta?: number;
+  lonHasta?: number;
+  alturaDesde?: string;
+  alturaHasta?: string;
   resuelta?: string;
+  resueltaHasta?: string;
   ubicando?: boolean;
   sinResultado?: boolean;
+  /** Recorrido dibujado en el mapa: [[lon, lat], …]. */
+  recorrido?: Array<[number, number]>;
 }
 
 const claseInput =
@@ -226,21 +234,58 @@ export function FormularioOrden({
   const actualizarTramo = (i: number, cambios: Partial<Tramo>) =>
     setTramos((ts) => ts.map((t, j) => (j === i ? { ...t, ...cambios } : t)));
 
+  const geocodificar = async (q: string) => {
+    const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}`);
+    const j = (await r.json()) as {
+      resultado: { punto: { lat: number; lon: number }; confianza: number; direccionResuelta: string } | null;
+    };
+    return j.resultado;
+  };
+
+  /**
+   * Ubica el tramo. Si vienen las dos alturas, geocodifica los DOS extremos y
+   * el item queda como una línea — "Corrientes del 400 al 1000", que es como
+   * se dicta el trabajo en la calle. Con una sola dirección, sigue siendo un
+   * punto como siempre.
+   */
   const ubicarTramo = async (i: number) => {
     const t = tramos[i];
     if (!t || t.direccion.trim().length < 4) return;
     actualizarTramo(i, { ubicando: true, sinResultado: false });
+    const calle = t.direccion.trim();
+    const desde = (t.alturaDesde ?? "").trim();
+    const hasta = (t.alturaHasta ?? "").trim();
     try {
-      const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(t.direccion.trim())}`);
-      const j = (await r.json()) as {
-        resultado: { punto: { lat: number; lon: number }; confianza: number; direccionResuelta: string } | null;
-      };
-      if (j.resultado) {
+      if (desde && hasta) {
+        const [a, b] = await Promise.all([
+          geocodificar(`${calle} ${desde}`),
+          geocodificar(`${calle} ${hasta}`),
+        ]);
+        if (a && b) {
+          actualizarTramo(i, {
+            ubicando: false,
+            lat: a.punto.lat,
+            lon: a.punto.lon,
+            latHasta: b.punto.lat,
+            lonHasta: b.punto.lon,
+            resuelta: a.direccionResuelta,
+            resueltaHasta: b.direccionResuelta,
+          });
+          return;
+        }
+        actualizarTramo(i, { ubicando: false, sinResultado: true });
+        return;
+      }
+      const r = await geocodificar(calle);
+      if (r) {
         actualizarTramo(i, {
           ubicando: false,
-          lat: j.resultado.punto.lat,
-          lon: j.resultado.punto.lon,
-          resuelta: j.resultado.direccionResuelta,
+          lat: r.punto.lat,
+          lon: r.punto.lon,
+          latHasta: undefined,
+          lonHasta: undefined,
+          resuelta: r.direccionResuelta,
+          resueltaHasta: undefined,
         });
       } else {
         actualizarTramo(i, { ubicando: false, lat: undefined, lon: undefined, resuelta: undefined, sinResultado: true });
@@ -294,6 +339,11 @@ export function FormularioOrden({
             tipoTrabajo: t.tipoTrabajo,
             lat: t.lat,
             lon: t.lon,
+            latHasta: t.latHasta,
+            lonHasta: t.lonHasta,
+            alturaDesde: t.alturaDesde ? Number(t.alturaDesde) : undefined,
+            alturaHasta: t.alturaHasta ? Number(t.alturaHasta) : undefined,
+            recorrido: t.recorrido,
           })),
         });
         router.push(`/ordenes/${res.ordenId}`);
@@ -594,9 +644,31 @@ export function FormularioOrden({
                   onChange={(e) =>
                     actualizarTramo(i, { direccion: e.target.value, lat: undefined, lon: undefined, resuelta: undefined, sinResultado: false })
                   }
-                  placeholder="Dirección (calle y altura, o esquina)"
+                  placeholder={t.recorrido ? "Nombre del recorrido" : "Calle (o esquina, o dirección completa)"}
                   className={`${claseInput} min-w-52 flex-1`}
                 />
+                {/* Intervalo de altura: con los dos números el tramo deja de
+                    ser un pin y se convierte en el segmento de calle real. */}
+                {!t.recorrido && (
+                  <>
+                    <input
+                      value={t.alturaDesde ?? ""}
+                      onChange={(e) => actualizarTramo(i, { alturaDesde: e.target.value, lat: undefined, lon: undefined })}
+                      placeholder="del"
+                      inputMode="numeric"
+                      className={`${claseInput} w-20`}
+                      title="Altura desde — dejalo vacío si es un punto suelto"
+                    />
+                    <input
+                      value={t.alturaHasta ?? ""}
+                      onChange={(e) => actualizarTramo(i, { alturaHasta: e.target.value, latHasta: undefined, lonHasta: undefined })}
+                      placeholder="al"
+                      inputMode="numeric"
+                      className={`${claseInput} w-20`}
+                      title="Altura hasta — con las dos alturas el tramo sale como línea"
+                    />
+                  </>
+                )}
                 <select
                   value={t.tipoTrabajo}
                   onChange={(e) => actualizarTramo(i, { tipoTrabajo: e.target.value as Tramo["tipoTrabajo"] })}

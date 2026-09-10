@@ -1133,7 +1133,19 @@ export async function geodata(sesion: Sesion) {
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
              i.detectado_en, i.cerrado_en, st_x(i.geom) as lon, st_y(i.geom) as lat,
              i.metadata->>'origen' as origen, i.distrito_id,
-             (select count(*) from demanda_incidente di where di.incidente_id = i.id) as demandas
+             (select count(*) from demanda_incidente di where di.incidente_id = i.id) as demandas,
+             /**
+              * La foto del punto, para verla al pasar el mouse por el mapa. Se
+              * prefiere el DESPUÉS: la pregunta que se hace mirando el mapa es
+              * "¿cómo quedó?". Si todavía no hay, se muestra el antes, que al
+              * menos dice qué se encontró.
+              */
+             (select f.url_externa from fotografias f
+               join intervenciones iv on iv.id = f.intervencion_id
+               where iv.incidente_id = i.id and f.url_externa is not null
+               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
+                        f.tomada_en desc nulls last
+               limit 1) as foto
       from incidentes i
     `)) as unknown as Array<Record<string, unknown>>;
 
@@ -1201,6 +1213,7 @@ export async function geodata(sesion: Sesion) {
             distrito: f.distrito_id != null ? Number(f.distrito_id) : null,
             detectado_en: String(f.detectado_en),
             cerrado_en: f.cerrado_en != null ? String(f.cerrado_en) : null,
+            foto: (f.foto as string) ?? null,
           },
         })),
       ),
