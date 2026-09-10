@@ -29,6 +29,12 @@ const tramoSchema = z.object({
 
 export async function crearOrden(entrada: {
   empresaId: number;
+  /** Qué trabajo es: de eso depende a qué empresa puede ir. */
+  tipo?: string;
+  /** Cómo se delimitó: distrito, circuito, corredor, barrio o colector. */
+  ambito?: string;
+  /** El id del ámbito elegido (o el nombre del colector). */
+  ambitoRef?: number | string;
   circuitoId?: number;
   prioridad: string;
   titulo?: string;
@@ -37,12 +43,17 @@ export async function crearOrden(entrada: {
   contratoDecreto?: string;
   venceEn?: string; // YYYY-MM-DD
   incidenteIds: number[];
+  /** Bocas de tormenta, cuando la orden es de la red pluvial. */
+  imbornalIds?: number[];
   tramos?: Array<z.infer<typeof tramoSchema>>;
 }) {
   const sesion = await requerirRol("planificacion");
   const datos = z
     .object({
       empresaId: z.number().int().positive(),
+      tipo: z.enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio"]).default("bacheo"),
+      ambito: z.enum(["distrito","circuito","corredor","barrio","colector"]).default("circuito"),
+      ambitoRef: z.union([z.number().int().positive(), z.string().max(120)]).optional(),
       circuitoId: z.number().int().positive().optional(),
       prioridad: prioridadVialSchema,
       titulo: z.string().max(200).optional(),
@@ -50,20 +61,39 @@ export async function crearOrden(entrada: {
       contratoDecreto: z.string().max(100).optional(),
       venceEn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       incidenteIds: z.array(z.number().int().positive()).max(200),
+      imbornalIds: z.array(z.number().int().positive()).max(300).default([]),
       tramos: z.array(tramoSchema).max(50).default([]),
     })
     .parse(entrada);
 
-  if (datos.incidenteIds.length === 0 && datos.tramos.length === 0) {
-    throw new Error("La orden necesita al menos un bache o un tramo");
+  if (datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0) {
+    throw new Error("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
   }
+
+  /**
+   * El ámbito se guarda en su columna propia (FK real, no una polimórfica).
+   * circuitoId sigue llegando aparte por compatibilidad con el flujo de
+   * siempre: cuando el ámbito ES el circuito, las dos apuntan al mismo.
+   */
+  const ref = datos.ambitoRef;
+  const refNum = typeof ref === "number" ? ref : null;
+  const circuitoId = datos.ambito === "circuito" ? (refNum ?? datos.circuitoId ?? null) : (datos.circuitoId ?? null);
 
   const ordenId = await conRls(claims(sesion), async (tx) => {
     const creada = (await tx.execute(sql`
-      insert into ordenes_trabajo (numero, empresa_id, circuito_id, prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por)
+      insert into ordenes_trabajo (
+        numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, colector,
+        prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por
+      )
       values (
         'OT-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('ordenes_numero_seq')::text, 4, '0'),
-        ${datos.empresaId}, ${datos.circuitoId ?? null}, ${datos.prioridad},
+        ${datos.empresaId}, ${datos.tipo}::tipo_orden, ${datos.ambito}::ambito_orden,
+        ${circuitoId},
+        ${datos.ambito === "distrito" ? refNum : null},
+        ${datos.ambito === "barrio" ? refNum : null},
+        ${datos.ambito === "corredor" ? refNum : null},
+        ${datos.ambito === "colector" && typeof ref === "string" ? ref : null},
+        ${datos.prioridad},
         ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},
         ${sesion.sub}::uuid
       ) returning id
@@ -102,6 +132,28 @@ export async function crearOrden(entrada: {
         values (${orden.id}, ${t.direccion},
           ${t.lat != null && t.lon != null ? sql`st_setsrid(st_makepoint(${t.lon}, ${t.lat}), 4326)` : sql`null`},
           ${t.tipoTrabajo})
+      `);
+    }
+    /**
+     * Bocas de tormenta: no son incidentes de calzada, así que el item guarda
+     * el id del imbornal en metadata. Con eso la boca no se ofrece dos veces
+     * mientras la orden esté viva (mismo criterio que imbornalesEnColector).
+     */
+    for (const imbornalId of datos.imbornalIds) {
+      await tx.execute(sql`
+        insert into orden_items (orden_id, direccion, geom, tipo_trabajo, metadata)
+        select ${orden.id},
+               coalesce(im.direccion, 'Imbornal ' || coalesce(im.ident, im.id::text)),
+               im.geom, 'tramo',
+               jsonb_build_object('imbornal_id', im.id, 'ident', im.ident, 'estado', im.estado::text)
+        from imbornales im
+        where im.id = ${imbornalId}
+          and not exists (
+            select 1 from orden_items oi
+            join ordenes_trabajo ot on ot.id = oi.orden_id
+            where (oi.metadata->>'imbornal_id')::bigint = im.id and oi.estado = 'pendiente'
+              and ot.estado in ('borrador','emitida','en_ejecucion')
+          )
       `);
     }
 

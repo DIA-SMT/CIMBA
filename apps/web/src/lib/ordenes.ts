@@ -88,9 +88,41 @@ export interface PendienteCircuito {
   enOrden: boolean;
 }
 
-export async function pendientesEnCircuito(
+/** Las cuatro formas de delimitar el trabajo, más el colector para lo pluvial. */
+export type AmbitoOrden = "distrito" | "circuito" | "corredor" | "barrio" | "colector";
+
+/**
+ * El WHERE de cada ámbito. El corredor y el barrio no tienen columna propia en
+ * incidentes, así que se resuelven contra su geometría: el corredor por
+ * cercanía (es una línea) y el barrio por contención (es un polígono).
+ */
+function filtroAmbito(ambito: AmbitoOrden, refId: number) {
+  if (ambito === "circuito") return sql`i.circuito_id = ${refId}`;
+  if (ambito === "distrito") return sql`i.distrito_id = ${refId}`;
+  if (ambito === "barrio") {
+    return sql`exists (select 1 from barrios b where b.id = ${refId} and st_contains(b.geom, i.geom))`;
+  }
+  if (ambito === "corredor") {
+    return sql`exists (
+      select 1 from corredores c
+      where c.id = ${refId} and st_dwithin(c.geom::geography, i.geom::geography, 30)
+    )`;
+  }
+  // El colector agrupa imbornales, no incidentes de calzada: no aporta
+  // pendientes de bacheo y la orden se arma con la lista de bocas.
+  return sql`false`;
+}
+
+/**
+ * Los incidentes abiertos dentro de un ámbito. El ámbito ya no es solo el
+ * circuito: Leo pidió poder armar la orden por distrito, circuito, corredor o
+ * barrio — "son esas cuatro alternativas". El corredor filtra por cercanía
+ * (30 m) porque es una línea, no un polígono con incidentes adentro.
+ */
+export async function pendientesEnAmbito(
   sesion: Sesion,
-  circuitoId: number,
+  ambito: AmbitoOrden,
+  refId: number,
 ): Promise<PendienteCircuito[]> {
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
@@ -108,7 +140,7 @@ export async function pendientesEnCircuito(
                  and ot.estado in ('borrador','emitida','en_ejecucion')
              ) as en_orden
       from incidentes i
-      where i.circuito_id = ${circuitoId}
+      where ${filtroAmbito(ambito, refId)}
         and i.estado in ('detectado','priorizado','programado','en_ejecucion')
         and i.geom is not null
       order by reclamos desc, i.score_prioridad desc nulls last, i.detectado_en
@@ -625,5 +657,150 @@ export async function deudaPorTerritorio(
         pct: abiertas > 0 ? sinAtencion / abiertas : 0,
       };
     });
+  });
+}
+
+// ── Órdenes de la red pluvial ────────────────────────────────────────────────
+
+export interface ImbornalPendiente {
+  id: number;
+  ident: string | null;
+  direccion: string | null;
+  tipo: string | null;
+  estado: string | null;
+  observaciones: string | null;
+  lat: number;
+  lon: number;
+  enOrden: boolean;
+}
+
+/**
+ * Las bocas de tormenta de un colector, peor estado primero. Leo quiere darles
+ * orden de trabajo igual que a los baches: "si cobran adicional por las tapas
+ * y la limpieza de imbornales, entonces yo sí quiero registrar su trabajo".
+ */
+export async function imbornalesEnColector(sesion: Sesion, colector: string): Promise<ImbornalPendiente[]> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select im.id, im.ident, im.direccion, im.tipo, im.estado::text, im.observaciones,
+             st_y(im.geom) as lat, st_x(im.geom) as lon,
+             exists (
+               select 1 from orden_items oi
+               join ordenes_trabajo ot on ot.id = oi.orden_id
+               where (oi.metadata->>'imbornal_id')::bigint = im.id
+                 and oi.estado = 'pendiente'
+                 and ot.estado in ('borrador','emitida','en_ejecucion')
+             ) as en_orden
+      from imbornales im
+      where im.colector = ${colector}
+      order by case im.estado
+                 when 'colapsado' then 0 when 'grave' then 1
+                 when 'moderado' then 2 when 'leve' then 3 else 4 end,
+               im.ident
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: Number(f.id),
+      ident: (f.ident as string) ?? null,
+      direccion: (f.direccion as string) ?? null,
+      tipo: (f.tipo as string) ?? null,
+      estado: (f.estado as string) ?? null,
+      observaciones: (f.observaciones as string) ?? null,
+      lat: Number(f.lat),
+      lon: Number(f.lon),
+      enOrden: Boolean(f.en_orden),
+    }));
+  });
+}
+
+/** Los colectores con imbornales relevados, con cuántos están en mal estado. */
+export async function colectoresConImbornales(
+  sesion: Sesion,
+): Promise<Array<{ colector: string; total: number; malos: number }>> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select colector, count(*)::int as total,
+             count(*) filter (where estado in ('grave','colapsado'))::int as malos
+      from imbornales where colector is not null
+      group by colector order by malos desc, total desc
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      colector: String(f.colector),
+      total: Number(f.total),
+      malos: Number(f.malos),
+    }));
+  });
+}
+
+/**
+ * Qué empresas pueden recibir cada tipo de orden. Una empresa sin tipos
+ * declarados queda habilitada para todo: dar de alta una contratista nueva no
+ * la deja muda hasta que alguien la configure.
+ */
+export async function empresasParaTipo(
+  sesion: Sesion,
+  tipo: string,
+): Promise<Array<{ id: number; nombre: string; contrato: string | null }>> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select e.id, e.nombre, e.contrato
+      from empresas e
+      where e.activa
+        and (
+          not exists (select 1 from empresa_tipos_orden t where t.empresa_id = e.id)
+          or exists (select 1 from empresa_tipos_orden t
+                     where t.empresa_id = e.id and t.tipo::text = ${tipo})
+        )
+      order by e.nombre
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: Number(f.id),
+      nombre: String(f.nombre),
+      contrato: (f.contrato as string) ?? null,
+    }));
+  });
+}
+
+export interface OpcionAmbito {
+  id: number;
+  etiqueta: string;
+  pendientes: number;
+}
+
+/**
+ * Las opciones de cada ámbito con cuánto trabajo pendiente tienen. El número
+ * es lo que hace elegible una opción: sin él, elegir "barrio" es adivinar.
+ */
+export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promise<OpcionAmbito[]> {
+  if (ambito === "circuito" || ambito === "colector") return [];
+  return conRls(claims(sesion), async (tx) => {
+    const consulta =
+      ambito === "distrito"
+        ? sql`
+            select d.id, 'Distrito ' || d.id as etiqueta,
+                   (select count(*) from incidentes i where i.distrito_id = d.id
+                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes
+            from distritos d order by d.id`
+        : ambito === "barrio"
+          ? sql`
+            select b.id, b.nombre as etiqueta,
+                   (select count(*) from incidentes i
+                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes
+            from barrios b order by b.nombre`
+          : sql`
+            select c.id,
+                   c.nombre || coalesce(' · ' || s.sector, '') as etiqueta,
+                   (select count(*) from incidentes i
+                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                        and i.geom is not null
+                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes
+            from corredores c
+            left join sectores_licitacion s on s.id = c.sector_id
+            order by c.nivel, c.nombre`;
+
+    const filas = (await tx.execute(consulta)) as unknown as Array<Record<string, unknown>>;
+    return filas
+      .map((f) => ({ id: Number(f.id), etiqueta: String(f.etiqueta), pendientes: Number(f.pendientes ?? 0) }))
+      .filter((o) => o.pendientes > 0);
   });
 }

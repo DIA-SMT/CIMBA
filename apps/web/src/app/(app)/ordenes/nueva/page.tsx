@@ -1,18 +1,29 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
-import { listarEmpresas, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
+import {
+  colectoresConImbornales,
+  listarEmpresas,
+  obtenerCapacidad,
+  opcionesAmbito,
+  resumenCircuitos,
+} from "@/lib/ordenes";
 import { TituloPagina } from "@/components/ui";
 import { FormularioOrden } from "./formulario-orden";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export default async function PaginaNuevaOrden() {
   const sesion = (await leerSesion())!;
-  const [circuitos, empresas, parametros] = await Promise.all([
+  const [circuitos, empresas, parametros, distritos, barrios, corredores, colectores] = await Promise.all([
     resumenCircuitos(sesion),
     listarEmpresas(sesion),
     obtenerCapacidad(sesion),
+    opcionesAmbito(sesion, "distrito"),
+    opcionesAmbito(sesion, "barrio"),
+    opcionesAmbito(sesion, "corredor"),
+    colectoresConImbornales(sesion),
   ]);
 
   return (
@@ -25,7 +36,7 @@ export default async function PaginaNuevaOrden() {
       </Link>
       <TituloPagina
         titulo="Nueva orden de trabajo"
-        sub="La demanda del circuito contra la oferta de la empresa: elegí los baches, quién los hace y emití el papel."
+        sub="Primero qué trabajo es, después por dónde se define, y recién ahí quién lo hace: elegí los puntos y emití el papel."
       />
       <FormularioOrden
         circuitos={circuitos.map((c) => ({
@@ -36,6 +47,10 @@ export default async function PaginaNuevaOrden() {
           empresaId: c.empresaId,
           empresaNombre: c.empresaNombre,
         }))}
+        distritos={distritos}
+        barrios={barrios}
+        corredores={corredores}
+        colectores={colectores}
         empresas={empresas}
         parametros={parametros}
       />

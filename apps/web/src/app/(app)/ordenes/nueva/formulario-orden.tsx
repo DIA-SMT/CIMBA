@@ -22,6 +22,53 @@ interface CircuitoOpcion {
   empresaNombre: string | null;
 }
 
+interface OpcionAmbito {
+  id: number;
+  etiqueta: string;
+  pendientes: number;
+}
+
+interface ImbornalPend {
+  id: number;
+  ident: string | null;
+  direccion: string | null;
+  tipo: string | null;
+  estado: string | null;
+  observaciones: string | null;
+  lat: number;
+  lon: number;
+  enOrden: boolean;
+}
+
+type TipoOrden = "bacheo" | "pano_hormigon" | "carpeta" | "cordon_cuneta" | "imbornales" | "tapas" | "ripio";
+type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector";
+
+/** Qué trabajo se manda a hacer. De esto depende a qué empresa puede ir. */
+const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> = [
+  { valor: "bacheo", etiqueta: "Bacheo", desc: "El trabajo de todos los días" },
+  { valor: "pano_hormigon", etiqueta: "Paño de hormigón", desc: "Cambio de paño — Obra Tipo C" },
+  { valor: "carpeta", etiqueta: "Carpeta", desc: "Repavimentación — Obra Tipo A" },
+  { valor: "cordon_cuneta", etiqueta: "Cordón cuneta", desc: "Reparación o construcción" },
+  { valor: "imbornales", etiqueta: "Imbornales", desc: "Limpieza y reparación de bocas de tormenta" },
+  { valor: "tapas", etiqueta: "Tapas", desc: "Reposición o reparación de tapas de cámara" },
+  { valor: "ripio", etiqueta: "Ripio", desc: "Pasado de máquina y enripiado" },
+];
+
+/**
+ * Las cuatro formas de delimitar el trabajo. El colector aparece solo para lo
+ * pluvial: una orden de imbornales no se define por circuito sino por a dónde
+ * descargan las bocas.
+ */
+const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }> = [
+  { valor: "circuito", etiqueta: "Circuito" },
+  { valor: "distrito", etiqueta: "Distrito" },
+  { valor: "corredor", etiqueta: "Corredor" },
+  { valor: "barrio", etiqueta: "Barrio" },
+  { valor: "colector", etiqueta: "Colector", soloPluvial: true },
+];
+
+const ES_PLUVIAL = (t: TipoOrden) => t === "imbornales" || t === "tapas";
+
 interface Tramo {
   direccion: string;
   tipoTrabajo: "bache" | "carpeta" | "tramo";
@@ -43,16 +90,29 @@ const claseInput =
  */
 export function FormularioOrden({
   circuitos,
+  distritos,
+  barrios,
+  corredores,
+  colectores,
   empresas,
   parametros,
 }: {
   circuitos: CircuitoOpcion[];
+  distritos: OpcionAmbito[];
+  barrios: OpcionAmbito[];
+  corredores: OpcionAmbito[];
+  colectores: Array<{ colector: string; total: number; malos: number }>;
   empresas: EmpresaResumen[];
   parametros: ParametrosCapacidad;
 }) {
   const router = useRouter();
 
   // ── La demanda ─────────────────────────────────────────────────────────────
+  // QUÉ trabajo y POR DÓNDE: los dos primeros pasos de la orden (Leo, 10/9).
+  const [tipo, setTipo] = useState<TipoOrden>("bacheo");
+  const [ambito, setAmbito] = useState<Ambito>("circuito");
+  const [colector, setColector] = useState("");
+  const [imbornales, setImbornales] = useState<ImbornalPend[]>([]);
   const [circuitoId, setCircuitoId] = useState<number>(0);
   const [pendientes, setPendientes] = useState<PendienteCircuito[]>([]);
   // Pedidos ROJOS limpios del circuito que todavía no son incidentes: el
@@ -77,26 +137,37 @@ export function FormularioOrden({
   const [error, setError] = useState<string | null>(null);
   const [creando, startTransition] = useTransition();
 
-  const elegirCircuito = async (id: number) => {
-    setCircuitoId(id);
+  /** Trae lo pendiente del ámbito elegido: incidentes de calzada, o las bocas
+   *  de tormenta del colector cuando la orden es pluvial. */
+  const elegirAmbitoRef = async (ref: number | string) => {
+    setCircuitoId(typeof ref === "number" ? ref : 0);
+    setColector(typeof ref === "string" ? ref : "");
     setSeleccion(new Set());
     setPendientes([]);
+    setImbornales([]);
     setErrorCarga(null);
     setRojas(0);
     setAvisoRelevar(null);
-    if (!id) return;
+    if (!ref) return;
     const pedido = ++pedidoRef.current;
     setCargando(true);
     try {
-      const r = await fetch(`/api/ordenes/pendientes?circuito=${id}`);
-      if (!r.ok) throw new Error("No se pudieron cargar los pendientes del circuito");
-      const j = (await r.json()) as { pendientes: PendienteCircuito[]; rojas?: number };
+      const r = await fetch(`/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}`);
+      if (!r.ok) throw new Error("No se pudo cargar lo pendiente de esa zona");
+      const j = (await r.json()) as {
+        pendientes?: PendienteCircuito[];
+        imbornales?: ImbornalPend[];
+        rojas?: number;
+      };
       if (pedido !== pedidoRef.current) return;
-      setPendientes(j.pendientes);
+      setPendientes(j.pendientes ?? []);
+      setImbornales(j.imbornales ?? []);
       setRojas(j.rojas ?? 0);
       // Si el circuito ya tiene empresa asignada, se propone sola.
-      const c = circuitos.find((x) => x.id === id);
-      if (c?.empresaId && !empresaId) setEmpresaId(c.empresaId);
+      if (ambito === "circuito") {
+        const c = circuitos.find((x) => x.id === ref);
+        if (c?.empresaId && !empresaId) setEmpresaId(c.empresaId);
+      }
     } catch (e) {
       if (pedido !== pedidoRef.current) return;
       setErrorCarga(e instanceof Error ? e.message : "Error al cargar");
@@ -104,6 +175,38 @@ export function FormularioOrden({
       if (pedido === pedidoRef.current) setCargando(false);
     }
   };
+
+  const elegirCircuito = elegirAmbitoRef;
+
+  /** Cambiar el tipo o el ámbito invalida lo elegido: no se puede armar media
+   *  orden de bacheo por circuito y terminarla como imbornales por colector. */
+  const cambiarTipo = (t: TipoOrden) => {
+    setTipo(t);
+    setAmbito(ES_PLUVIAL(t) ? "colector" : "circuito");
+    void elegirAmbitoRef(0);
+  };
+  const cambiarAmbito = (a: Ambito) => {
+    setAmbito(a);
+    void elegirAmbitoRef(0);
+  };
+
+  /** Las opciones del ámbito activo, ya con su número de pendientes. */
+  const opciones: Array<{ ref: number | string; etiqueta: string }> =
+    ambito === "circuito"
+      ? circuitos.map((c) => ({
+          ref: c.id,
+          etiqueta: `${c.codigo} — ${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos${c.empresaNombre ? ` · ${c.empresaNombre}` : ""}`,
+        }))
+      : ambito === "distrito"
+        ? distritos.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+        : ambito === "barrio"
+          ? barrios.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+          : ambito === "corredor"
+            ? corredores.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+            : colectores.map((c) => ({
+                ref: c.colector,
+                etiqueta: `${c.colector} — ${numero(c.total)} bocas · ${numero(c.malos)} en mal estado`,
+              }));
 
   const alternarSeleccion = (id: number) => {
     setSeleccion((s) => {
@@ -173,13 +276,19 @@ export function FormularioOrden({
       try {
         const res = await crearOrden({
           empresaId,
-          circuitoId: circuitoId || undefined,
+          tipo,
+          ambito,
+          ambitoRef: ambito === "colector" ? colector : circuitoId || undefined,
+          circuitoId: ambito === "circuito" ? circuitoId || undefined : undefined,
           prioridad,
           titulo: titulo.trim() || undefined,
           indicaciones: indicaciones.trim() || undefined,
           contratoDecreto: contratoDecreto.trim() || undefined,
           venceEn: venceEn || undefined,
-          incidenteIds: [...seleccion],
+          // En una orden pluvial lo tildado son bocas de tormenta, no
+          // incidentes de calzada: viajan por su propia lista.
+          incidenteIds: ambito === "colector" ? [] : [...seleccion],
+          imbornalIds: ambito === "colector" ? [...seleccion] : [],
           tramos: tramosValidos.map((t) => ({
             direccion: t.direccion.trim(),
             tipoTrabajo: t.tipoTrabajo,
@@ -201,22 +310,109 @@ export function FormularioOrden({
       {/* ══ LA DEMANDA ══ */}
       <div className="min-w-0 space-y-4">
         <Panel className="p-5">
-          <p className="mb-2 text-sm font-bold">1 · El circuito</p>
+          <p className="mb-2 text-sm font-bold">1 · Qué trabajo es</p>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {TIPOS_ORDEN.map((t) => (
+              <button
+                key={t.valor}
+                type="button"
+                onClick={() => cambiarTipo(t.valor)}
+                title={t.desc}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  tipo === t.valor
+                    ? "border-azul bg-azul text-white"
+                    : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+                }`}
+              >
+                {t.etiqueta}
+              </button>
+            ))}
+          </div>
+
+          <p className="mb-2 text-sm font-bold">2 · Por dónde se define</p>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {AMBITOS.filter((a) => (ES_PLUVIAL(tipo) ? a.valor === "colector" : !a.soloPluvial)).map((a) => (
+              <button
+                key={a.valor}
+                type="button"
+                onClick={() => cambiarAmbito(a.valor)}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  ambito === a.valor
+                    ? "border-celeste bg-celeste/15 text-celeste"
+                    : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+                }`}
+              >
+                {a.etiqueta}
+              </button>
+            ))}
+          </div>
           <select
-            value={circuitoId || ""}
-            onChange={(e) => void elegirCircuito(Number(e.target.value) || 0)}
-            className={`${claseInput} w-full max-w-md`}
+            value={ambito === "colector" ? colector : circuitoId || ""}
+            onChange={(e) => void elegirAmbitoRef(ambito === "colector" ? e.target.value : Number(e.target.value) || 0)}
+            className={`${claseInput} w-full max-w-xl`}
           >
-            <option value="">Elegí un circuito…</option>
-            {circuitos.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.codigo} — {numero(c.pendientes)} pendientes · {numero(c.demandasAbiertas)} reclamos
-                {c.empresaNombre ? ` · ${c.empresaNombre}` : ""}
+            <option value="">
+              {ambito === "colector" ? "Elegí un colector…" : `Elegí un ${ambito}…`}
+            </option>
+            {opciones.map((o) => (
+              <option key={String(o.ref)} value={o.ref}>
+                {o.etiqueta}
               </option>
             ))}
           </select>
+          {opciones.length === 0 && (
+            <p className="mt-2 text-xs text-texto-3">
+              No hay {ambito === "colector" ? "colectores relevados" : `${ambito}s con trabajo pendiente`}.
+            </p>
+          )}
           {errorCarga && <p className="mt-2 text-xs text-peligro">{errorCarga}</p>}
         </Panel>
+
+        {/* La lista de bocas de tormenta reemplaza a la de baches cuando la
+            orden es pluvial: es otro trabajo, con otro criterio de urgencia. */}
+        {ambito === "colector" && colector && (
+          <Panel className="overflow-hidden">
+            <div className="border-b border-borde px-4 py-3">
+              <p className="text-sm font-bold">
+                3 · Las bocas del colector{" "}
+                <span className="font-normal text-texto-3">
+                  — {numero(imbornales.length)} relevadas, peor estado primero
+                </span>
+              </p>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {imbornales.map((im) => (
+                <label
+                  key={im.id}
+                  className={`flex cursor-pointer items-start gap-2.5 border-b border-borde/60 px-4 py-2 text-[13px] ${im.enOrden ? "opacity-40" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={im.enOrden}
+                    checked={seleccion.has(im.id)}
+                    onChange={() => alternarSeleccion(im.id)}
+                    className="mt-1 accent-[#0066ff]"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <b>{im.ident ?? `#${im.id}`}</b>
+                    {im.direccion && <span className="text-texto-2"> · {im.direccion}</span>}
+                    <span className="mt-0.5 block text-[11px] text-texto-3">
+                      {im.tipo ?? "imbornal"}
+                      {im.estado && ` · estado ${im.estado}`}
+                      {im.observaciones && ` · ${im.observaciones.toLowerCase()}`}
+                      {im.enOrden && " · ya está en otra orden"}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {imbornales.length === 0 && !cargando && (
+                <p className="px-4 py-6 text-center text-sm text-texto-3">
+                  Ese colector no tiene bocas relevadas.
+                </p>
+              )}
+            </div>
+          </Panel>
+        )}
 
         {circuitoId > 0 && (
           <Panel className="overflow-hidden">
