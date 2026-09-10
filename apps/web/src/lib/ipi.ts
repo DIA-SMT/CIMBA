@@ -55,8 +55,17 @@ export async function recalcularIpi(sesion: Sesion): Promise<{ corredores: numbe
     await tx.execute(sql`
       with patologias as (
         select c.id,
+          /**
+           * Solo el BACHEO cuenta como patología. Una repavimentación de 800
+           * m² no es evidencia de deterioro actual: es la obra que ya se hizo
+           * — y si contara, el corredor recién arreglado saldría "crítico".
+           * Mismo criterio que /ordenes/escalamiento, a propósito: dos
+           * pantallas que miden la misma calle tienen que medirla igual.
+           */
           (select count(*) from intervenciones i
             where i.geom_ejecucion is not null
+              and coalesce(i.tipo_intervencion::text, 'bacheo') = 'bacheo'
+              and coalesce(i.superficie_m2, 0) < 50
               and i.finalizada_en > now() - interval '24 months'
               and st_dwithin(i.geom_ejecucion::geography, c.geom::geography, 25)) as reparadas,
           (select count(*) from demandas d

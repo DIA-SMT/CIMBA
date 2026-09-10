@@ -72,6 +72,10 @@ export default async function PaginaOrdenes({
                   Prioridad de corredores (IPI)
                   <span className="block text-[11px] font-normal text-texto-3">El índice oficial: qué eje se interviene primero en cada sector</span>
                 </Link>
+                <Link href="/ordenes/escalamiento" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
+                  Cuadras que ya no se bachean
+                  <span className="block text-[11px] font-normal text-texto-3">Dónde seguir parchando es tirar plata: pasan a obra</span>
+                </Link>
                 <Link href="/ordenes/productividad" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Productividad
                   <span className="block text-[11px] font-normal text-texto-3">Baches por día y por mes, por ejecutor</span>
