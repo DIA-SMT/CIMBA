@@ -1585,7 +1585,10 @@ function MapaInterno({
   const arrastroRef = useRef(false);
   const [verAvenidas, setVerAvenidas] = useState(true);
   const [verCalles, setVerCalles] = useState(true);
-  const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? true);
+  /* Arranca en el mapa BLANCO (Leo, 10/9: "que el mapa base sea el blanco").
+     La satelital sigue a un toque en la barra, y ?sat=1 la trae prendida
+     desde un link. */
+  const [verSatelite, setVerSatelite] = useState(inicial?.sat ?? false);
   // Límites territoriales (distritos, circuitos electorales, barrios): capas de
   // referencia livianas, servidas como GeoJSON estático y cargadas solo si se
   // prenden — nadie quiere pagar el fetch de 327 barrios sin pedirlo.
@@ -5071,8 +5074,13 @@ function MapaInterno({
                     <button
                       key={f}
                       onClick={() => setFuentes((v) => ({ ...v, [f]: !activa }))}
+                      /* Apagado = TACHADO, igual que los chips de tipo de
+                         problema. Con el estilo anterior (celeste prendido,
+                         gris apagado) Leo creyó que estaba tachando cuando en
+                         realidad estaba seleccionando: dos filas de chips que
+                         hacen lo mismo tienen que verse igual. */
                       className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition ${
-                        activa ? "border-celeste/50 bg-celeste/10 text-celeste" : "border-borde-2 text-texto-3"
+                        activa ? "border-borde-2 bg-panel-2 text-texto-2" : "border-borde text-texto-3 line-through opacity-60"
                       }`}
                     >
                       {ETIQUETA_FUENTE[f as keyof typeof ETIQUETA_FUENTE] ?? f}

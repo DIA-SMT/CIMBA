@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { Map as MapaGL, Marker, NavigationControl } from "react-map-gl/maplibre";
 import { estiloMapa, usarTemaMapa } from "./tema-mapa";
+import { CapasTerreno, ReferenciaTerreno } from "./mini-mapa";
 
 /** Niveles de opacidad del panel: opaco → translúcido → casi transparente. */
 const NIVELES_OPACIDAD = [1, 0.55, 0.22] as const;
@@ -113,6 +114,10 @@ export function VerEnMapa({
                 attributionControl={false}
               >
                 <NavigationControl position="bottom-right" showCompass={false} />
+                {/* Abre en satelital + red vial: mirando el pedido hay que poder
+                    decidir si es pavimento (bacheo) o ripio (ingeniería), y
+                    sobre el mapa gris no se ve. */}
+                <CapasTerreno />
                 <Marker longitude={lon} latitude={lat} anchor="center">
                   <span className="relative flex h-5 w-5 items-center justify-center">
                     <span className="pulso absolute inline-flex h-5 w-5 rounded-full" style={{ background: `${color}33` }} />
@@ -125,7 +130,10 @@ export function VerEnMapa({
               </MapaGL>
             </div>
 
-            <div className="flex items-center justify-between border-t border-borde px-3 py-1.5">
+            <div className="border-t border-borde px-3 pt-1.5">
+              <ReferenciaTerreno />
+            </div>
+            <div className="flex items-center justify-between px-3 py-1.5">
               <span className="num text-[10px] text-texto-3">
                 {lat.toFixed(6)}, {lon.toFixed(6)}
               </span>

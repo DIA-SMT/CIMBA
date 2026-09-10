@@ -244,7 +244,23 @@ export default async function PaginaDemandas({
                     </span>
                   )}
                 </td>
-                <td className="max-w-64 truncate px-4 py-2.5" title={d.direccion ?? ""}>{d.direccion ?? "—"}</td>
+                {/* La dirección es un LINK real, no solo la flecha del final:
+                    así el click derecho abre el pedido en otra pestaña y se
+                    pueden revisar de a uno sin perder el listado (Leo, 10/9).
+                    Debajo, dónde cae: sin distrito y circuito no se sabe a qué
+                    cuadrilla le toca. */}
+                <td className="max-w-64 px-4 py-2.5" title={d.direccion ?? ""}>
+                  <Link href={`/demandas/${d.id}`} className="block truncate hover:text-celeste hover:underline">
+                    {d.direccion ?? "—"}
+                  </Link>
+                  {(d.distritoId != null || d.circuito) && (
+                    <span className="mt-0.5 block text-[10px] text-texto-3">
+                      {d.distritoId != null && `Distrito ${d.distritoId}`}
+                      {d.distritoId != null && d.circuito && " · "}
+                      {d.circuito && `Circuito ${d.circuito}`}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5"><BarraConfianza valor={d.geocodConfianza} /></td>
                 <td className="px-4 py-2.5"><BadgeEstadoDemanda estado={d.estado} /></td>
                 <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(d.creadoEn)}</td>

@@ -83,6 +83,9 @@ export interface DemandaResumen {
   lat: number | null;
   lon: number | null;
   distritoId: number | null;
+  /** Código del circuito operativo. Leo lo pidió en la ficha: sin eso no
+   *  sabe a qué cuadrilla le corresponde el pedido que está mirando. */
+  circuito?: string | null;
   creadoEn: string;
   vinculos: number;
   metadata: Record<string, unknown>;
@@ -127,10 +130,11 @@ export async function listarDemandas(
       select d.id, d.fuente, d.estado, d.tipo, d.destino, d.descripcion,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.geocod_confianza, st_y(d.geom) as lat, st_x(d.geom) as lon,
-             d.distrito_id, d.creado_en, d.metadata,
+             d.distrito_id, c.codigo as circuito, d.creado_en, d.metadata,
              ${verContacto ? sql`d.contacto` : sql`null::jsonb`} as contacto,
              (select count(*) from demanda_incidente di where di.demanda_id = d.id) as vinculos
       from demandas d
+      left join circuitos c on c.id = d.circuito_id
       ${cond}
       order by d.creado_en desc
       limit ${limite} offset ${offset}
@@ -152,6 +156,7 @@ export async function listarDemandas(
         lat: f.lat != null ? Number(f.lat) : null,
         lon: f.lon != null ? Number(f.lon) : null,
         distritoId: f.distrito_id != null ? Number(f.distrito_id) : null,
+        circuito: (f.circuito as string) ?? null,
         creadoEn: String(f.creado_en),
         vinculos: Number(f.vinculos ?? 0),
         metadata: (f.metadata as Record<string, unknown>) ?? {},
