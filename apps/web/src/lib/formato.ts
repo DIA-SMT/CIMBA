@@ -200,6 +200,26 @@ export function hoyISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * ¿La orden se pasó de fecha? Estaba escrito tres veces —el portal, la tarjeta
+ * de la lista y la tabla del staff— y el detalle de la orden ni siquiera lo
+ * miraba: imprimía "Vence el 05/09/26" en gris chico el 11/9, como si fuera
+ * futuro.
+ *
+ * vence_en es una fecha SIN hora ("YYYY-MM-DD"), así que se compara como texto
+ * contra el hoy LOCAL. Con toISOString(), a la noche argentina (UTC−3) el
+ * "hoy" ya sería el día siguiente y una orden que vence hoy aparecería
+ * vencida.
+ */
+export const estaVencida = (o: { venceEn: string | null; estado: string }): boolean =>
+  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn < hoyISO();
+
+/** Vence hoy: último día, todavía no es deuda. Va en las DOS pantallas que
+ *  muestran la fecha o en ninguna — si no, la lista dice "Vence el 11/09/26"
+ *  en gris y el detalle "Vence HOY", que es el bug que se está arreglando. */
+export const venceHoy = (o: { venceEn: string | null; estado: string }): boolean =>
+  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn === hoyISO();
+
 export function numero(n: number): string {
   return new Intl.NumberFormat("es-AR").format(n);
 }

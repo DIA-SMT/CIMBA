@@ -9,6 +9,7 @@ import { comprimirFoto } from "@/lib/comprimir-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
+import { Achicando } from "./tarjeta-item";
 
 /** Mismo bounding box laxo que valida la acción (ver tarjeta-item). */
 const dentroDeSmt = (lat: number, lon: number) =>
@@ -367,14 +368,16 @@ export function ProponerItem({ ordenId }: { ordenId: number }) {
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(e) => elegirFoto(e.target.files?.[0])}
+        onChange={(e) => void elegirFoto(e.target.files?.[0])}
       />
       <button
         onClick={() => refFoto.current?.click()}
+        disabled={preparandoFoto}
         className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
           foto ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
         }`}
       >
+        <Achicando visible={preparandoFoto} />
         {preview ? (
           <>
             <img src={preview} alt="Foto del bache propuesto" loading="lazy" className="h-full w-full object-cover" />

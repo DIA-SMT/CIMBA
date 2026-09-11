@@ -813,3 +813,27 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
       .filter((o) => o.pendientes > 0);
   });
 }
+
+/**
+ * Cuántas órdenes activas se pasaron de fecha. Consulta propia y no un
+ * `.filter()` sobre listarOrdenes porque esa tiene `limit 200`: contar del
+ * array daría un número distinto al del parte diario en cuanto haya más de
+ * doscientas órdenes, y el KPI existe justamente para que no haya dos cifras
+ * de lo mismo.
+ *
+ * La comparación es contra la fecha LOCAL calculada en Postgres
+ * (America/Argentina/Tucuman): vence_en es un date sin hora, y con `now()` en
+ * UTC una orden que vence hoy aparecería vencida desde las 21:00 de ayer.
+ */
+export async function contarOrdenesVencidas(sesion: Sesion): Promise<number> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select count(*)::int as n
+      from ordenes_trabajo ot
+      where ot.estado in ('emitida', 'en_ejecucion')
+        and ot.vence_en is not null
+        and ot.vence_en < (now() at time zone 'America/Argentina/Tucuman')::date
+    `)) as unknown as Array<{ n: number }>;
+    return Number(filas[0]?.n ?? 0);
+  });
+}

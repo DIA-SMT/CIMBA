@@ -8,6 +8,7 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
+import { Achicando } from "../orden/[id]/tarjeta-item";
 import { SelectorUbicacion, type UbicacionElegida } from "../selector-ubicacion";
 
 /**
@@ -67,6 +68,9 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
   const [previewDespues, setPreviewDespues] = useState<string | null>(null);
   const [previewAntes, setPreviewAntes] = useState<string | null>(null);
   const [preparandoFotos, setPreparandoFotos] = useState(0);
+  /** Qué cuadro está recodificando: el aviso va encima del cuadro, que es
+   *  donde mira el capataz — no solo en el botón, que queda más abajo. */
+  const [cuadroOcupado, setCuadroOcupado] = useState<Record<string, boolean>>({});
   const [ahorroFoto, setAhorroFoto] = useState<string | null>(null);
 
   // Lo repetido de la jornada vuelve puesto; lo que cambia (dirección, medidas,
@@ -85,6 +89,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
   }, []);
 
   const elegirFoto = async (
+    clave: string,
     archivo: File | undefined,
     setFoto: (f: File | null) => void,
     setPreview: (u: string | null) => void,
@@ -97,6 +102,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
       return;
     }
     setPreparandoFotos((n) => n + 1);
+    setCuadroOcupado((v) => ({ ...v, [clave]: true }));
     try {
       const { archivo: listo, antes, despues } = await comprimirFoto(archivo);
       setFoto(listo);
@@ -104,6 +110,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
       if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
     } finally {
       setPreparandoFotos((n) => n - 1);
+      setCuadroOcupado((v) => ({ ...v, [clave]: false }));
     }
   };
 
@@ -175,8 +182,8 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         setLargo("");
         setObs("");
         setTicket("");
-        void elegirFoto(undefined, setFotoDespues, setPreviewDespues, previewDespues);
-        void elegirFoto(undefined, setFotoAntes, setPreviewAntes, previewAntes);
+        void elegirFoto("despues", undefined, setFotoDespues, setPreviewDespues, previewDespues);
+        void elegirFoto("antes", undefined, setFotoAntes, setPreviewAntes, previewAntes);
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "No se pudo cargar: probá de nuevo.");
@@ -341,7 +348,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
               capture="environment"
               className="hidden"
               onChange={(e) =>
-                void elegirFoto(e.target.files?.[0], setFotoDespues, setPreviewDespues, previewDespues)
+                void elegirFoto("despues", e.target.files?.[0], setFotoDespues, setPreviewDespues, previewDespues)
               }
             />
             <input
@@ -351,16 +358,18 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
               capture="environment"
               className="hidden"
               onChange={(e) =>
-                void elegirFoto(e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)
+                void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)
               }
             />
             <button
               type="button"
               onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
               }`}
             >
+              <Achicando visible={cuadroOcupado.despues} />
               {previewDespues ? (
                 <>
                   <img
@@ -384,10 +393,12 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
             <button
               type="button"
               onClick={() => refAntes.current?.click()}
+              disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoAntes ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
               }`}
             >
+              <Achicando visible={cuadroOcupado.antes} />
               {previewAntes ? (
                 <>
                   <img

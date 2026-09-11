@@ -122,23 +122,50 @@ export function FormularioCiudadano() {
     }
   };
 
+  /**
+   * QUÉ FALTA, TODO JUNTO Y EN CRIOLLO.
+   *
+   * Antes el botón aparecía al 40% de opacidad y no respondía, sin decir por
+   * qué: cinco requisitos invisibles, con el vecino al teléfono esperando.
+   * Ahora el botón siempre se puede tocar y el mensaje lista lo que falta de
+   * una — mostrarlo de a uno obligaría a cinco clics a ciegas. Es el mismo
+   * patrón que ya usa el portal de empresas, que es el público menos técnico
+   * del sistema.
+   *
+   * Los mínimos son EXACTAMENTE los del zod de crearDemandaCiudadano
+   * (lib/acciones.ts): si acá se afloja alguno, el clic llega al servidor y el
+   * catch de abajo imprime el ZodError crudo en la cara del operador.
+   *
+   * Y se compara con .trim(): sin eso, un nombre de vecino con tres espacios
+   * pasaba el cliente Y el servidor, y se grababa el pedido en blanco.
+   */
   const enviar = () => {
-    if (!punto) {
-      setError("Marcá la ubicación en el mapa (o usá el GPS si estás en el lugar)");
+    const falta: string[] = [];
+    if (!punto) falta.push("la ubicación en el mapa");
+    if (direccion.trim().length < 3) falta.push("la dirección");
+    if (descripcion.trim().length < 5) falta.push("qué pasa (al menos una frase)");
+    if (solicitante.trim().length < 3) falta.push("el nombre de quien reclama");
+    if (area.trim().length < 2) falta.push("el área o repartición");
+    if (falta.length > 0) {
+      setError(
+        falta.length === 1
+          ? `Falta ${falta[0]}.`
+          : `Falta completar: ${falta.slice(0, -1).join(", ")} y ${falta[falta.length - 1]}.`,
+      );
       return;
     }
     setError(null);
     startTransition(async () => {
       try {
         const r = await crearDemandaCiudadano({
-          lat: punto.lat,
-          lon: punto.lon,
+          lat: punto!.lat,
+          lon: punto!.lon,
           tipo,
-          descripcion,
-          direccion,
-          solicitante,
-          area,
-          distrito: distrito || undefined,
+          descripcion: descripcion.trim(),
+          direccion: direccion.trim(),
+          solicitante: solicitante.trim(),
+          area: area.trim(),
+          distrito: distrito.trim() || undefined,
           desdeGps,
         });
         setCreado(r.id ?? null);
@@ -360,7 +387,7 @@ export function FormularioCiudadano() {
 
       <button
         onClick={enviar}
-        disabled={pendiente || !punto || direccion.length < 3 || descripcion.length < 5 || solicitante.length < 3 || area.length < 2}
+        disabled={pendiente}
         className="rounded-lg bg-azul px-6 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-40"
       >
         {pendiente ? "Enviando…" : "Registrar pedido"}

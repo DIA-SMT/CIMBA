@@ -318,10 +318,19 @@ export default async function PaginaBrecha() {
         La brecha por distrito{" "}
         <span className="font-normal text-texto-3">— ordenada por deuda sin tocar; clic para verla en el mapa</span>
       </h2>
-      <Panel className="divide-y divide-borde/60">
+      {/* En un teléfono quedaban ~263 px útiles para una fila que pide 96 de
+          Distrito + 64 + 80 + 96 de columnas fijas: la barra elástica —que es
+          LA columna, la que muestra la deuda— se aplastaba a cero y el resto
+          se pisaba. Con ancho mínimo y scroll propio la tabla se desliza de
+          costado sola, en vez de arrastrar el main entero con el título y los
+          demás paneles. Es lo que ya hacen las otras tablas del sistema; no se
+          esconden los m² en celular porque entonces el teléfono y el
+          escritorio mostrarían cifras distintas de lo mismo. */}
+      <Panel className="overflow-x-auto">
+      <div className="min-w-[620px] divide-y divide-borde/60">
         <div className="flex items-center gap-3 px-4 py-2 text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
           <span className="w-24 shrink-0">Distrito</span>
-          <span className="flex-1">Deuda sin tocar sobre lo pedido</span>
+          <span className="min-w-0 flex-1">Deuda sin tocar sobre lo pedido</span>
           <span className="num w-16 shrink-0 text-right">Reparados</span>
           <span className="num w-20 shrink-0 text-right" title="Bacheo: ~4 m² por reparación">
             m² bacheo
@@ -393,6 +402,7 @@ export default async function PaginaBrecha() {
             </Link>
           );
         })}
+      </div>
       </Panel>
       <p className="mt-2 text-[11px] text-texto-3">
         El distrito sale del cruce espacial con los 20 polígonos oficiales. “Fuera de los distritos” son los

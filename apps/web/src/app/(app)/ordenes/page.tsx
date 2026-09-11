@@ -2,8 +2,14 @@ import Link from "next/link";
 import { Bell, ChevronDown } from "lucide-react";
 import { ESTADOS_ORDEN, type EstadoOrden } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
-import { listarEmpresas, listarOrdenes, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
-import { fechaCorta, hoyISO, numero } from "@/lib/formato";
+import {
+  contarOrdenesVencidas,
+  listarEmpresas,
+  listarOrdenes,
+  obtenerCapacidad,
+  resumenCircuitos,
+} from "@/lib/ordenes";
+import { estaVencida, fechaCorta, numero } from "@/lib/formato";
 import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
@@ -34,12 +40,19 @@ export default async function PaginaOrdenes({
     listarOrdenes(sesion),
     obtenerCapacidad(sesion),
   ]);
+  const vencidas = await contarOrdenesVencidas(sesion);
   const puedePlanificar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "planificacion";
 
   const estadoFiltro = ESTADOS_ORDEN.includes(filtros.estado as EstadoOrden)
     ? (filtros.estado as EstadoOrden)
     : undefined;
-  const ordenesFiltradas = estadoFiltro ? ordenes.filter((o) => o.estado === estadoFiltro) : ordenes;
+  const soloVencidas = filtros.estado === "vencidas";
+  const ordenesFiltradas = soloVencidas
+    ? ordenes.filter(estaVencida)
+    : estadoFiltro
+      ? ordenes.filter((o) => o.estado === estadoFiltro)
+      : ordenes;
+  const hayFiltro = Boolean(estadoFiltro) || soloVencidas;
 
   // KPIs del tablero
   const ordenesActivas = ordenes.filter((o) => o.estado === "emitida" || o.estado === "en_ejecucion");
@@ -116,7 +129,15 @@ export default async function PaginaOrdenes({
       <MapaOrdenes />
 
       {/* KPIs */}
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {/* --color-peligro y NO el rojo del semáforo: el rojo del semáforo
+            significa "pedido sin atención"; esto es "se pasó la fecha". */}
+        <Kpi
+          n={vencidas}
+          etiqueta="órdenes vencidas"
+          color={vencidas > 0 ? "var(--color-peligro)" : "var(--color-texto-3)"}
+          nota={vencidas > 0 ? "activas que se pasaron de fecha" : "ninguna se pasó de fecha"}
+        />
         <Kpi n={ordenesActivas.length} etiqueta="órdenes activas" color="var(--color-abierto)" nota="emitidas o en ejecución" />
         <Kpi n={itemsPendientes} etiqueta="items pendientes" color="var(--color-encurso)" nota="baches y tramos ya asignados a empresas" />
         <Kpi n={m2Reportados} etiqueta="m² reportados" color="var(--color-ok)" nota="superficie cargada por las empresas" />
@@ -226,10 +247,14 @@ export default async function PaginaOrdenes({
       <form className="mb-3 flex flex-wrap items-center gap-2" action="/ordenes" method="get">
         <select
           name="estado"
-          defaultValue={estadoFiltro ?? ""}
+          defaultValue={soloVencidas ? "vencidas" : (estadoFiltro ?? "")}
           className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
         >
           <option value="">Todos los estados</option>
+          {/* Vencidas no es un estado de la orden sino un cruce con la fecha,
+              pero para quien mira el tablero es una categoría más — y acá es
+              donde la va a buscar. */}
+          <option value="vencidas">Vencidas</option>
           {ESTADOS_ORDEN.map((e) => (
             <option key={e} value={e}>
               {ETIQUETA_ESTADO_ORDEN[e]}
@@ -239,7 +264,7 @@ export default async function PaginaOrdenes({
         <button className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste">
           Filtrar
         </button>
-        {estadoFiltro && (
+        {hayFiltro && (
           <Link href="/ordenes" className="text-sm text-texto-2 hover:text-texto">
             Limpiar
           </Link>
@@ -263,18 +288,16 @@ export default async function PaginaOrdenes({
           <tbody>
             {ordenesFiltradas.map((o) => {
               const pct = o.items > 0 ? Math.round((100 * o.hechos) / o.items) : 0;
-              // venceEn ya es "YYYY-MM-DD" local: comparar como texto evita el
-              // corrimiento UTC que marcaba vencida una orden desde la víspera.
-              const vencida =
-                o.venceEn != null &&
-                (o.estado === "emitida" || o.estado === "en_ejecucion") &&
-                o.venceEn < hoyISO();
+              const vencida = estaVencida(o);
               return (
                 <tr key={o.id} className="border-b border-borde/60 transition hover:bg-panel-2">
                   <td className="px-4 py-2.5">
                     <Link href={`/ordenes/${o.id}`} className="num font-bold text-celeste hover:underline">
                       {o.numero}
                     </Link>
+                    {vencida && (
+                      <span className="ml-1.5 text-[10px] font-bold text-peligro">VENCIDA</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <span
@@ -318,14 +341,20 @@ export default async function PaginaOrdenes({
             {ordenesFiltradas.length === 0 && (
               <FilaVacia
                 columnas={9}
-                titulo={estadoFiltro ? "No hay órdenes en este estado" : "Todavía no hay ninguna orden"}
+                titulo={
+                  soloVencidas
+                    ? "Ninguna orden activa está vencida"
+                    : estadoFiltro
+                      ? "No hay órdenes en este estado"
+                      : "Todavía no hay ninguna orden"
+                }
                 detalle={
-                  estadoFiltro
+                  hayFiltro
                     ? undefined
                     : "La orden es el papel que viaja a la empresa con la lista de baches a tapar."
                 }
                 accion={
-                  estadoFiltro
+                  hayFiltro
                     ? { texto: "Ver todas las órdenes", href: "/ordenes" }
                     : { texto: "Crear la primera orden", href: "/ordenes/nueva" }
                 }

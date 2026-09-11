@@ -2,7 +2,7 @@ import { FileCheck, Plus } from "lucide-react";
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, ordenesDeEmpresa, type OrdenResumen } from "@/lib/ordenes";
-import { fechaCorta, hoyISO, numero } from "@/lib/formato";
+import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
 import { Panel } from "@/components/ui";
 import { resolverVistaPortal } from "./vista";
 
@@ -22,17 +22,6 @@ const ETIQUETA_ESTADO: Record<string, string> = {
   completada: "Completada",
   anulada: "Anulada",
 };
-
-/**
- * Vence_en es una fecha sin hora ("YYYY-MM-DD"): se compara como texto contra
- * el hoy LOCAL para no marcar VENCIDA una orden que vence hoy por el
- * corrimiento UTC−3 (a la noche, toISOString ya estaría en el día siguiente).
- */
-function estaVencida(orden: OrdenResumen): boolean {
-  if (!orden.venceEn) return false;
-  if (!["emitida", "en_ejecucion"].includes(orden.estado)) return false;
-  return orden.venceEn < hoyISO();
-}
 
 export default async function PaginaEmpresa({
   searchParams,
@@ -166,6 +155,7 @@ function BannerEspejo({ nombreEmpresa }: { nombreEmpresa: string }) {
 function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspejo: string }) {
   const prioridad = PRIORIDAD[orden.prioridad] ?? TERCIARIA;
   const vencida = estaVencida(orden);
+  const hoy = venceHoy(orden);
   const pct = orden.items > 0 ? Math.round((100 * orden.hechos) / orden.items) : 0;
 
   return (
@@ -205,6 +195,10 @@ function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspe
           <p className="mt-2 text-sm">
             {vencida ? (
               <span className="font-bold text-peligro">VENCIDA — vencía el {fechaCorta(orden.venceEn)}</span>
+            ) : hoy ? (
+              /* Último día: todavía no es deuda, pero no puede leerse igual
+                 que una que vence en tres semanas. */
+              <span className="font-bold text-amarillo">Vence HOY</span>
             ) : (
               <span className="text-texto-2">Vence el {fechaCorta(orden.venceEn)}</span>
             )}

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
-import { fechaCorta, numero } from "@/lib/formato";
+import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -135,8 +135,19 @@ export default async function PaginaOrdenEmpresa({
         <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
           <div className="h-full rounded-full bg-resuelto" style={{ width: `${pct}%` }} />
         </div>
+        {/* Carácter por carácter lo mismo que el capataz acaba de ver en la
+            lista: antes acá decía "Vence el 05/09/26" en gris chico aunque
+            hiciera seis días que estaba vencida. */}
         {orden.venceEn && (
-          <p className="mt-2 text-sm text-texto-2">Vence el {fechaCorta(orden.venceEn)}</p>
+          <p className="mt-2 text-sm">
+            {estaVencida(orden) ? (
+              <span className="font-bold text-peligro">VENCIDA — vencía el {fechaCorta(orden.venceEn)}</span>
+            ) : venceHoy(orden) ? (
+              <span className="font-bold text-amarillo">Vence HOY</span>
+            ) : (
+              <span className="text-texto-2">Vence el {fechaCorta(orden.venceEn)}</span>
+            )}
+          </p>
         )}
       </Panel>
 

@@ -317,8 +317,19 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
    * El contador permite bloquear el envío mientras se está recodificando.
    */
   const [preparandoFotos, setPreparandoFotos] = useState(0);
+  /**
+   * Qué cuadro está ocupado. El CONTADOR de arriba no alcanza y no se
+   * reemplaza: es el que bloquea el envío de una foto sin comprimir contra el
+   * límite de body de la función serverless. Esto es otra cosa — dónde mira el
+   * capataz mientras espera. Sacaba la foto, volvía al formulario y el cuadro
+   * decía exactamente lo mismo que antes ("Foto del DESPUÉS / obligatoria"),
+   * así que con guantes y el camión esperando tocaba de nuevo y se abría la
+   * cámara otra vez.
+   */
+  const [cuadroOcupado, setCuadroOcupado] = useState<Record<string, boolean>>({});
   const [ahorroFoto, setAhorroFoto] = useState<string | null>(null);
   const elegirFoto = async (
+    clave: string,
     archivo: File | undefined,
     setFoto: (f: File | null) => void,
     setPreview: (u: string | null) => void,
@@ -331,6 +342,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       return;
     }
     setPreparandoFotos((n) => n + 1);
+    setCuadroOcupado((v) => ({ ...v, [clave]: true }));
     try {
       const { archivo: listo, antes, despues } = await comprimirFoto(archivo);
       setFoto(listo);
@@ -338,6 +350,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
     } finally {
       setPreparandoFotos((n) => n - 1);
+      setCuadroOcupado((v) => ({ ...v, [clave]: false }));
     }
   };
 
@@ -567,14 +580,16 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                 accept="image/*"
                 capture="environment"
                 className="hidden"
-                onChange={(e) => elegirFoto(e.target.files?.[0], setFotoHoy, setPreviewHoy, previewHoy)}
+                onChange={(e) => void elegirFoto("hoy", e.target.files?.[0], setFotoHoy, setPreviewHoy, previewHoy)}
               />
               <button
                 onClick={() => refFotoHoy.current?.click()}
+                disabled={cuadroOcupado.hoy}
                 className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
                   fotoHoy ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
                 }`}
               >
+                <Achicando visible={cuadroOcupado.hoy} />
                 {previewHoy ? (
                   <>
                     <img src={previewHoy} alt="Foto de cómo está hoy" loading="lazy" className="h-full w-full object-cover" />
@@ -749,7 +764,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               capture="environment"
               className="hidden"
               onChange={(e) =>
-                elegirFoto(e.target.files?.[0], setFotoDespues, setPreviewDespues, previewDespues)
+                void elegirFoto("despues", e.target.files?.[0], setFotoDespues, setPreviewDespues, previewDespues)
               }
             />
             <input
@@ -758,14 +773,16 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               accept="image/*"
               capture="environment"
               className="hidden"
-              onChange={(e) => elegirFoto(e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)}
+              onChange={(e) => void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)}
             />
             <button
               onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
               }`}
             >
+              <Achicando visible={cuadroOcupado.despues} />
               {previewDespues ? (
                 <>
                   <img src={previewDespues} alt="Foto del después" loading="lazy" className="h-full w-full object-cover" />
@@ -783,10 +800,12 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             </button>
             <button
               onClick={() => refAntes.current?.click()}
+              disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoAntes ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
               }`}
             >
+              <Achicando visible={cuadroOcupado.antes} />
               {previewAntes ? (
                 <>
                   <img src={previewAntes} alt="Foto del antes" loading="lazy" className="h-full w-full object-cover" />
@@ -1029,5 +1048,27 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         </div>
       )}
     </Panel>
+  );
+}
+
+/**
+ * "Estoy achicando la foto", encima del cuadro donde el capataz está mirando.
+ *
+ * Es la espera más larga del portal (recodificar 8 MP en un teléfono de
+ * gama media) y era la única sin aviso: el cuadro seguía diciendo "Foto del
+ * DESPUÉS / obligatoria" como si la cámara no hubiera guardado nada.
+ *
+ * Fondo negro neutro a propósito: ni semáforo ni amarillo de marca — no es un
+ * estado del trabajo, es el sistema trabajando. Y el texto es EXACTAMENTE el
+ * mismo que muestra el botón de enviar mientras dura, para que no parezcan
+ * dos esperas distintas.
+ */
+export function Achicando({ visible }: { visible?: boolean }) {
+  if (!visible) return null;
+  return (
+    <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/60 text-[11px] font-bold text-white">
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+      Preparando la foto…
+    </span>
   );
 }
