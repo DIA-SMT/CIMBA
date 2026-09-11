@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { actualizarEmpresa } from "@/lib/acciones-ordenes";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Celda editable de la dotación de una empresa (cuadrillas o turnos/día):
@@ -44,7 +45,7 @@ export function CeldaDotacion({
         });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo guardar");
+        setError(mensajeDeError(e, "No se pudo guardar"));
         setTexto(String(valor));
       }
     });

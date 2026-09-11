@@ -1354,6 +1354,15 @@ export interface EmbudoDemandas {
   /** De esas, cuántas entraron por una carga masiva de archivo (sin fecha
    *  real del reclamo) y nunca pasaron por triage. */
   sinAtencionDeArchivo: number;
+  /**
+   * REINCIDENCIAS: pedidos con una reparación a menos de 40 m pero ANTERIOR
+   * al pedido — se bacheó y se volvió a romper, y desde entonces nadie lo
+   * tocó. Acá NO cuentan como "sin atención" (hay obra cerca) pero en /brecha
+   * SÍ entran en la brecha real (el problema sigue ahí). Es exactamente la
+   * diferencia entre los dos números, y por eso viaja: para poder escribirla
+   * en pantalla en vez de que el Director la descubra restando.
+   */
+  reincidencias: number;
   conFoto: number;
 }
 
@@ -1402,6 +1411,29 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
             and st_dwithin(i.geom::geography, d.geom::geography, 40))
     `)) as unknown as Array<{ n: number; de_archivo: number }>;
 
+    /* Mismo criterio, línea por línea, que estadisticasBrecha: hay reparación
+       cerca, NO es posterior al pedido, y no hay ningún incidente abierto
+       encima. Si aquella cambia, esta tiene que cambiar con ella o el puente
+       de /demandas vuelve a mentir. */
+    const reinc = (await tx.execute(sql`
+      with d as (
+        select d.id, d.geom, d.creado_en, (d.metadata->>'sin_fecha' is null) as fecha_confiable
+        from demandas d
+        where d.estado in ('recibida','en_validacion') and d.geom is not null
+      )
+      select count(*)::int as n from d
+      where exists (select 1 from incidentes i
+                    where i.estado in ('reparado','verificado')
+                      and st_dwithin(i.geom::geography, d.geom::geography, 40))
+        and not exists (select 1 from incidentes i
+                        where i.estado in ('reparado','verificado')
+                          and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                          and (not d.fecha_confiable or i.cerrado_en >= d.creado_en))
+        and not exists (select 1 from incidentes i
+                        where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                          and st_dwithin(i.geom::geography, d.geom::geography, 40))
+    `)) as unknown as Array<{ n: number }>;
+
     return {
       total: Number(f.total ?? 0),
       cerradas: Number(f.cerradas ?? 0),
@@ -1415,6 +1447,7 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
       },
       sinAtencion: Number(sin[0]?.n ?? 0),
       sinAtencionDeArchivo: Number(sin[0]?.de_archivo ?? 0),
+      reincidencias: Number(reinc[0]?.n ?? 0),
       conFoto: Number(f.con_foto ?? 0),
     };
   });

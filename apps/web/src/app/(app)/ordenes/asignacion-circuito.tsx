@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { PRIORIDADES_VIALES, type PrioridadVial } from "@cimba/domain";
 import { asignarCircuito } from "@/lib/acciones-ordenes";
 import { ETIQUETA_PRIORIDAD } from "./etiquetas";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Las dos celdas editables de la fila de circuito: prioridad y empresa.
@@ -35,7 +36,7 @@ export function AsignacionCircuito({
         await asignarCircuito({ circuitoId, ...cambios });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo guardar");
+        setError(mensajeDeError(e, "No se pudo guardar"));
       }
     });
   };

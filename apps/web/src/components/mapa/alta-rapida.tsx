@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { TIPOS_PROBLEMA } from "@cimba/domain";
 import { crearDemandaManual } from "@/lib/acciones-consolidar";
 import { ETIQUETA_TIPO } from "@/lib/formato";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Alta rápida desde el clic derecho en el mapa comando: el pedido nace con la
@@ -49,7 +50,7 @@ export function AltaRapida({
         const r = await crearDemandaManual({ lat: punto.lat, lon: punto.lon, tipo, descripcion, direccion });
         if (r.id != null) alCreado(r.id);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo crear el pedido");
+        setError(mensajeDeError(e, "No se pudo crear el pedido"));
       }
     });
   };

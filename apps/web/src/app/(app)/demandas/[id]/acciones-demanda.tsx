@@ -9,6 +9,7 @@ import type { AnalisisDemanda } from "@/lib/ia";
 import type { SugerenciaIncidente } from "@/lib/consultas";
 import { ETIQUETA_TIPO } from "@/lib/formato";
 import { BadgeEstadoIncidente, Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 export function AccionesDemanda({
   demandaId,
@@ -59,7 +60,7 @@ export function AccionesDemanda({
         await fn();
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Error inesperado");
+        setError(mensajeDeError(e, "Error inesperado"));
       }
     });
   };

@@ -6,6 +6,7 @@ import { conRls, sql } from "@cimba/db";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { ROLES_PUSH } from "@/app/(app)/ordenes/avisos/constantes";
 import { notificarEvento, type EventoAviso } from "./notificar";
+import { ErrorVisible } from "./errores";
 
 /**
  * Gestión de avisos: el Director decide qué evento avisa a quién y por dónde.
@@ -100,7 +101,7 @@ export async function enviarAvisoGeneral(entrada: { asunto: string; mensaje: str
  */
 export async function listarDestinatarios() {
   const sesion = await requerirSesion();
-  if (sesion.rol_cimba === "empresa") throw new Error("Sin permiso");
+  if (sesion.rol_cimba === "empresa") throw new ErrorVisible("Sin permiso");
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
       select id, evento, canal, destino, etiqueta, activo

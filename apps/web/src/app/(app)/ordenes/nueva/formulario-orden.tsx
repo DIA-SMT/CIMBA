@@ -12,6 +12,7 @@ import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
 import { ETIQUETA_PRIORIDAD } from "../etiquetas";
+import { mensajeDeError } from "@/lib/errores";
 
 interface CircuitoOpcion {
   id: number;
@@ -184,7 +185,7 @@ export function FormularioOrden({
       }
     } catch (e) {
       if (pedido !== pedidoRef.current) return;
-      setErrorCarga(e instanceof Error ? e.message : "Error al cargar");
+      setErrorCarga(mensajeDeError(e, "Error al cargar"));
     } finally {
       if (pedido === pedidoRef.current) setCargando(false);
     }
@@ -354,7 +355,7 @@ export function FormularioOrden({
         });
         router.push(`/ordenes/${res.ordenId}`);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo crear la orden");
+        setError(mensajeDeError(e, "No se pudo crear la orden"));
       }
     });
   };
@@ -470,11 +471,20 @@ export function FormularioOrden({
           </Panel>
         )}
 
+        {circuitoId === 0 && ambito !== "colector" && (
+          <Panel className="px-4 py-6">
+            <p className="text-sm font-bold">3 · La demanda</p>
+            <p className="mt-1 text-sm text-texto-3">
+              Elegí arriba por dónde se define la orden y acá aparece lo pendiente para elegir.
+            </p>
+          </Panel>
+        )}
+
         {circuitoId > 0 && (
           <Panel className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde px-4 py-3">
               <p className="text-sm font-bold">
-                2 · La demanda{" "}
+                3 · La demanda{" "}
                 <span className="font-normal text-texto-3">
                   — {numero(pendientes.length)} pendientes; los reclamos detrás de cada bache mandan
                 </span>
@@ -529,7 +539,7 @@ export function FormularioOrden({
                         `Relevado: ${r.demandas} pedidos agrupados en ${r.incidentes} incidentes, ya en la lista.`,
                       );
                     } catch (e) {
-                      setAvisoRelevar(e instanceof Error ? e.message : "No se pudo relevar el circuito");
+                      setAvisoRelevar(mensajeDeError(e, "No se pudo relevar el circuito"));
                     } finally {
                       setRelevando(false);
                     }
@@ -549,7 +559,8 @@ export function FormularioOrden({
               <p className="px-4 py-8 text-center text-sm text-texto-3">Cargando pendientes…</p>
             ) : pendientes.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-texto-3">
-                Este circuito no tiene pendientes con ubicación. Podés cargar tramos a mano abajo.
+                {ambito === "circuito" ? "Este circuito" : "Lo que elegiste"} no tiene pendientes con
+                ubicación. Podés cargar tramos a mano abajo.
               </p>
             ) : (
               <div className="max-h-[420px] overflow-x-auto overflow-y-auto">
@@ -738,7 +749,7 @@ export function FormularioOrden({
       {/* ══ LA OFERTA Y EL PAPEL ══ */}
       <div className="space-y-4">
         <Panel className="p-5">
-          <p className="mb-3 text-sm font-bold">3 · La empresa</p>
+          <p className="mb-3 text-sm font-bold">4 · La empresa</p>
           <div className="space-y-2">
             {empresas.map((e) => (
               <label
@@ -782,7 +793,7 @@ export function FormularioOrden({
         </Panel>
 
         <Panel className="space-y-3 p-5">
-          <p className="text-sm font-bold">4 · El papel</p>
+          <p className="text-sm font-bold">5 · El papel</p>
           <label className="block text-[11px] text-texto-2">
             Prioridad
             <select
@@ -841,8 +852,14 @@ export function FormularioOrden({
         <Panel className="p-5">
           <p className="text-sm font-bold">La cuenta</p>
           <p className="num mt-1 text-xs text-texto-2">
-            {numero(seleccion.size)} baches del circuito + {numero(tramosValidos.length)} tramos a mano
-            {m2Seleccionados > 0 && <> · ~{numero(Math.round(m2Seleccionados))} m² estimados</>}
+            {ambito === "colector" ? (
+              <>{numero(seleccion.size)} bocas de tormenta</>
+            ) : (
+              <>
+                {numero(seleccion.size)} baches + {numero(tramosValidos.length)} tramos a mano
+                {m2Seleccionados > 0 && <> · ~{numero(Math.round(m2Seleccionados))} m² estimados</>}
+              </>
+            )}
           </p>
           {estimacion && empresa ? (
             <p className="mt-2 text-sm leading-relaxed">
@@ -857,7 +874,9 @@ export function FormularioOrden({
             </p>
           ) : (
             <p className="mt-2 text-xs text-texto-3">
-              Elegí baches y una empresa para ver cuánto costaría en turnos, toneladas y días.
+              {ambito === "colector"
+                ? "La estimación de turnos y toneladas es del bacheo: una orden de bocas de tormenta se mide distinto."
+                : "Elegí baches y una empresa para ver cuánto costaría en turnos, toneladas y días."}
             </p>
           )}
         </Panel>

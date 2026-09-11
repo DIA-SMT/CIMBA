@@ -6,6 +6,7 @@ import { useRef, useState, useTransition } from "react";
 import { finalizarIntervencion, iniciarIntervencion, subirFoto } from "@/lib/acciones";
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
+import { mensajeDeError } from "@/lib/errores";
 
 export interface Trabajo {
   id: number;
@@ -46,7 +47,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
         await fn();
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Error");
+        setError(mensajeDeError(e, "Error"));
       }
     });
   };
@@ -73,7 +74,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
       await subirFoto(fd);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo subir la foto");
+      setError(mensajeDeError(e, "No se pudo subir la foto"));
     } finally {
       setSubiendo(null);
     }

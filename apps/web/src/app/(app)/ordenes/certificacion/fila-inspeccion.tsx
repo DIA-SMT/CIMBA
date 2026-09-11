@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { registrarInspeccion } from "@/lib/acciones-certificacion";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Los dos únicos veredictos posibles en la calle: conforme o con observación.
@@ -35,7 +36,7 @@ export function FilaInspeccion({
         });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo registrar");
+        setError(mensajeDeError(e, "No se pudo registrar"));
       }
     });
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { requerirRol, type Sesion } from "./auth";
 import { REGIMEN } from "./certificacion";
+import { ErrorVisible } from "./errores";
 
 /**
  * Acciones de control de calidad y certificación.
@@ -32,7 +33,7 @@ export async function registrarInspeccion(entrada: z.infer<typeof inspeccionSche
   const sesion = await requerirRol("supervision", "planificacion");
   const d = inspeccionSchema.parse(entrada);
   if (d.resultado === "observado" && !d.observaciones) {
-    throw new Error("Una inspección observada necesita decir qué se observó");
+    throw new ErrorVisible("Una inspección observada necesita decir qué se observó");
   }
 
   await conRls(claims(sesion), async (tx) => {
@@ -87,7 +88,7 @@ export async function firmarActaMedicion(entrada: z.infer<typeof actaSchema>) {
         and oi.estado = 'hecho' and oi.acta_id is null
         and oi.id in (${pedidos})
     `)) as unknown as Array<{ id: number; direccion: string | null; superficie_m2: number | null }>;
-    if (items.length === 0) throw new Error("Ninguno de esos puntos está pendiente de certificar para esta empresa");
+    if (items.length === 0) throw new ErrorVisible("Ninguno de esos puntos está pendiente de certificar para esta empresa");
 
     const medidoDe = new Map(d.mediciones.map((m) => [m.itemId, m.m2Medido]));
     const m2Informados = items.reduce((s, i) => s + Number(i.superficie_m2 ?? 0), 0);
@@ -130,7 +131,7 @@ export async function firmarActaMedicion(entrada: z.infer<typeof actaSchema>) {
       ) returning id
     `)) as unknown as Array<{ id: number }>;
     const actaId = acta[0]?.id;
-    if (!actaId) throw new Error("No se pudo registrar el acta");
+    if (!actaId) throw new ErrorVisible("No se pudo registrar el acta");
 
     for (const i of items) {
       await tx.execute(sql`

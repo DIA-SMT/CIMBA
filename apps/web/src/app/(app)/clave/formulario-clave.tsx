@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { cambiarMiClave } from "@/lib/acciones-clave";
 import { Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 export function FormularioClave({ nombre }: { nombre: string }) {
   const router = useRouter();
@@ -27,7 +28,7 @@ export function FormularioClave({ nombre }: { nombre: string }) {
         setListo(true);
         setTimeout(() => router.push("/mapa"), 1200);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "No se pudo cambiar la clave");
+        setError(mensajeDeError(err, "No se pudo cambiar la clave"));
       }
     });
   };

@@ -3,6 +3,7 @@
 import { Megaphone } from "lucide-react";
 import { useState, useTransition } from "react";
 import { enviarAvisoGeneral } from "@/lib/acciones-avisos";
+import { mensajeDeError } from "@/lib/errores";
 
 interface Resultado {
   push: number;
@@ -43,7 +44,7 @@ export function AvisoGeneral({ hayDestinatariosActivos }: { hayDestinatariosActi
           setMensaje("");
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo mandar el aviso");
+        setError(mensajeDeError(e, "No se pudo mandar el aviso"));
       }
     });
   };

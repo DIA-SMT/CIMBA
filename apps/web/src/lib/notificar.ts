@@ -3,6 +3,7 @@ import { getDb, sql } from "@cimba/db";
 import type { RolUsuario } from "@cimba/domain";
 import { ROLES_USUARIO } from "@cimba/domain";
 import { notificarRoles, type CargaPush } from "./push";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * El despachador de avisos de CIMBA. Un evento (orden emitida, orden vencida,
@@ -44,7 +45,7 @@ export async function enviarEmail(datos: {
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, motivo: e instanceof Error ? e.message : "error de red" };
+    return { ok: false, motivo: mensajeDeError(e, "error de red") };
   }
 }
 
@@ -105,7 +106,7 @@ export async function notificarEvento(
     }
   } catch (e) {
     // El aviso nunca rompe a quien lo dispara: se anota y sigue.
-    resultado.saltados.push(e instanceof Error ? e.message : "error despachando");
+    resultado.saltados.push(mensajeDeError(e, "error despachando"));
   }
   return resultado;
 }

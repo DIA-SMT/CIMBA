@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { EstadoOrden } from "@cimba/domain";
 import { anularOrden, emitirOrden } from "@/lib/acciones-ordenes";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Los botones del ciclo de vida: emitir (borrador → empresa), anular con
@@ -35,7 +36,7 @@ export function AccionesOrden({
         setMotivo("");
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Error");
+        setError(mensajeDeError(e, "Error"));
       }
     });
   };

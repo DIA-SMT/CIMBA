@@ -4,6 +4,7 @@ import { conRls, sql } from "@cimba/db";
 import { FUENTES_DEMANDA, TIPOS_PROBLEMA } from "@cimba/domain";
 import { leerSesion, type Sesion } from "@/lib/auth";
 import { generarInformeIA, iaDisponible, type SegmentoInforme } from "@/lib/ia";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Informe ejecutivo IA sobre el territorio (sin datos personales).
@@ -228,7 +229,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ informe });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "error de IA" },
+      { error: mensajeDeError(e, "error de IA") },
       { status: 502 },
     );
   }

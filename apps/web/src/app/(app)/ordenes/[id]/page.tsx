@@ -89,7 +89,9 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   // El plan real de la orden: lo propuesto sin validar (y lo rechazado) no es
   // trabajo encargado — ni infla el % de avance ni sale en la hoja impresa.
   const itemsPapel = o.itemsDetalle.filter((i) => i.estado !== "propuesto" && i.estado !== "rechazado");
-  const pct = itemsPapel.length > 0 ? Math.round((100 * o.hechos) / itemsPapel.length) : 0;
+  // o.enPlan es itemsPapel.length calculado en la consulta: se usa el del
+  // servidor para que el listado y el detalle no puedan divergir nunca.
+  const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
 
   // ── Evidencia para papel ────────────────────────────────────────────────

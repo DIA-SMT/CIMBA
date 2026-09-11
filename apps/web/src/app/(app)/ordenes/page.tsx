@@ -287,7 +287,11 @@ export default async function PaginaOrdenes({
           </thead>
           <tbody>
             {ordenesFiltradas.map((o) => {
-              const pct = o.items > 0 ? Math.round((100 * o.hechos) / o.items) : 0;
+              // El denominador es el trabajo ENCARGADO (enPlan), el mismo que
+              // usa el detalle: dividiendo por o.items, lo que la empresa propuso
+              // y todavía nadie validó inflaba el total y la lista decía "8 de 13"
+              // donde el detalle decía "8 de 10".
+              const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
               const vencida = estaVencida(o);
               return (
                 <tr key={o.id} className="border-b border-borde/60 transition hover:bg-panel-2">
@@ -317,7 +321,7 @@ export default async function PaginaOrdenes({
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="num text-xs text-texto-2">
-                        {numero(o.hechos)}/{numero(o.items)}
+                        {numero(o.hechos)}/{numero(o.enPlan)}
                       </span>
                       <span className="h-1.5 w-20 overflow-hidden rounded-full bg-panel-3">
                         <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: "#199e70" }} />

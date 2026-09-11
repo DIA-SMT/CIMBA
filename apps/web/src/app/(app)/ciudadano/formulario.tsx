@@ -11,6 +11,7 @@ import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
 import { CargaRapida, type CargaInterpretada } from "@/components/carga-rapida";
 import { Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 /** Distritos operativos de la ciudad (referencia editable; queda en metadata). */
 const DISTRITOS = ["Distrito Norte", "Distrito Sur", "Distrito Este", "Distrito Oeste", "Centro"];
@@ -116,7 +117,7 @@ export function FormularioCiudadano() {
     } catch (e) {
       setCapa(null);
       setNombreCapa(null);
-      setErrorCapa(e instanceof Error ? e.message : "No se pudo leer el archivo.");
+      setErrorCapa(mensajeDeError(e, "No se pudo leer el archivo."));
     } finally {
       if (inputArchivo.current) inputArchivo.current.value = "";
     }
@@ -171,7 +172,7 @@ export function FormularioCiudadano() {
         setCreado(r.id ?? null);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo registrar el pedido");
+        setError(mensajeDeError(e, "No se pudo registrar el pedido"));
       }
     });
   };

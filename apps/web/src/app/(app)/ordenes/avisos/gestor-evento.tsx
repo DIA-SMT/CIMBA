@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { agregarDestinatario, alternarDestinatario, quitarDestinatario } from "@/lib/acciones-avisos";
 import { ETIQUETA_ROL, ROLES_PUSH, type Destinatario, type EventoAviso } from "./constantes";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * La isla de una tarjeta de evento: quién se entera y por dónde. Lista los
@@ -60,7 +61,7 @@ function FilaDestinatario({
         await alternarDestinatario({ id: d.id, activo: !d.activo });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo cambiar el estado");
+        setError(mensajeDeError(e, "No se pudo cambiar el estado"));
       }
     });
   };
@@ -72,7 +73,7 @@ function FilaDestinatario({
         await quitarDestinatario({ id: d.id });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo quitar el destinatario");
+        setError(mensajeDeError(e, "No se pudo quitar el destinatario"));
       }
     });
   };
@@ -194,7 +195,7 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
         }
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo agregar el destinatario");
+        setError(mensajeDeError(e, "No se pudo agregar el destinatario"));
       }
     });
   };

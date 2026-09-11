@@ -3,6 +3,7 @@ import { z } from "zod";
 import { leerSesion } from "@/lib/auth";
 import { iaDisponible } from "@/lib/ia";
 import { ejecutarHerramientaMigue, HERRAMIENTAS_MIGUE, SISTEMA_MIGUE } from "@/lib/migue";
+import { mensajeDeError } from "@/lib/errores";
 
 export const maxDuration = 60;
 
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Migue no pudo responder" },
+      { error: mensajeDeError(e, "Migue no pudo responder") },
       { status: 502 },
     );
   }

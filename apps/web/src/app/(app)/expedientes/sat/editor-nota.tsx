@@ -7,6 +7,7 @@ import { generarNotaSat } from "@/lib/acciones-tratamiento";
 import type { RenglonNota } from "@/lib/expedientes";
 import { numero } from "@/lib/formato";
 import { CUERPO_MODELO_SAT, FIRMAS_NOTA, NotaSat, type FirmaNota } from "../nota-sat";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * La previsualización EDITABLE de la nota a la SAT — el pedido del Director:
@@ -59,7 +60,7 @@ export function EditorNota({
         });
         router.push(`/expedientes/${r.id}`);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo registrar la nota");
+        setError(mensajeDeError(e, "No se pudo registrar la nota"));
         setConfirmando(false);
       }
     });

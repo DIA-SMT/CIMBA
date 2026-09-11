@@ -108,6 +108,22 @@ export function EmbudoNumeros({ e, compacto = false }: { e: EmbudoDemandas; comp
             distintos: uno es limpiar una base, el otro es salir a bachear.
           </p>
         )}
+        {/* EL PUENTE con /brecha. Las dos pantallas miden lo mismo con una
+            diferencia deliberada —la brecha cuenta como deuda lo que se
+            reparó y se volvió a romper— y hasta ahora había que descubrirla
+            restando. Es el reclamo textual del Director: "esto tiene que ser
+            para TONTOS de claro". */}
+        {e.reincidencias > 0 && (
+          <p className="mt-1.5 text-[12px] leading-relaxed text-texto-2">
+            En <Link href="/brecha" className="font-semibold text-celeste hover:underline">Brecha</Link>{" "}
+            el mismo conjunto figura como{" "}
+            <b className="num">{numero(e.sinAtencion + e.reincidencias)}</b>: allá se suman{" "}
+            <b className="num">{numero(e.reincidencias)}</b>{" "}
+            <b>reincidencias</b> — pedidos que tienen una reparación cerca, pero ANTERIOR al
+            reclamo. Se bacheó, se volvió a romper y desde entonces nadie lo tocó: para la brecha
+            eso es deuda, acá no figura como “sin atención” porque hay obra cerca.
+          </p>
+        )}
         <p className="mt-1.5 text-[11px] text-texto-3">
           Reparto por quién resuelve: Bacheo <b className="num">{numero(e.porDestino.bacheo)}</b> · SAT{" "}
           <b className="num">{numero(e.porDestino.sat)}</b> · Ingeniería{" "}

@@ -10,6 +10,7 @@ import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
 import { Achicando } from "./tarjeta-item";
+import { mensajeDeError } from "@/lib/errores";
 
 /** Mismo bounding box laxo que valida la acción (ver tarjeta-item). */
 const dentroDeSmt = (lat: number, lon: number) =>
@@ -188,7 +189,7 @@ export function ProponerItem({ ordenId }: { ordenId: number }) {
         elegirFoto(undefined);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo enviar: probá de nuevo.");
+        setError(mensajeDeError(e, "No se pudo enviar: probá de nuevo."));
       }
     });
   };

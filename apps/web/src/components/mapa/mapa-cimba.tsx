@@ -77,6 +77,7 @@ import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Vistas del mapa: la respuesta a "es muchísima información y no se entiende".
@@ -3144,7 +3145,7 @@ function MapaInterno({
       if (!res.ok || !cuerpo.informe) throw new Error(cuerpo.error ?? "No se pudo generar el informe");
       setInforme(cuerpo.informe);
     } catch (e) {
-      setErrorInforme(e instanceof Error ? e.message : "Error de IA");
+      setErrorInforme(mensajeDeError(e, "Error de IA"));
     } finally {
       setGenerandoInforme(false);
     }

@@ -6,6 +6,7 @@ import { conRls, sql, type SQL } from "@cimba/db";
 import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
+import { ErrorVisible } from "./errores";
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
@@ -79,7 +80,7 @@ export async function crearIncidenteDesdeDemanda(entrada: { demandaId: number })
       returning id
     `)) as unknown as Array<{ id: number }>;
     const inc = filas[0];
-    if (!inc) throw new Error("La demanda no tiene ubicación válida: corregila antes de crear el incidente");
+    if (!inc) throw new ErrorVisible("La demanda no tiene ubicación válida: corregila antes de crear el incidente");
     await tx.execute(sql`
       insert into demanda_incidente (demanda_id, incidente_id, vinculado_por, automatico)
       values (${demandaId}, ${inc.id}, ${sesion.sub}, false)
@@ -196,8 +197,8 @@ export async function subirFoto(formData: FormData) {
       lon: formData.get("lon") ?? undefined,
     });
   const archivo = formData.get("archivo");
-  if (!(archivo instanceof File) || archivo.size === 0) throw new Error("Falta la foto");
-  if (archivo.size > 8 * 1024 * 1024) throw new Error("La foto supera 8 MB");
+  if (!(archivo instanceof File) || archivo.size === 0) throw new ErrorVisible("Falta la foto");
+  if (archivo.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
 
   const extension = archivo.type === "image/png" ? "png" : "jpg";
   const ruta = `intervenciones/${datos.intervencionId}/${datos.momento}-${Date.now()}.${extension}`;
@@ -210,7 +211,7 @@ export async function subirFoto(formData: FormData) {
   const subida = await supabase.storage
     .from("fotografias")
     .upload(ruta, Buffer.from(await archivo.arrayBuffer()), { contentType: archivo.type, upsert: false });
-  if (subida.error) throw new Error(`Storage: ${subida.error.message}`);
+  if (subida.error) throw new ErrorVisible(`Storage: ${subida.error.message}`);
 
   await conRls(claims(sesion), async (tx) => {
     await tx.execute(sql`
@@ -252,7 +253,7 @@ export async function finalizarIntervencion(entrada: {
     `)) as unknown as Array<{ antes: string | number; despues: string | number }>;
     const f = fotos[0];
     if (!f || Number(f.antes) === 0 || Number(f.despues) === 0) {
-      throw new Error("Para finalizar hacen falta la foto de ANTES y la de DESPUÉS");
+      throw new ErrorVisible("Para finalizar hacen falta la foto de ANTES y la de DESPUÉS");
     }
     await tx.execute(sql`
       update intervenciones set
@@ -367,7 +368,7 @@ export async function corregirUbicacionDemanda(entrada: {
       returning id
     `)) as unknown as Array<{ id: number }>;
     // Con RLS efectivo un update sin permiso matchea 0 filas: nunca "ok" falso.
-    if (filas.length === 0) throw new Error("No se pudo actualizar la demanda (no existe o sin permiso).");
+    if (filas.length === 0) throw new ErrorVisible("No se pudo actualizar la demanda (no existe o sin permiso).");
   });
   revalidatePath(`/demandas/${datos.demandaId}`);
   revalidatePath("/demandas");

@@ -19,6 +19,13 @@ export default async function PaginaPrevisualizacionSat() {
   const renglones = await renglonesParaNotaSat(sesion);
   const puedeGenerar = ["admin", "planificacion", "atencion_ciudadana"].includes(sesion.rol_cimba);
   const conFoto = renglones.filter((r) => r.fotoUrl).length;
+  /**
+   * La nota incluye TAMBIÉN los reclamos de agua sin ubicación, y la bandeja
+   * de Tratamiento solo lista los georreferenciados: por eso el recorrido
+   * mostraba tres números distintos para lo mismo y el Director firmaba una
+   * nota con más reclamos de los que había visto. Acá se muestra la resta.
+   */
+  const sinUbicacion = renglones.filter((r) => r.lat == null || r.lon == null).length;
 
   return (
     <div className="mx-auto max-w-4xl p-4 sm:p-6">
@@ -42,8 +49,20 @@ export default async function PaginaPrevisualizacionSat() {
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amarillo/50 bg-amarillo/10 px-4 py-3 text-sm">
             <b className="text-amarillo">BORRADOR</b>
             <span className="text-texto-2">
-              {numero(renglones.length)} reclamos ({numero(conFoto)} con fotografía). Nada se
-              registra hasta que confirmes abajo.
+              <b className="num text-texto">{numero(renglones.length)}</b> reclamos en esta nota
+              {sinUbicacion > 0 ? (
+                <>
+                  :{" "}
+                  <b className="num">{numero(renglones.length - sinUbicacion)}</b> georreferenciados
+                  (los que viste en la bandeja) +{" "}
+                  <b className="num">{numero(sinUbicacion)}</b> sin ubicación, que entran igual
+                  porque la SAT los identifica por el ticket
+                </>
+              ) : (
+                <> (todos georreferenciados)</>
+              )}
+              . <b className="num">{numero(conFoto)}</b> con fotografía. Nada se registra hasta que
+              confirmes abajo.
             </span>
           </div>
 

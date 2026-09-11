@@ -81,10 +81,17 @@ export default async function PaginaOrdenEmpresa({
   const yaResueltos = orden.itemsDetalle.filter((i) => i.estado === "ya_resuelto");
   const propuestos = orden.itemsDetalle.filter((i) => i.estado === "propuesto");
   const rechazados = orden.itemsDetalle.filter((i) => i.estado === "rechazado");
-  // El progreso se mide sobre el plan real: un propuesto sin validar (o
-  // rechazado) no es trabajo encargado y no puede inflar el denominador.
-  const enPlan = orden.items - propuestos.length - rechazados.length;
-  const pct = enPlan > 0 ? Math.round((100 * orden.hechos) / enPlan) : 0;
+  /**
+   * El progreso se mide sobre el plan real: un propuesto sin validar (o
+   * rechazado) no es trabajo encargado y no puede inflar el denominador.
+   * Ahora enPlan y cerrados vienen calculados del servidor (lib/ordenes.ts),
+   * los mismos que usa la lista: restarlos acá en TypeScript era lo que hacía
+   * que las dos pantallas mostraran números distintos.
+   */
+  const enPlan = orden.enPlan;
+  const pctHecho = enPlan > 0 ? Math.round((100 * orden.hechos) / enPlan) : 0;
+  const pctSinTrabajo =
+    enPlan > 0 ? Math.round((100 * (orden.cerrados - orden.hechos)) / enPlan) : 0;
 
   return (
     <div className="mx-auto max-w-xl p-4 pb-16">
@@ -129,11 +136,29 @@ export default async function PaginaOrdenEmpresa({
         <div className="mt-3 flex items-baseline justify-between text-sm">
           <span>
             <b className="num">{numero(orden.hechos)}</b> de <b className="num">{numero(enPlan)}</b> hechos
+            {orden.cerrados > orden.hechos && (
+              <span className="text-texto-3">
+                {" "}
+                · {numero(orden.cerrados - orden.hechos)} sin trabajo
+              </span>
+            )}
           </span>
           <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
         </div>
         <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
-          <div className="h-full rounded-full bg-resuelto" style={{ width: `${pct}%` }} />
+          <div className="flex h-full">
+            <div
+              className="h-full bg-resuelto transition-[width]"
+              style={{ width: `${pctHecho}%` }}
+            />
+            {/* Cerrado sin trabajo: cuenta para terminar la orden, pero no es
+                bacheo hecho ni se certifica. Por eso va gris y no verde. */}
+            <div
+              className="h-full bg-inactivo/60 transition-[width]"
+              style={{ width: `${pctSinTrabajo}%` }}
+              title="Cerrados sin trabajo: no encontrados o que ya estaban resueltos"
+            />
+          </div>
         </div>
         {/* Carácter por carácter lo mismo que el capataz acaba de ver en la
             lista: antes acá decía "Vence el 05/09/26" en gris chico aunque

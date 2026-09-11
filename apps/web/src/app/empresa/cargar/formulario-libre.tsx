@@ -10,6 +10,7 @@ import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import { Achicando } from "../orden/[id]/tarjeta-item";
 import { SelectorUbicacion, type UbicacionElegida } from "../selector-ubicacion";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * CARGAR UN TRABAJO QUE NO ESTABA EN NINGUNA ORDEN.
@@ -186,7 +187,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         void elegirFoto("antes", undefined, setFotoAntes, setPreviewAntes, previewAntes);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo cargar: probá de nuevo.");
+        setError(mensajeDeError(e, "No se pudo cargar: probá de nuevo."));
       }
     });
   };

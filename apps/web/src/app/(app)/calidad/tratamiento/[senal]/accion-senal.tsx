@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { derivarAIngenieria, marcarDuplicada, marcarYaResuelta } from "@/lib/acciones-tratamiento";
 import type { SenalTratamiento } from "@/lib/tratamiento";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * El botón de confirmación de cada señal, con doble paso inline (nada de
@@ -43,7 +44,7 @@ export function AccionSenal({
         else await marcarYaResuelta({ demandaId, incidenteId: referenciaId! });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo aplicar");
+        setError(mensajeDeError(e, "No se pudo aplicar"));
         setConfirmando(false);
       }
     });

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { tipoProblemaSchema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
+import { ErrorVisible } from "./errores";
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
@@ -255,8 +256,8 @@ export async function cotejarConReparados(opciones?: { ampliado?: boolean }): Pr
 export async function importarArchivo(formData: FormData) {
   const sesion = await requerirRol("atencion_ciudadana", "planificacion", "informacion_estrategica");
   const archivo = formData.get("archivo");
-  if (!(archivo instanceof File) || archivo.size === 0) throw new Error("Falta el archivo");
-  if (archivo.size > 8 * 1024 * 1024) throw new Error("El archivo supera 8 MB");
+  if (!(archivo instanceof File) || archivo.size === 0) throw new ErrorVisible("Falta el archivo");
+  if (archivo.size > 8 * 1024 * 1024) throw new ErrorVisible("El archivo supera 8 MB");
 
   const { detectarYParsear, ingestarDemandas, ingestarIntervenciones, registrarSyncRun } =
     await import("@cimba/integrations");
@@ -317,7 +318,7 @@ export async function importarConsolidadoWeb(entrada: { archivo: string; filas: 
   // Una fila sin ID o sin FUENTE no aborta el lote: se omite y se informa.
   const validas = datos.filas.filter((f) => String(f.id).trim() !== "" && f.fuente.trim() !== "");
   const omitidas = datos.filas.length - validas.length;
-  if (validas.length === 0) throw new Error("Ninguna fila tiene ID y FUENTE: no hay nada para importar.");
+  if (validas.length === 0) throw new ErrorVisible("Ninguna fila tiene ID y FUENTE: no hay nada para importar.");
 
   const { mapearFilasConsolidado, ingestarDemandas, registrarSyncRun } = await import("@cimba/integrations");
   const demandas = mapearFilasConsolidado(validas, datos.archivo);

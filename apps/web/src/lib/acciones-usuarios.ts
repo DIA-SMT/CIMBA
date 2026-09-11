@@ -6,6 +6,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { ROLES_USUARIO } from "@cimba/domain";
 import { requerirSesion, type Sesion } from "./auth";
+import { ErrorVisible } from "./errores";
 
 /**
  * Alta y recuperación de acceso para el personal interno: usuario y clave
@@ -31,7 +32,7 @@ function claveAleatoria(): string {
 
 async function exigirSuperadmin(): Promise<Sesion> {
   const sesion = await requerirSesion();
-  if (sesion.rol_cimba !== "admin") throw new Error("Dar de alta o resetear usuarios es tarea del superadmin");
+  if (sesion.rol_cimba !== "admin") throw new ErrorVisible("Dar de alta o resetear usuarios es tarea del superadmin");
   return sesion;
 }
 
@@ -59,7 +60,7 @@ export async function crearUsuarioLocal(entrada: z.infer<typeof crearSchema>) {
 
   const fila = await conRls(claims(sesion), async (tx) => {
     const existe = (await tx.execute(sql`select 1 from perfiles where usuario = ${usuario}`)) as unknown as unknown[];
-    if (existe.length > 0) throw new Error(`Ya existe un usuario "${usuario}"`);
+    if (existe.length > 0) throw new ErrorVisible(`Ya existe un usuario "${usuario}"`);
 
     // Rango reservado para altas locales (920000+): no choca con los
     // id_persona fijos de admin/bacheo/empresas (900000s / 910000s).
@@ -77,7 +78,7 @@ export async function crearUsuarioLocal(entrada: z.infer<typeof crearSchema>) {
       `)) as unknown as Array<{ id: string; usuario: string }>
     )[0];
   });
-  if (!fila) throw new Error("No se pudo crear el usuario");
+  if (!fila) throw new ErrorVisible("No se pudo crear el usuario");
 
   revalidatePath("/actividad");
   return { usuario: fila.usuario, clave };
@@ -104,7 +105,7 @@ export async function regenerarClaveUsuario(entrada: z.infer<typeof resetSchema>
       `)) as unknown as Array<{ usuario: string }>
     )[0];
   });
-  if (!fila) throw new Error("Ese acceso no usa usuario y clave propios: no hay nada para resetear");
+  if (!fila) throw new ErrorVisible("Ese acceso no usa usuario y clave propios: no hay nada para resetear");
 
   revalidatePath("/actividad");
   return { usuario: fila.usuario, clave };

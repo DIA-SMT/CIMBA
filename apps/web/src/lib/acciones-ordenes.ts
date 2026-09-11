@@ -7,6 +7,7 @@ import { conRls, sql } from "@cimba/db";
 import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
+import { ErrorVisible } from "./errores";
 
 /**
  * Acciones del ciclo de la orden de trabajo. El principio rector: cuando la
@@ -78,7 +79,7 @@ export async function crearOrden(entrada: {
     .parse(entrada);
 
   if (datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0) {
-    throw new Error("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
+    throw new ErrorVisible("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
   }
 
   /**
@@ -97,7 +98,11 @@ export async function crearOrden(entrada: {
         prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por
       )
       values (
-        'OT-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('ordenes_numero_seq')::text, 4, '0'),
+        /* El número sale de siguiente_numero_orden() (migración 0018) y no de
+           una secuencia suelta: la secuencia se desfasaba de las filas y el
+           insert reventaba con un 23505 crudo, perdiendo la orden entera con
+           los items ya elegidos. Pasó dos veces en producción. */
+        siguiente_numero_orden(),
         ${datos.empresaId}, ${datos.tipo}::tipo_orden, ${datos.ambito}::ambito_orden,
         ${circuitoId},
         ${datos.ambito === "distrito" ? refNum : null},
@@ -110,7 +115,7 @@ export async function crearOrden(entrada: {
       ) returning id
     `)) as unknown as Array<{ id: number }>;
     const orden = creada[0];
-    if (!orden) throw new Error("No se pudo crear la orden");
+    if (!orden) throw new ErrorVisible("No se pudo crear la orden");
 
     // Items desde incidentes: copian dirección y punto para que la empresa
     // los vea sin permisos extra, y un mismo incidente no entra dos veces
@@ -185,7 +190,7 @@ export async function crearOrden(entrada: {
     if (Number(conteo[0]?.n ?? 0) === 0) {
       // Todos los incidentes elegidos ya estaban en otra orden activa.
       await tx.execute(sql`delete from ordenes_trabajo where id = ${orden.id}`);
-      throw new Error("Todos los puntos elegidos ya están en otra orden activa");
+      throw new ErrorVisible("Todos los puntos elegidos ya están en otra orden activa");
     }
     return Number(orden.id);
   });
@@ -205,7 +210,7 @@ export async function emitirOrden(entrada: { ordenId: number }) {
       where id = ${ordenId} and estado = 'borrador'
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("La orden no está en borrador");
+    if (!r[0]) throw new ErrorVisible("La orden no está en borrador");
     await tx.execute(sql`
       update incidentes set estado = 'programado'
       from orden_items oi
@@ -253,7 +258,7 @@ export async function anularOrden(entrada: { ordenId: number; motivo: string }) 
       where id = ${datos.ordenId} and estado in ('borrador','emitida','en_ejecucion')
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("La orden no se puede anular en su estado actual");
+    if (!r[0]) throw new ErrorVisible("La orden no se puede anular en su estado actual");
     // Los incidentes que la orden había programado vuelven a la cola.
     await tx.execute(sql`
       update incidentes set estado = 'priorizado'
@@ -311,7 +316,7 @@ export async function asignarCircuito(entrada: {
 export async function reportarItemHecho(formData: FormData) {
   const sesion = await requerirSesion();
   if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
-    throw new Error(`Rol ${sesion.rol_cimba} sin permiso para reportar items`);
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para reportar items`);
   }
 
   const datos = z
@@ -372,12 +377,12 @@ export async function reportarItemHecho(formData: FormData) {
   };
   const validarFoto = (v: unknown, cual: string): File | null => {
     if (!(v instanceof File) || v.size === 0) return null;
-    if (v.size > 8 * 1024 * 1024) throw new Error(`La foto ${cual} supera 8 MB`);
-    if (!TIPOS_FOTO[v.type]) throw new Error(`La foto ${cual} tiene que ser una imagen (JPG, PNG o WEBP)`);
+    if (v.size > 8 * 1024 * 1024) throw new ErrorVisible(`La foto ${cual} supera 8 MB`);
+    if (!TIPOS_FOTO[v.type]) throw new ErrorVisible(`La foto ${cual} tiene que ser una imagen (JPG, PNG o WEBP)`);
     return v;
   };
   const foto = validarFoto(formData.get("foto"), "del trabajo");
-  if (!foto) throw new Error("Falta la foto del trabajo terminado");
+  if (!foto) throw new ErrorVisible("Falta la foto del trabajo terminado");
   const fotoAntes = validarFoto(formData.get("fotoAntes"), "de antes");
 
   const superficie = Math.round(datos.anchoM * datos.largoM * 100) / 100;
@@ -387,7 +392,7 @@ export async function reportarItemHecho(formData: FormData) {
   if (datos.lat != null && datos.lon != null) {
     const { dentroDeSMT } = await import("@cimba/domain");
     if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
-      throw new Error("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+      throw new ErrorVisible("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
     }
   }
 
@@ -407,14 +412,14 @@ export async function reportarItemHecho(formData: FormData) {
       where oi.id = ${datos.itemId}
     `)) as unknown as Array<{ estado: string; orden_estado: string; empresa_id: number }>,
   ))[0];
-  if (!previa) throw new Error("El item no existe o no es de tu empresa");
-  if (previa.estado !== "pendiente") throw new Error("Este item ya fue reportado");
-  if (!["emitida", "en_ejecucion"].includes(previa.orden_estado)) throw new Error("La orden no está activa");
+  if (!previa) throw new ErrorVisible("El item no existe o no es de tu empresa");
+  if (previa.estado !== "pendiente") throw new ErrorVisible("Este item ya fue reportado");
+  if (!["emitida", "en_ejecucion"].includes(previa.orden_estado)) throw new ErrorVisible("La orden no está activa");
   {
     // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
     const empresaEjecutora = await empresaDelEjecutor(sesion);
     if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
-      throw new Error("El item no pertenece a tu empresa");
+      throw new ErrorVisible("El item no pertenece a tu empresa");
     }
   }
 
@@ -441,7 +446,7 @@ export async function reportarItemHecho(formData: FormData) {
         contentType: archivo.type,
         upsert: false,
       });
-    if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
     return { momento, ruta };
   };
   const fotos: Array<{ momento: "antes" | "despues"; ruta: string }> = [];
@@ -469,16 +474,16 @@ export async function reportarItemHecho(formData: FormData) {
       where oi.id = ${datos.itemId}
     `)) as unknown as Array<Record<string, unknown>>;
     const item = items[0];
-    if (!item) throw new Error("El item no existe o no es de tu empresa");
-    if (String(item.estado) !== "pendiente") throw new Error("Este item ya fue reportado");
+    if (!item) throw new ErrorVisible("El item no existe o no es de tu empresa");
+    if (String(item.estado) !== "pendiente") throw new ErrorVisible("Este item ya fue reportado");
     if (!["emitida", "en_ejecucion"].includes(String(item.orden_estado))) {
-      throw new Error("La orden no está activa");
+      throw new ErrorVisible("La orden no está activa");
     }
     {
       // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
       const empresaEjecutora = await empresaDelEjecutor(sesion);
       if (empresaEjecutora != null && Number(item.empresa_id) !== empresaEjecutora) {
-        throw new Error("El item no pertenece a tu empresa");
+        throw new ErrorVisible("El item no pertenece a tu empresa");
       }
     }
 
@@ -495,12 +500,12 @@ export async function reportarItemHecho(formData: FormData) {
       where id = ${datos.itemId} and estado = 'pendiente'
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!reclamo[0]) throw new Error("Este item ya fue reportado");
+    if (!reclamo[0]) throw new ErrorVisible("Este item ya fue reportado");
 
     const lat = datos.lat ?? (item.lat != null ? Number(item.lat) : null);
     const lon = datos.lon ?? (item.lon != null ? Number(item.lon) : null);
     if (lat == null || lon == null) {
-      throw new Error("El item no tiene ubicación: cargá la dirección (podés dictarla) antes de reportar");
+      throw new ErrorVisible("El item no tiene ubicación: cargá la dirección (podés dictarla) antes de reportar");
     }
     const direccion = datos.direccionCorregida ?? ((item.direccion as string) || null);
 
@@ -523,7 +528,7 @@ export async function reportarItemHecho(formData: FormData) {
           ${JSON.stringify({ origen: "orden_trabajo", orden: item.numero })}::jsonb
         ) returning id
       `)) as unknown as Array<{ id: number }>;
-      if (!inc[0]) throw new Error("No se pudo crear el incidente del tramo");
+      if (!inc[0]) throw new ErrorVisible("No se pudo crear el incidente del tramo");
       incidenteId = Number(inc[0].id);
       incidenteServicioId = incidenteId;
       // El item queda apuntando al incidente creado, para trazabilidad.
@@ -572,7 +577,7 @@ export async function reportarItemHecho(formData: FormData) {
       ) returning id
     `)) as unknown as Array<{ id: number }>;
     const intervencionId = iv[0]?.id;
-    if (!intervencionId) throw new Error("No se pudo registrar la intervención");
+    if (!intervencionId) throw new ErrorVisible("No se pudo registrar la intervención");
 
     // Las fotos ya están en Storage: acá solo se registran, dentro de la
     // transacción, para que la intervención nunca quede sin su evidencia.
@@ -664,7 +669,7 @@ export async function reportarItemHecho(formData: FormData) {
 export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo: string }) {
   const sesion = await requerirSesion();
   if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
-    throw new Error(`Rol ${sesion.rol_cimba} sin permiso`);
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso`);
   }
   const datos = z
     .object({ itemId: z.number().int().positive(), motivo: z.string().min(3).max(500) })
@@ -692,7 +697,7 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
       returning orden_id
     `)) as unknown as Array<{ orden_id: number }>;
     const fila = r[0];
-    if (!fila) throw new Error("El item no está pendiente o la orden no está activa");
+    if (!fila) throw new ErrorVisible("El item no está pendiente o la orden no está activa");
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'completada', cerrada_en = now()
       where id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
@@ -740,7 +745,7 @@ export async function cerrarDemandaAtencion(entrada: { demandaId: number; respue
       returning id
     `)) as unknown as Array<{ id: number }>;
     if (!r[0]) {
-      throw new Error("Solo se puede cerrar un reclamo cuyo problema ya esté reparado");
+      throw new ErrorVisible("Solo se puede cerrar un reclamo cuyo problema ya esté reparado");
     }
   });
   revalidatePath("/cierres");
@@ -770,7 +775,7 @@ export async function actualizarEmpresa(entrada: {
     })
     .parse(entrada);
   if (datos.cuadrillas == null && datos.turnosPorDia == null) {
-    throw new Error("No hay nada para actualizar");
+    throw new ErrorVisible("No hay nada para actualizar");
   }
 
   await conRls(claims(sesion), async (tx) => {
@@ -786,7 +791,7 @@ export async function actualizarEmpresa(entrada: {
       where id = ${datos.empresaId}
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("La empresa no existe");
+    if (!r[0]) throw new ErrorVisible("La empresa no existe");
   });
   revalidatePath("/ordenes/empresas");
   // La proyección de capacidad de /ordenes usa esta dotación.
@@ -814,7 +819,7 @@ export async function generarClaveEmpresa(entrada: { empresaId: number }) {
       update empresas set clave_hash = ${sha256(clave)} where id = ${empresaId} and activa
       returning slug
     `)) as unknown as Array<{ slug: string }>;
-    if (!r[0]) throw new Error("La empresa no existe o está inactiva");
+    if (!r[0]) throw new ErrorVisible("La empresa no existe o está inactiva");
   });
   revalidatePath("/ordenes/empresas");
   return { ok: true, clave };
@@ -868,7 +873,7 @@ export async function actualizarCapacidad(entrada: {
 export async function proponerItem(formData: FormData) {
   const sesion = await requerirSesion();
   if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
-    throw new Error(`Rol ${sesion.rol_cimba} sin permiso para proponer items`);
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para proponer items`);
   }
   const datos = z
     .object({
@@ -890,14 +895,14 @@ export async function proponerItem(formData: FormData) {
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
-    throw new Error("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+    throw new ErrorVisible("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
   }
 
   const foto = formData.get("foto");
   const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-  if (foto instanceof File && foto.size > 8 * 1024 * 1024) throw new Error("La foto supera 8 MB");
+  if (foto instanceof File && foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
   if (foto instanceof File && foto.size > 0 && !TIPOS[foto.type]) {
-    throw new Error("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+    throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
   }
 
   // Propiedad y estado ANTES de subir nada a Storage (misma regla que el reporte).
@@ -907,13 +912,13 @@ export async function proponerItem(formData: FormData) {
     `)) as unknown as Array<{ id: number; estado: string; empresa_id: number }>,
   );
   const orden = ordenes[0];
-  if (!orden) throw new Error("La orden no existe o no es de tu empresa");
-  if (!["emitida", "en_ejecucion"].includes(orden.estado)) throw new Error("La orden no está activa");
+  if (!orden) throw new ErrorVisible("La orden no existe o no es de tu empresa");
+  if (!["emitida", "en_ejecucion"].includes(orden.estado)) throw new ErrorVisible("La orden no está activa");
   {
     // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
     const empresaEjecutora = await empresaDelEjecutor(sesion);
     if (empresaEjecutora != null && Number(orden.empresa_id) !== empresaEjecutora) {
-      throw new Error("La orden no pertenece a tu empresa");
+      throw new ErrorVisible("La orden no pertenece a tu empresa");
     }
   }
 
@@ -928,7 +933,7 @@ export async function proponerItem(formData: FormData) {
     const subida = await supabase.storage
       .from("fotografias")
       .upload(rutaFoto, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
-    if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
   }
 
   await conRls(claims(sesion), async (tx) => {
@@ -987,7 +992,7 @@ export async function resolverPropuesto(entrada: {
       where id = ${datos.itemId} and estado = 'propuesto'
       returning orden_id
     `)) as unknown as Array<{ orden_id: number }>;
-    if (!r[0]) throw new Error("El item no está en estado propuesto");
+    if (!r[0]) throw new ErrorVisible("El item no está en estado propuesto");
   });
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
@@ -1003,7 +1008,7 @@ export async function resolverPropuesto(entrada: {
 export async function marcarYaResuelto(formData: FormData) {
   const sesion = await requerirSesion();
   if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
-    throw new Error(`Rol ${sesion.rol_cimba} sin permiso`);
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso`);
   }
   const datos = z
     .object({
@@ -1014,9 +1019,9 @@ export async function marcarYaResuelto(formData: FormData) {
 
   const foto = formData.get("foto");
   const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-  if (!(foto instanceof File) || foto.size === 0) throw new Error("La foto de cómo está hoy es obligatoria");
-  if (foto.size > 8 * 1024 * 1024) throw new Error("La foto supera 8 MB");
-  if (!TIPOS[foto.type]) throw new Error("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+  if (!(foto instanceof File) || foto.size === 0) throw new ErrorVisible("La foto de cómo está hoy es obligatoria");
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
 
   // Propiedad antes de tocar Storage.
   const previa = (
@@ -1032,16 +1037,16 @@ export async function marcarYaResuelto(formData: FormData) {
       `)) as unknown as Array<Record<string, unknown>>,
     )
   )[0];
-  if (!previa) throw new Error("El item no existe o no es de tu empresa");
-  if (String(previa.estado) !== "pendiente") throw new Error("Este item ya fue reportado");
+  if (!previa) throw new ErrorVisible("El item no existe o no es de tu empresa");
+  if (String(previa.estado) !== "pendiente") throw new ErrorVisible("Este item ya fue reportado");
   if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
-    throw new Error("La orden no está activa");
+    throw new ErrorVisible("La orden no está activa");
   }
   {
     // Ejecutores (empresa contratista o cuadrilla propia): solo lo suyo.
     const empresaEjecutora = await empresaDelEjecutor(sesion);
     if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
-      throw new Error("El item no pertenece a tu empresa");
+      throw new ErrorVisible("El item no pertenece a tu empresa");
     }
   }
 
@@ -1054,7 +1059,7 @@ export async function marcarYaResuelto(formData: FormData) {
   const subida = await supabase.storage
     .from("fotografias")
     .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
-  if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
 
   try {
     await conRls(claims(sesion), async (tx) => {
@@ -1066,7 +1071,7 @@ export async function marcarYaResuelto(formData: FormData) {
         where id = ${datos.itemId} and estado = 'pendiente'
         returning incidente_id
       `)) as unknown as Array<{ incidente_id: number | null }>;
-      if (!reclamo[0]) throw new Error("Este item ya fue reportado");
+      if (!reclamo[0]) throw new ErrorVisible("Este item ya fue reportado");
 
       const lat = previa.lat != null ? Number(previa.lat) : null;
       const lon = previa.lon != null ? Number(previa.lon) : null;
@@ -1154,7 +1159,7 @@ export async function corregirTipoIntervencion(entrada: { intervencionId: number
       where id = ${datos.intervencionId}
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("La intervención no existe");
+    if (!r[0]) throw new ErrorVisible("La intervención no existe");
   });
   revalidatePath("/ordenes");
   revalidatePath("/intervenciones");

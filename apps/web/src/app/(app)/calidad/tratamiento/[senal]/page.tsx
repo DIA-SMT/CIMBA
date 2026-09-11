@@ -29,7 +29,7 @@ const SENALES: Record<
     titulo: "Posibles duplicadas",
     sub: "Reclamos abiertos con OTRO reclamo anterior del mismo tipo a menos de 15 metros.",
     regla:
-      "Descartar el pedido de un vecino es una decisión con nombre y apellido: el sistema te deja la referencia y la distancia servidas, pero la confirmás vos, una por una. El original sigue abierto y junta la prioridad de ambos.",
+      "Descartar el pedido de un vecino es una decisión con nombre y apellido: el sistema te deja la referencia y la distancia servidas, pero la confirmás vos, una por una. El original sigue abierto y el descarte queda anotado apuntando a él, con tu nombre y la fecha, así se puede deshacer. Ojo: hoy el descarte NO le suma prioridad al original — el pedido sigue pesando lo mismo que antes.",
   },
   ya_resuelta: {
     titulo: "Parecen ya resueltas",

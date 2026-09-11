@@ -254,7 +254,22 @@ export interface OrdenResumen {
   empresaId: number;
   empresaNombre: string;
   circuitoCodigo: string | null;
+  /** TODOS los items de la orden, incluido lo que la empresa propuso y
+   *  todavía no se validó. Casi nunca es lo que hay que mostrar. */
   items: number;
+  /**
+   * EL TRABAJO ENCARGADO: los items menos lo propuesto sin validar y lo
+   * rechazado. Es el denominador del avance en TODAS las pantallas.
+   *
+   * Existía solo en el detalle, calculado en TypeScript, mientras el listado
+   * dividía por `items`: la misma orden decía "8 de 13" en la lista y "8 de
+   * 10" adentro, sin nada que explicara la diferencia.
+   */
+  enPlan: number;
+  /** Los que ya no están pendientes: hechos + no encontrados + ya resueltos.
+   *  Es lo que hace avanzar la barra — con solo `hechos`, una orden cerrada
+   *  con dos "no encontrado" se quedaba en 80% para siempre. */
+  cerrados: number;
   hechos: number;
   m2Reportados: number;
   emitidaEn: string | null;
@@ -274,6 +289,10 @@ export async function listarOrdenes(
              e.nombre as empresa_nombre, c.codigo as circuito_codigo,
              ot.emitida_en, ot.vence_en::text as vence_en, ot.creado_en,
              (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items,
+             (select count(*) from orden_items oi where oi.orden_id = ot.id
+                and oi.estado not in ('propuesto','rechazado'))::int as en_plan,
+             (select count(*) from orden_items oi where oi.orden_id = ot.id
+                and oi.estado in ('hecho','no_encontrado','ya_resuelto'))::int as cerrados,
              (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'hecho')::int as hechos,
              (select round(coalesce(sum(oi.superficie_m2), 0))::int from orden_items oi
                 where oi.orden_id = ot.id and oi.estado = 'hecho') as m2
@@ -296,6 +315,8 @@ export async function listarOrdenes(
       empresaNombre: String(f.empresa_nombre),
       circuitoCodigo: (f.circuito_codigo as string) ?? null,
       items: Number(f.items ?? 0),
+      enPlan: Number(f.en_plan ?? 0),
+      cerrados: Number(f.cerrados ?? 0),
       hechos: Number(f.hechos ?? 0),
       m2Reportados: Number(f.m2 ?? 0),
       emitidaEn: f.emitida_en != null ? String(f.emitida_en) : null,
@@ -412,6 +433,14 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
     }));
 
     const hechos = itemsDetalle.filter((i) => i.estado === "hecho").length;
+    // Mismas dos definiciones que listarOrdenes, o las dos pantallas vuelven
+    // a mostrar números distintos de la misma orden.
+    const enPlan = itemsDetalle.filter(
+      (i) => i.estado !== "propuesto" && i.estado !== "rechazado",
+    ).length;
+    const cerrados = itemsDetalle.filter((i) =>
+      ["hecho", "no_encontrado", "ya_resuelto"].includes(i.estado),
+    ).length;
     return {
       id: Number(o.id),
       numero: String(o.numero),
@@ -426,6 +455,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       // La cabecera selecciona ot.*: la columna ya viene, solo faltaba mapearla.
       contratoDecreto: (o.contrato_decreto as string) ?? null,
       items: itemsDetalle.length,
+      enPlan,
+      cerrados,
       hechos,
       m2Reportados: Math.round(itemsDetalle.reduce((a, i) => a + (i.superficieM2 ?? 0), 0)),
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,

@@ -6,6 +6,7 @@ import { aplicarCorreccionPines, proponerCorreccionPines, type PropuestaPin } fr
 import { numero } from "@/lib/formato";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * La isla del corrector: pide una tanda, muestra la lista con el mini-mapa de
@@ -36,7 +37,7 @@ export function CorrectorPines({ pendientesIniciales }: { pendientesIniciales: n
         setQuedan(r.quedan);
         setSinResultado(r.sinResultado);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo geocodificar la tanda");
+        setError(mensajeDeError(e, "No se pudo geocodificar la tanda"));
       }
     });
 
@@ -64,7 +65,7 @@ export function CorrectorPines({ pendientesIniciales }: { pendientesIniciales: n
         setTildadas(new Set());
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudieron aplicar las correcciones");
+        setError(mensajeDeError(e, "No se pudieron aplicar las correcciones"));
       }
     });
 

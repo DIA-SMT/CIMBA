@@ -10,6 +10,7 @@ import type { DemandaParaCerrar } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeFuente, BadgeTipo } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * EL ÚLTIMO METRO: de la respuesta escrita a la persona que reclamó.
@@ -112,7 +113,7 @@ export function FilaCierre({
         setAbierto(false);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo cerrar el reclamo: probá de nuevo");
+        setError(mensajeDeError(e, "No se pudo cerrar el reclamo: probá de nuevo"));
       }
     });
   };

@@ -6,6 +6,7 @@ import { actualizarCapacidad } from "@/lib/acciones-ordenes";
 import { proyectar, type ParametrosCapacidad } from "@/lib/capacidad";
 import { numero } from "@/lib/formato";
 import { Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * La pregunta que el Director hace todas las semanas: "con N cuadrillas,
@@ -62,7 +63,7 @@ export function PanelProyeccion({
         setEditando(false);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudieron guardar los parámetros");
+        setError(mensajeDeError(e, "No se pudieron guardar los parámetros"));
       }
     });
   };

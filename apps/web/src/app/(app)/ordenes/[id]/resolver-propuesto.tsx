@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { resolverPropuesto } from "@/lib/acciones-ordenes";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * VALIDAR / RECHAZAR un item que la empresa propuso desde la calle. Validado
@@ -24,7 +25,7 @@ export function ResolverPropuesto({ itemId }: { itemId: number }) {
         await resolverPropuesto({ itemId, decision, motivo: motivoTexto });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo resolver");
+        setError(mensajeDeError(e, "No se pudo resolver"));
       }
     });
   };

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { recalcularRankingIpi } from "@/lib/acciones-ipi";
 import { numero } from "@/lib/formato";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Vuelve a medir el estado de cada corredor contra la operación de los últimos
@@ -25,7 +26,7 @@ export function BotonRecalcularIpi() {
         setAviso(`Listo: ${numero(r.corredores)} corredores recalculados`);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo recalcular");
+        setError(mensajeDeError(e, "No se pudo recalcular"));
       }
     });
 

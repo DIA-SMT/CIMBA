@@ -8,6 +8,7 @@ import { crearDemandaManual, importarArchivo, importarConsolidadoWeb } from "@/l
 import { ETIQUETA_TIPO } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
 import { Panel } from "@/components/ui";
+import { mensajeDeError } from "@/lib/errores";
 
 export function FormularioCarga() {
   return (
@@ -74,7 +75,7 @@ function CargaArchivo() {
       setResultado({ formato: r.formato, resultados: r.resultados });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo importar el archivo");
+      setError(mensajeDeError(e, "No se pudo importar el archivo"));
     } finally {
       setSubiendo(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -157,7 +158,7 @@ function CargaManual() {
         setCreado(r.id ?? null);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo crear la demanda");
+        setError(mensajeDeError(e, "No se pudo crear la demanda"));
       }
     });
   };

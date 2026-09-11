@@ -10,6 +10,7 @@ import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
+import { mensajeDeError } from "@/lib/errores";
 import {
   borradorTieneAlgo,
   borrarBorrador,
@@ -408,7 +409,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         // al refrescar, el server component mueve este item a la lista de hechos
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo reportar: probá de nuevo.");
+        setError(mensajeDeError(e, "No se pudo reportar: probá de nuevo."));
       }
     });
   };
@@ -431,7 +432,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         await reportarItemNoEncontrado({ itemId: item.id, motivo: motivoNoEnc.trim() });
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo reportar: probá de nuevo.");
+        setError(mensajeDeError(e, "No se pudo reportar: probá de nuevo."));
       }
     });
   };
@@ -451,7 +452,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         await marcarYaResuelto(fd);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo reportar: probá de nuevo.");
+        setError(mensajeDeError(e, "No se pudo reportar: probá de nuevo."));
       }
     });
   };

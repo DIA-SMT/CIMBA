@@ -5,6 +5,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { tipoProblemaSchema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
+import { ErrorVisible } from "./errores";
 
 /**
  * Acciones del centro de tratamiento. El criterio de qué se automatiza en
@@ -31,14 +32,25 @@ export async function marcarDuplicada(entrada: { demandaId: number; duplicadaDe:
     .parse(entrada);
 
   await conRls(claims(sesion), async (tx) => {
-    // El original tiene que seguir vivo (abierto o ya vinculado a una obra):
-    // descartar apuntando a un reclamo muerto dejaría al vecino sin nadie
-    // que "junte la prioridad de ambos".
+    /**
+     * El original tiene que seguir vivo (abierto o ya vinculado a una obra):
+     * descartar apuntando a un reclamo muerto dejaría al vecino sin nadie
+     * atendiendo su problema.
+     *
+     * OJO, DEUDA CONOCIDA: esto NO le suma prioridad al original. La pantalla
+     * decía que "junta la prioridad de ambos" y era falso — el score sale de
+     * `menciones`, que acá no se toca. Sumarla de verdad no es una línea:
+     * `menciones` lo pisa la re-sincronización de la ingesta (pipeline.ts) y
+     * `score_prioridad` es columna guardada que recalcula la consolidación,
+     * así que el arreglo toca los tres lugares — y antes hay que decidir con
+     * la Dirección qué debe significar exactamente "junta la prioridad".
+     * Mientras tanto la pantalla dice la verdad.
+     */
     const orig = (await tx.execute(sql`
       select id from demandas
       where id = ${datos.duplicadaDe} and estado in ('recibida', 'en_validacion', 'vinculada')
     `)) as unknown as Array<{ id: number }>;
-    if (!orig[0]) throw new Error(`El reclamo original #${datos.duplicadaDe} ya no está vigente: refrescá la bandeja`);
+    if (!orig[0]) throw new ErrorVisible(`El reclamo original #${datos.duplicadaDe} ya no está vigente: refrescá la bandeja`);
 
     const r = (await tx.execute(sql`
       update demandas set
@@ -51,7 +63,7 @@ export async function marcarDuplicada(entrada: { demandaId: number; duplicadaDe:
       where id = ${datos.demandaId} and estado in ('recibida', 'en_validacion')
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("El reclamo no está abierto");
+    if (!r[0]) throw new ErrorVisible("El reclamo no está abierto");
   });
   revalidatePath("/calidad");
   revalidatePath("/demandas");
@@ -79,7 +91,7 @@ export async function corregirTipoDemanda(entrada: { demandaId: number; tipo: st
       where id = ${datos.demandaId}
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("El reclamo no existe");
+    if (!r[0]) throw new ErrorVisible("El reclamo no existe");
   });
   revalidatePath("/calidad");
   revalidatePath("/demandas");
@@ -134,7 +146,7 @@ export async function generarNotaSat(entrada: {
       .filter((r) => excluidos.has(r.demandaId))
       .map((r) => ({ demanda_id: r.demandaId, ticket: r.ticket }));
     if (renglones.length === 0) {
-      throw new Error(
+      throw new ErrorVisible(
         todos.length > 0
           ? "Quedaron todos los reclamos excluidos: la nota no puede salir vacía"
           : "No hay reclamos de la SAT abiertos para incluir en la nota",
@@ -164,7 +176,7 @@ export async function generarNotaSat(entrada: {
       returning id, numero
     `)) as unknown as Array<{ id: number; numero: string }>;
     const exp = creado[0];
-    if (!exp) throw new Error("No se pudo registrar el expediente");
+    if (!exp) throw new ErrorVisible("No se pudo registrar el expediente");
 
     // El detalle congelado, por lotes para no hacer un viaje por renglón.
     const LOTE = 100;
@@ -193,7 +205,7 @@ export async function generarNotaSat(entrada: {
       returning id
     `)) as unknown as Array<{ id: number }>;
     if (derivadas.length !== renglones.length) {
-      throw new Error(
+      throw new ErrorVisible(
         `Un reclamo cambió de estado mientras se registraba la nota (${derivadas.length} de ${renglones.length}): no se registró nada — refrescá la previsualización y volvé a intentar`,
       );
     }
@@ -228,7 +240,7 @@ export async function derivarAIngenieria(entrada: { demandaId: number }) {
       where id = ${demandaId} and estado in ('recibida', 'en_validacion')
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("El reclamo no está abierto");
+    if (!r[0]) throw new ErrorVisible("El reclamo no está abierto");
   });
   revalidatePath("/calidad");
   revalidatePath("/demandas");
@@ -250,7 +262,7 @@ export async function marcarYaResuelta(entrada: { demandaId: number; incidenteId
     const inc = (await tx.execute(sql`
       select id from incidentes where id = ${datos.incidenteId} and estado in ('reparado', 'verificado')
     `)) as unknown as Array<{ id: number }>;
-    if (!inc[0]) throw new Error("El incidente de referencia no figura como reparado");
+    if (!inc[0]) throw new ErrorVisible("El incidente de referencia no figura como reparado");
 
     await tx.execute(sql`
       insert into demanda_incidente (demanda_id, incidente_id, vinculado_por, automatico)
@@ -266,7 +278,7 @@ export async function marcarYaResuelta(entrada: { demandaId: number; incidenteId
       where id = ${datos.demandaId} and estado in ('recibida', 'en_validacion')
       returning id
     `)) as unknown as Array<{ id: number }>;
-    if (!r[0]) throw new Error("El reclamo no está abierto");
+    if (!r[0]) throw new ErrorVisible("El reclamo no está abierto");
   });
   revalidatePath("/calidad");
   revalidatePath("/demandas");

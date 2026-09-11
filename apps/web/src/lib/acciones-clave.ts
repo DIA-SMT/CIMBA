@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getDb, sql } from "@cimba/db";
 import { escribirCookieSesion, firmarSesion, requerirSesion } from "./auth";
+import { ErrorVisible } from "./errores";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -32,10 +33,10 @@ export async function cambiarMiClave(entrada: { actual: string; nueva: string })
   `)) as unknown as Array<{ clave_hash: string | null }>;
   const perfil = filas[0];
   if (!perfil?.clave_hash) {
-    throw new Error("Tu acceso no usa clave propia (entrás por credenciales del sistema): no hay nada que cambiar acá");
+    throw new ErrorVisible("Tu acceso no usa clave propia (entrás por credenciales del sistema): no hay nada que cambiar acá");
   }
   if (perfil.clave_hash !== sha256(datos.actual)) {
-    throw new Error("La clave actual no coincide");
+    throw new ErrorVisible("La clave actual no coincide");
   }
 
   await getDb().execute(sql`

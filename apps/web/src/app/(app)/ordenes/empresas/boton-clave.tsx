@@ -4,6 +4,7 @@ import { Check, Copy, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { generarClaveEmpresa } from "@/lib/acciones-ordenes";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Genera la clave de acceso de la empresa y la muestra UNA sola vez (en la
@@ -27,7 +28,7 @@ export function BotonClave({ empresaId, tieneClave }: { empresaId: number; tiene
         setConfirmando(false);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo generar la clave");
+        setError(mensajeDeError(e, "No se pudo generar la clave"));
       }
     });
   };

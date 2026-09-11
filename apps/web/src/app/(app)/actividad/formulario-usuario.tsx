@@ -4,6 +4,7 @@ import { ChevronDown, Check, Copy, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { crearUsuarioLocal } from "@/lib/acciones-usuarios";
+import { mensajeDeError } from "@/lib/errores";
 
 const ROLES: Array<{ valor: string; etiqueta: string }> = [
   { valor: "lectura", etiqueta: "Lectura" },
@@ -46,7 +47,7 @@ export function FormularioUsuario() {
         setRol("lectura");
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo crear el usuario");
+        setError(mensajeDeError(e, "No se pudo crear el usuario"));
       }
     });
   };

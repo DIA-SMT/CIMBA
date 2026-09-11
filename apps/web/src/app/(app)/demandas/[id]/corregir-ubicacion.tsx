@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { corregirUbicacionDemanda } from "@/lib/acciones";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Corregir (o asignar) la ubicación de una demanda arrastrando el punto en el
@@ -52,7 +53,7 @@ export function CorregirUbicacion({
         setAbierto(false);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo guardar la ubicación.");
+        setError(mensajeDeError(e, "No se pudo guardar la ubicación."));
       }
     });
   };

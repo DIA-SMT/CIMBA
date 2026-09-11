@@ -6,6 +6,7 @@ import { conRls, sql } from "@cimba/db";
 import { tipoIntervencionSchema } from "@cimba/domain";
 import { requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
+import { ErrorVisible } from "./errores";
 
 /**
  * CARGA LIBRE: trabajo hecho SIN orden previa.
@@ -42,7 +43,7 @@ const TIPOS_FOTO: Record<string, string> = {
 export async function reportarTrabajoLibre(formData: FormData) {
   const sesion = await requerirSesion();
   if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
-    throw new Error(`Rol ${sesion.rol_cimba} sin permiso para cargar trabajos`);
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para cargar trabajos`);
   }
 
   const datos = z
@@ -80,7 +81,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
-    throw new Error("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+    throw new ErrorVisible("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
   }
 
   /**
@@ -91,7 +92,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
    */
   const propia = await empresaDelEjecutor(sesion);
   const empresaId = propia ?? datos.empresaId;
-  if (empresaId == null) throw new Error("Falta indicar la empresa que hizo el trabajo");
+  if (empresaId == null) throw new ErrorVisible("Falta indicar la empresa que hizo el trabajo");
 
   const empresa = (
     await conRls(
@@ -102,18 +103,18 @@ export async function reportarTrabajoLibre(formData: FormData) {
         `)) as unknown as Array<{ id: number; nombre: string }>,
     )
   )[0];
-  if (!empresa) throw new Error("La empresa no existe o está inactiva");
+  if (!empresa) throw new ErrorVisible("La empresa no existe o está inactiva");
 
   const validarFoto = (v: unknown, cual: string): File | null => {
     if (!(v instanceof File) || v.size === 0) return null;
-    if (v.size > 8 * 1024 * 1024) throw new Error(`La foto ${cual} supera 8 MB`);
+    if (v.size > 8 * 1024 * 1024) throw new ErrorVisible(`La foto ${cual} supera 8 MB`);
     if (!TIPOS_FOTO[v.type]) {
-      throw new Error(`La foto ${cual} tiene que ser una imagen (JPG, PNG o WEBP)`);
+      throw new ErrorVisible(`La foto ${cual} tiene que ser una imagen (JPG, PNG o WEBP)`);
     }
     return v;
   };
   const foto = validarFoto(formData.get("foto"), "del trabajo");
-  if (!foto) throw new Error("Falta la foto del trabajo terminado");
+  if (!foto) throw new ErrorVisible("Falta la foto del trabajo terminado");
   const fotoAntes = validarFoto(formData.get("fotoAntes"), "de antes");
 
   const superficie = Math.round(datos.anchoM * datos.largoM * 100) / 100;
@@ -146,7 +147,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
         contentType: archivo.type,
         upsert: false,
       });
-    if (subida.error) throw new Error(`No se pudo subir la foto: ${subida.error.message}`);
+    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
     subidas.push(ruta);
     return { momento, ruta };
   };
@@ -174,7 +175,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
         ) returning id
       `)) as unknown as Array<{ id: number }>;
       const id = Number(inc[0]?.id);
-      if (!id) throw new Error("No se pudo registrar el trabajo");
+      if (!id) throw new ErrorVisible("No se pudo registrar el trabajo");
 
       const iv = (await tx.execute(sql`
         insert into intervenciones (
@@ -201,7 +202,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
         ) returning id
       `)) as unknown as Array<{ id: number }>;
       const intervencionId = Number(iv[0]?.id);
-      if (!intervencionId) throw new Error("No se pudo registrar la intervención");
+      if (!intervencionId) throw new ErrorVisible("No se pudo registrar la intervención");
 
       for (const f of fotos) {
         await tx.execute(sql`

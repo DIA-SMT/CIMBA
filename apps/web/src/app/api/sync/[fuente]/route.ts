@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { mensajeDeError } from "@/lib/errores";
 import {
   crearAdaptadorAtencionCiudadana,
   crearAdaptadorMock,
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ fuente: str
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "error de ingesta" },
+      { error: mensajeDeError(e, "error de ingesta") },
       { status: 500 },
     );
   }

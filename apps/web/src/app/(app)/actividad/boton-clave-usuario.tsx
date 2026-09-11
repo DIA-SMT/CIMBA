@@ -4,6 +4,7 @@ import { Check, Copy, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { regenerarClaveUsuario } from "@/lib/acciones-usuarios";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Resetea la clave de un acceso local (la perdió, sospecha de uso indebido,
@@ -27,7 +28,7 @@ export function BotonClaveUsuario({ perfilId }: { perfilId: string }) {
         setConfirmando(false);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "No se pudo regenerar la clave");
+        setError(mensajeDeError(e, "No se pudo regenerar la clave"));
       }
     });
   };

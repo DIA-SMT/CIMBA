@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { TIPOS_INTERVENCION, type TipoIntervencion } from "@cimba/domain";
 import { corregirTipoIntervencion } from "@/lib/acciones-ordenes";
 import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
+import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Select inline para corregir CÓMO se resolvió un item ya reportado — "capaz
@@ -33,7 +34,7 @@ export function SelectTipoIntervencion({
         router.refresh();
       } catch (e) {
         setValor(anterior);
-        setError(e instanceof Error ? e.message : "No se pudo corregir");
+        setError(mensajeDeError(e, "No se pudo corregir"));
       }
     });
   };

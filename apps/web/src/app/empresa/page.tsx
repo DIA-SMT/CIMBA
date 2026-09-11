@@ -156,7 +156,12 @@ function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspe
   const prioridad = PRIORIDAD[orden.prioridad] ?? TERCIARIA;
   const vencida = estaVencida(orden);
   const hoy = venceHoy(orden);
-  const pct = orden.items > 0 ? Math.round((100 * orden.hechos) / orden.items) : 0;
+  // Mismo denominador que adentro de la orden: antes la tarjeta dividía por
+  // TODOS los items y el detalle por el trabajo encargado, así que la misma
+  // orden decía "3 de 12 hechos" acá y "3 de 10" al tocarla.
+  const pctHecho = orden.enPlan > 0 ? Math.round((100 * orden.hechos) / orden.enPlan) : 0;
+  const pctSinTrabajo =
+    orden.enPlan > 0 ? Math.round((100 * (orden.cerrados - orden.hechos)) / orden.enPlan) : 0;
 
   return (
     <Link href={`/empresa/orden/${orden.id}${sufijoEspejo}`} className="block">
@@ -180,15 +185,30 @@ function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspe
 
         <div className="mb-1 flex items-baseline justify-between text-sm">
           <span>
-            <b className="num">{numero(orden.hechos)}</b> de <b className="num">{numero(orden.items)}</b> hechos
+            <b className="num">{numero(orden.hechos)}</b> de <b className="num">{numero(orden.enPlan)}</b> hechos
+            {orden.cerrados > orden.hechos && (
+              <span className="text-texto-3">
+                {" "}
+                · {numero(orden.cerrados - orden.hechos)} sin trabajo
+              </span>
+            )}
           </span>
           <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
         </div>
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
-          <div
-            className="h-full rounded-full bg-resuelto transition-[width]"
-            style={{ width: `${pct}%` }}
-          />
+<div className="h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
+          <div className="flex h-full">
+            <div
+              className="h-full bg-resuelto transition-[width]"
+              style={{ width: `${pctHecho}%` }}
+            />
+            {/* Cerrado sin trabajo: cuenta para terminar la orden, pero no es
+                bacheo hecho ni se certifica. Por eso va gris y no verde. */}
+            <div
+              className="h-full bg-inactivo/60 transition-[width]"
+              style={{ width: `${pctSinTrabajo}%` }}
+              title="Cerrados sin trabajo: no encontrados o que ya estaban resueltos"
+            />
+          </div>
         </div>
 
         {orden.venceEn && (

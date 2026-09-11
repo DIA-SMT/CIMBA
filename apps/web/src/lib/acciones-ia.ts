@@ -6,6 +6,7 @@ import { conRls, sql } from "@cimba/db";
 import { requerirRol } from "./auth";
 import { sugerenciasParaDemanda } from "./consultas";
 import { analizarDemandaIA, iaDisponible, type AnalisisDemanda } from "./ia";
+import { ErrorVisible, mensajeDeError } from "./errores";
 
 /**
  * Cruce con IA de una demanda: clasifica el tipo de problema y detecta si es
@@ -24,14 +25,14 @@ export async function analizarDemandaConIA(entrada: { demandaId: number }): Prom
   try {
     return { ok: true, analisis: await analizarDemandaConIAInterno(entrada) };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Error inesperado analizando la demanda" };
+    return { ok: false, error: mensajeDeError(e, "Error inesperado analizando la demanda") };
   }
 }
 
 async function analizarDemandaConIAInterno(entrada: { demandaId: number }): Promise<AnalisisDemanda> {
   const sesion = await requerirRol("atencion_ciudadana", "planificacion");
   const { demandaId } = z.object({ demandaId: z.number().int() }).parse(entrada);
-  if (!iaDisponible()) throw new Error("La integración de IA no está configurada (OPENROUTER_API_KEY)");
+  if (!iaDisponible()) throw new ErrorVisible("La integración de IA no está configurada (OPENROUTER_API_KEY)");
 
   const claims = { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona, id_empresa: sesion.id_empresa };
 
@@ -44,7 +45,7 @@ async function analizarDemandaConIAInterno(entrada: { demandaId: number }): Prom
     `)) as unknown as Array<Record<string, unknown>>;
     return filas[0] ?? null;
   });
-  if (!demanda) throw new Error("Demanda inexistente");
+  if (!demanda) throw new ErrorVisible("Demanda inexistente");
 
   const sugerencias = await sugerenciasParaDemanda(sesion, demandaId);
 
