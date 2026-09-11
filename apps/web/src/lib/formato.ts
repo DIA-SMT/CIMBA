@@ -139,6 +139,29 @@ export function pasoDeEstado(estado: EstadoIncidente): PasoSemaforo {
   return "sin_atencion";
 }
 
+/**
+ * El paso del semáforo de una DEMANDA (el pedido del vecino), que es otra
+ * entidad que el incidente y tiene sus propios estados.
+ *
+ * Existe porque el mapeo estaba escrito a mano en los chips de /demandas y el
+ * badge de la tabla, tres filas más abajo, hablaba un idioma propio: la misma
+ * palabra ("Vinculada") salía ámbar arriba y celeste abajo, y los cuatro
+ * finales distintos del reclamo — cerrada, descartada, fuera de alcance — se
+ * veían todos con el mismo gris. Un estado se pinta desde acá o no se pinta.
+ *
+ * "Vinculada" es ámbar y no verde a propósito: que el pedido ya tenga un
+ * problema del territorio detrás significa que alguien lo está trabajando,
+ * no que el bache esté tapado.
+ */
+export function pasoDeEstadoDemanda(estado: string): PasoSemaforo {
+  if (estado === "cerrada") return "resuelto";
+  if (estado === "vinculada") return "en_obra";
+  if (estado === "en_validacion") return "en_cola";
+  if (estado === "recibida") return "sin_atencion";
+  // descartada, fuera_de_alcance y cualquier estado nuevo: salió de la cola.
+  return "inactivo";
+}
+
 /** Del macro que viaja en las features del mapa (properties.macro) al paso del
  *  semáforo. El macro ya perdió la distinción programado/en_ejecucion, así que
  *  en_curso cae en ámbar: para los cuatro pasos hay que partir del estado. */

@@ -2106,15 +2106,33 @@ function MapaInterno({
     setVerDemandas(VISTAS[v].verDemandas);
   };
 
-  const { data } = useQuery<GeoDatos>({
+  /**
+   * OJO con el estado de carga: /api/geodata trae TODOS los incidentes y
+   * TODAS las demandas de la ciudad, sin paginar, así que tarda segundos de
+   * verdad. Mientras tanto, todos los conteos derivan de
+   * `data?.demandas.features ?? []` — o sea que la pantalla más vista del
+   * sistema mostraba "0 sin atención", que es exactamente el resultado que el
+   * Director quiere ver. "Todavía no llegó", "falló" y "no hay deuda" no
+   * pueden dibujarse igual, así que isPending/isError salen del hook y se
+   * muestran.
+   *
+   * El status HTTP se conserva porque el 401 (sesión vencida) es el único
+   * error del que el refetchInterval NO se recupera solo: ahí no va
+   * "Reintentar", va "entrá de nuevo".
+   */
+  const { data, isPending, isError, error, refetch } = useQuery<GeoDatos>({
     queryKey: ["geodata"],
     queryFn: async () => {
       const res = await fetch("/api/geodata");
-      if (!res.ok) throw new Error("geodata");
+      if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
     refetchInterval: 60_000,
   });
+  /** Los números todavía no son confiables: ni llegaron ni se sabe si van a
+   *  llegar. Se usa para poner "…" en vez de un cero que miente. */
+  const sinDatos = isPending || isError;
+  const sesionVencida = isError && error instanceof Error && error.message === "401";
   const dataRef = useRef<GeoDatos | undefined>(undefined);
   dataRef.current = data;
   const puedeVincular = rol === "admin" || rol === "atencion_ciudadana";
@@ -4071,9 +4089,14 @@ function MapaInterno({
       {/* Barra de herramientas: buscador, vista y acciones, todo junto en UN
           panel movible (como Migue) — así ya no se amontonan sueltos y el
           usuario los saca de en medio arrastrándolos de un solo lugar. */}
+      {/* pointer-events-none en el contenedor y auto en cada bloque de
+          vidrio: la barra ocupa TODO el ancho y, cuando envuelve en varias
+          filas, sus huecos transparentes se comían los toques sobre el mapa —
+          en celular eso es una franja de 200 px donde tocar un bache no hacía
+          nada. */}
       <div
         ref={herrRef}
-        className={`absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 ${despejado ? "hidden" : ""}`}
+        className={`pointer-events-none absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 [&>*]:pointer-events-auto ${despejado ? "hidden" : ""}`}
         style={arrHerr.estilo}
       >
         <div
@@ -4183,7 +4206,7 @@ function MapaInterno({
                   >
                     <span aria-hidden>{d === "bacheo" ? "🛠️" : d === "sat" ? "💧" : "🚜"}</span>
                     {ETIQUETA_DESTINO[d]}
-                    <span className="num opacity-70">{numero(cuentasDestino[d])}</span>
+                    <span className="num opacity-70">{sinDatos ? "…" : numero(cuentasDestino[d])}</span>
                   </button>
                 );
               })}
@@ -4558,23 +4581,23 @@ function MapaInterno({
           {verKpi("demandas") && (
             /* "Demandas" a secas prometía el total del sistema y mostraba
                una cola filtrada: el rótulo ahora dice de qué habla. */
-            <Kpi etiqueta="Pedidos en estas colas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
+            <Kpi etiqueta="Pedidos en estas colas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} cargando={sinDatos} />
           )}
           {/* Pinta con el ROJO del semáforo, no con el amarillo de marca: es
               literalmente el paso "sin atención" de la leyenda de abajo. */}
           {verKpi("sinAtencion") && (
-            <Kpi etiqueta="Sin atención" valor={kpis.sinAtencion} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.sinAtencion} />
+            <Kpi etiqueta="Sin atención" valor={kpis.sinAtencion} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.sinAtencion} cargando={sinDatos} />
           )}
           {verKpi("abiertos") && (
-            <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.abiertos} />
+            <Kpi etiqueta="Abiertos" valor={kpis.abiertos} color={SEMAFORO.sin_atencion} ayuda={AYUDA_KPI.abiertos} cargando={sinDatos} />
           )}
           {/* "En curso" es el macro: junta en cola y en obra, así que se pinta
               con el ámbar (el paso más avanzado que cubre). */}
           {verKpi("enCurso") && (
-            <Kpi etiqueta="En curso" valor={kpis.enCurso} color={SEMAFORO.en_obra} pulso ayuda={AYUDA_KPI.enCurso} />
+            <Kpi etiqueta="En curso" valor={kpis.enCurso} color={SEMAFORO.en_obra} pulso ayuda={AYUDA_KPI.enCurso} cargando={sinDatos} />
           )}
           {verKpi("resueltos") && (
-            <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={SEMAFORO.resuelto} ayuda={AYUDA_KPI.resueltos} />
+            <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={SEMAFORO.resuelto} ayuda={AYUDA_KPI.resueltos} cargando={sinDatos} />
           )}
           {verKpi("m2") && (
             <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
@@ -4582,11 +4605,32 @@ function MapaInterno({
         </div>
       )}
 
-      {/* Tooltip instantáneo al pasar el mouse */}
-      {tooltip && !modoAnalisis && (
+      {/* Tooltip instantáneo al pasar el mouse.
+          Se VOLTEA contra los bordes: abajo a la derecha del cursor por
+          defecto, pero si no entra se re-ancla al otro lado. Antes se dibujaba
+          siempre a +14/+14 y contra el borde derecho quedaba media tarjeta
+          afuera — justo con la dirección, que es lo que se está mirando.
+          Re-anclar con la propiedad right y no con translateX: con translate el ancho ya
+          se calculó apretado contra el borde y queda una astilla vertical.
+          El alto es una constante conservadora (con foto ~185 px, sin foto
+          ~55): medirlo de verdad obligaría a leer el layout en cada mousemove
+          sobre una feature. */}
+      {tooltip && !modoAnalisis && (() => {
+        const anchoMapa = contenedorRef.current?.clientWidth ?? 0;
+        const altoMapa = contenedorRef.current?.clientHeight ?? 0;
+        const voltearX = anchoMapa > 0 && tooltip.x + 14 + 272 > anchoMapa;
+        const altoTip = tooltip.foto ? 185 : 55;
+        const voltearY = altoMapa > 0 && tooltip.y + 14 + altoTip > altoMapa;
+        return (
         <div
           className="pointer-events-none absolute z-30 max-w-64 rounded-lg border border-borde-2 bg-panel-2/95 px-2.5 py-1.5 shadow-xl"
-          style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}
+          style={{
+            ...(voltearX
+              ? { right: Math.max(8, anchoMapa - (tooltip.x - 14)) }
+              : { left: Math.max(8, tooltip.x + 14) }),
+            top: voltearY ? undefined : Math.max(8, tooltip.y + 14),
+            bottom: voltearY ? Math.max(8, altoMapa - (tooltip.y - 14)) : undefined,
+          }}
         >
           <p className="truncate text-[12px] font-semibold">{tooltip.lineas[0]}</p>
           {tooltip.lineas[1] && <p className="text-[10px] text-texto-2">{tooltip.lineas[1]}</p>}
@@ -4614,7 +4658,8 @@ function MapaInterno({
             </p>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* Trazando un recorrido: el panel con lo que se lleva dibujado */}
       {dibujandoRuta && (
@@ -4670,8 +4715,48 @@ function MapaInterno({
         <div ref={barraEstadoRef} className="num rounded-md bg-fondo/70 px-2 py-0.5 text-[10px] text-texto-3" />
       </div>
 
+      {/*
+        DECIR QUE FALTA EL DATO, en el mismo lugar donde después va el balance.
+        Sin esto, los segundos que tarda /api/geodata y una sesión vencida se
+        ven idénticos a "no hay deuda" — con cero puntos y cero en todos los
+        KPI. El rojo es --color-peligro y NO el del semáforo: el rojo del
+        semáforo significa "pedido sin atención" y está a centímetros, en el
+        KPI y en la leyenda. Dos rojos distintos para dos cosas distintas.
+      */}
+      {sinDatos && !comparar && (
+        <div className="absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
+          <div
+            className="panel-vidrio flex max-w-[calc(100vw-24px)] items-center gap-2 rounded-full px-4 py-1.5 text-[11px] text-texto-2"
+            style={isError ? { color: "var(--color-peligro)" } : undefined}
+          >
+            {isPending && (
+              <>
+                <span className="pulso inline-block h-2 w-2 shrink-0 rounded-full bg-celeste" />
+                Trayendo los pedidos y el trabajo de toda la ciudad…
+              </>
+            )}
+            {isError && sesionVencida && (
+              <>
+                Se venció tu sesión: los números de arriba no son de ahora.{" "}
+                <a href="/acceso" className="font-bold underline">
+                  Entrar de nuevo
+                </a>
+              </>
+            )}
+            {isError && !sesionVencida && (
+              <>
+                No se pudieron traer los datos — se ven solo las calles.{" "}
+                <button type="button" onClick={() => void refetch()} className="font-bold underline">
+                  Reintentar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
-      {balance && !comparar && !despejado && !enPluvial && (balance.pend > 0 || balance.m2 > 0) && (
+      {balance && !comparar && !despejado && !enPluvial && !sinDatos && (balance.pend > 0 || balance.m2 > 0) && (
         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
@@ -5206,7 +5291,7 @@ function MapaInterno({
                   }`}
                 >
                   <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
-                  {etiqueta} ({numero(n)})
+                  {etiqueta} ({sinDatos ? "…" : numero(n)})
                 </button>
               );
             })}
@@ -5955,7 +6040,9 @@ function MapaInterno({
       {guiaAbierta && <GuiaMapa alCerrar={() => setGuiaAbierta(false)} />}
 
       {/* Panel de detalle */}
-      {seleccion && <PanelDetalle seleccion={seleccion} alCerrar={() => setSeleccion(null)} />}
+      {seleccion && (
+        <PanelDetalle seleccion={seleccion} alCerrar={() => setSeleccion(null)} topBarra={altoHerr} />
+      )}
     </div>
   );
 }
@@ -5966,12 +6053,16 @@ function Kpi({
   color,
   pulso,
   ayuda,
+  cargando,
 }: {
   etiqueta: string;
   valor: number;
   color: string;
   pulso?: boolean;
   ayuda?: string;
+  /** El dato todavía no llegó (o falló): va "…" y no un 0 que se lee como
+   *  "no hay nada", que es justo la conclusión contraria. */
+  cargando?: boolean;
 }) {
   return (
     <div
@@ -5980,7 +6071,7 @@ function Kpi({
     >
       <span className={`inline-block h-2.5 w-2.5 rounded-full ${pulso ? "pulso" : ""}`} style={{ background: color }} />
       <div className="leading-tight">
-        <div className="num text-sm font-bold sm:text-base">{numero(valor)}</div>
+        <div className="num text-sm font-bold sm:text-base">{cargando ? "…" : numero(valor)}</div>
         <div className="text-[9px] font-medium tracking-wider text-texto-3 uppercase">{etiqueta}</div>
       </div>
     </div>
@@ -6014,13 +6105,28 @@ function ItemAccion({
   );
 }
 
-function PanelDetalle({ seleccion, alCerrar }: { seleccion: Seleccion; alCerrar: () => void }) {
+function PanelDetalle({
+  seleccion,
+  alCerrar,
+  topBarra,
+}: {
+  seleccion: Seleccion;
+  alCerrar: () => void;
+  /** Alto real de la barra de herramientas, medido por el ResizeObserver del
+   *  mapa. Con el top-28 fijo (112 px) la ficha abría DEBAJO de la barra en
+   *  cuanto esta envolvía en más de dos filas — o sea en cualquier celular —
+   *  y tapaba el título y la X de cerrar. */
+  topBarra: number;
+}) {
   const p = seleccion.props;
   const esIncidente = seleccion.capa === "incidente";
   const destino = destinoDe(p.destino);
 
   return (
-    <aside className="panel-vidrio absolute top-28 right-3 bottom-6 z-10 flex w-80 flex-col rounded-xl">
+    <aside
+      className="panel-vidrio absolute right-3 bottom-6 z-20 flex w-80 max-w-[calc(100vw-24px)] flex-col rounded-xl"
+      style={{ top: topBarra > 0 ? topBarra + 24 : 112 }}
+    >
       <div className="flex items-center justify-between border-b border-borde px-4 py-3">
         <div className="flex items-center gap-2">
           {esIncidente ? (

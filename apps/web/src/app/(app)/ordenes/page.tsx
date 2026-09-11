@@ -4,13 +4,14 @@ import { ESTADOS_ORDEN, type EstadoOrden } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, listarOrdenes, obtenerCapacidad, resumenCircuitos } from "@/lib/ordenes";
 import { fechaCorta, hoyISO, numero } from "@/lib/formato";
-import { Panel, TituloPagina } from "@/components/ui";
+import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
 import { PanelProyeccion } from "./panel-proyeccion";
 import { MapaOrdenes } from "./mapa-ordenes";
 import {
   COLOR_ESTADO_ORDEN,
+  fondoTenue,
   COLOR_PRIORIDAD,
   ETIQUETA_ESTADO_ORDEN,
   ETIQUETA_PRIORIDAD,
@@ -189,11 +190,12 @@ export default async function PaginaOrdenes({
                   </tr>
                 ))}
                 {circuitos.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-texto-3">
-                      Sin circuitos cargados todavía.
-                    </td>
-                  </tr>
+                  <FilaVacia
+                    columnas={8}
+                    titulo="Todavía no hay circuitos cargados"
+                    detalle="Los circuitos son la división operativa del bacheo: entran por Cargar datos, con la capa que provee la Dirección de Obras Viales."
+                    accion={{ texto: "Ir a Cargar datos", href: "/cargar" }}
+                  />
                 )}
               </tbody>
             </table>
@@ -277,7 +279,7 @@ export default async function PaginaOrdenes({
                   <td className="px-4 py-2.5">
                     <span
                       className="rounded-md px-2 py-0.5 text-[11px] font-bold"
-                      style={{ background: `${COLOR_ESTADO_ORDEN[o.estado]}22`, color: COLOR_ESTADO_ORDEN[o.estado] }}
+                      style={{ background: fondoTenue(COLOR_ESTADO_ORDEN[o.estado]), color: COLOR_ESTADO_ORDEN[o.estado] }}
                     >
                       {ETIQUETA_ESTADO_ORDEN[o.estado]}
                     </span>
@@ -314,13 +316,20 @@ export default async function PaginaOrdenes({
               );
             })}
             {ordenesFiltradas.length === 0 && (
-              <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-texto-3">
-                  {estadoFiltro
-                    ? "No hay órdenes en este estado."
-                    : "Todavía no hay órdenes: creá la primera con “+ Nueva orden”."}
-                </td>
-              </tr>
+              <FilaVacia
+                columnas={9}
+                titulo={estadoFiltro ? "No hay órdenes en este estado" : "Todavía no hay ninguna orden"}
+                detalle={
+                  estadoFiltro
+                    ? undefined
+                    : "La orden es el papel que viaja a la empresa con la lista de baches a tapar."
+                }
+                accion={
+                  estadoFiltro
+                    ? { texto: "Ver todas las órdenes", href: "/ordenes" }
+                    : { texto: "Crear la primera orden", href: "/ordenes/nueva" }
+                }
+              />
             )}
           </tbody>
         </table>

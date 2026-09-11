@@ -3,7 +3,7 @@ import { TIPOS_INTERVENCION } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { filtroEnum, listarEjecutores, listarIntervenciones, resumenIntervenciones } from "@/lib/consultas";
 import { fechaCorta, numero } from "@/lib/formato";
-import { BadgeTipo, Panel, TituloPagina } from "@/components/ui";
+import { BadgeTipo, FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
 import { CadenaFlujo } from "@/components/cadena-flujo";
@@ -213,11 +213,12 @@ export default async function PaginaIntervenciones({
               );
             })}
             {filas.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-texto-3">
-                  Sin trabajos con estos filtros. Probá limpiarlos.
-                </td>
-              </tr>
+              <FilaVacia
+                columnas={7}
+                titulo="Ningún trabajo entra en estos filtros"
+                detalle="Los trabajos se cargan desde el portal de empresas, desde Campo o por la sincronización de las planillas."
+                accion={{ texto: "Quitar los filtros", href: "/intervenciones" }}
+              />
             )}
           </tbody>
         </table>

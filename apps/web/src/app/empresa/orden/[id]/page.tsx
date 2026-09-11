@@ -6,6 +6,7 @@ import { fechaCorta, numero } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
+import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
@@ -227,7 +228,15 @@ export default async function PaginaOrdenEmpresa({
               <Panel key={item.id} className="px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
-                  <span className="rounded px-2 py-1 text-[11px] font-bold" style={{ background: "#5c8a7622", color: "#5c8a76" }}>
+                  {/* El MISMO verde apagado que ve el Director en /ordenes/[id]:
+                      sale de COLOR_ESTADO_ITEM.ya_resuelto, no de un hex acá. */}
+                  <span
+                    className="rounded px-2 py-1 text-[11px] font-bold"
+                    style={{
+                      background: fondoTenue(COLOR_ESTADO_ITEM.ya_resuelto),
+                      color: COLOR_ESTADO_ITEM.ya_resuelto,
+                    }}
+                  >
                     Ya estaba resuelto
                   </span>
                 </div>

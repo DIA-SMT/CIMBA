@@ -5,7 +5,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarCuadrillas, listarIncidentes, resumenIncidentes } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_INCIDENTE, ETIQUETA_TIPO, SEMAFORO, fechaCorta, numero, pasoDeEstado } from "@/lib/formato";
 import { GLOSARIO, type ClaveGlosario } from "@/lib/glosario";
-import { BadgeEstadoIncidente, BadgeTipo, Panel, TituloPagina } from "@/components/ui";
+import { BadgeEstadoIncidente, BadgeTipo, FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { AccionesIncidente } from "./acciones-incidente";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
@@ -231,9 +231,12 @@ export default async function PaginaIncidentes({
               </tr>
             ))}
             {filas.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-texto-3">Sin incidentes con estos filtros.</td>
-              </tr>
+              <FilaVacia
+                columnas={7}
+                titulo="Ningún incidente entra en estos filtros"
+                detalle="No quiere decir que no haya trabajo: quiere decir que ninguno cumple las condiciones que elegiste arriba."
+                accion={{ texto: "Quitar los filtros", href: "/incidentes" }}
+              />
             )}
           </tbody>
         </table>

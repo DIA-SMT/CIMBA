@@ -16,6 +16,7 @@ import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
 import {
   COLOR_ESTADO_ITEM,
   COLOR_ESTADO_ORDEN,
+  fondoTenue,
   COLOR_PRIORIDAD,
   ETIQUETA_ESTADO_ITEM,
   ETIQUETA_ESTADO_ORDEN,
@@ -131,7 +132,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <span
                 className="rounded-md px-2 py-0.5 text-xs font-bold"
-                style={{ background: `${colorEstado}22`, color: colorEstado }}
+                style={{ background: fondoTenue(colorEstado), color: colorEstado }}
               >
                 {ETIQUETA_ESTADO_ORDEN[o.estado]}
               </span>
@@ -521,7 +522,7 @@ function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirT
       <td className="px-3 py-2.5">
         <span
           className="rounded-md px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
-          style={{ background: `${COLOR_ESTADO_ITEM[item.estado]}22`, color: COLOR_ESTADO_ITEM[item.estado] }}
+          style={{ background: fondoTenue(COLOR_ESTADO_ITEM[item.estado]), color: COLOR_ESTADO_ITEM[item.estado] }}
         >
           {ETIQUETA_ESTADO_ITEM[item.estado]}
         </span>

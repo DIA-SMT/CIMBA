@@ -2,11 +2,26 @@ import Link from "next/link";
 import { FUENTES_DEMANDA, ESTADOS_DEMANDA, type FuenteDemanda } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { embudoDemandas, listarDemandas, resumenDemandas } from "@/lib/consultas";
-import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
+import {
+  ETIQUETA_ESTADO_DEMANDA,
+  ETIQUETA_FUENTE,
+  SEMAFORO,
+  fechaCorta,
+  numero,
+  pasoDeEstadoDemanda,
+} from "@/lib/formato";
 import { GLOSARIO, type ClaveGlosario } from "@/lib/glosario";
 import { CadenaFlujo } from "@/components/cadena-flujo";
 import { EmbudoNumeros } from "@/components/embudo-numeros";
-import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
+import {
+  BadgeEstadoDemanda,
+  BadgeFuente,
+  BadgeTipo,
+  BarraConfianza,
+  FilaVacia,
+  Panel,
+  TituloPagina,
+} from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
 
@@ -74,16 +89,13 @@ export default async function PaginaDemandas({
         </Link>
         {/* Los textos salen del GLOSARIO (una sola fuente de verdad): el
             mismo que explican las ⓘ del resto del sistema. */}
+        {/* El color sale de pasoDeEstadoDemanda, el MISMO que usa el badge de
+            la tabla de abajo: cuando el mapeo estaba acá escrito a mano, arriba
+            y abajo de la misma pantalla el estado tenía dos colores. */}
         {(
-          [
-            ["recibida", "var(--color-sin-atencion)"],
-            ["en_validacion", "var(--color-en-cola)"],
-            ["vinculada", "var(--color-en-obra)"],
-            ["cerrada", "var(--color-hecho)"],
-            ["descartada", "var(--color-inactivo)"],
-            ["fuera_de_alcance", "var(--color-inactivo)"],
-          ] as const
-        ).map(([e, color]) => {
+          ["recibida", "en_validacion", "vinculada", "cerrada", "descartada", "fuera_de_alcance"] as const
+        ).map((e) => {
+          const color = SEMAFORO[pasoDeEstadoDemanda(e)];
           const ayuda = GLOSARIO[e as ClaveGlosario].texto;
           const n = resumen.porEstado[e] ?? 0;
           if (n === 0) return null;
@@ -192,6 +204,11 @@ export default async function PaginaDemandas({
         {(filtros.fuente || filtros.estado || filtros.destino || filtros.q) && (
           <Link href="/demandas" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
+        {/* Cuántos quedaron. Filtrar, buscar o entrar desde el gráfico de
+            /brecha recortaba la tabla y lo único numérico en pantalla seguía
+            siendo el total del sistema, arriba: el operador no tenía cómo
+            saber si su búsqueda trajo 3 o 300. */}
+        <span className="ml-auto text-xs text-texto-3">{numero(total)} pedidos con estos filtros</span>
         <a
           href={`/api/exportar?entidad=demandas&${new URLSearchParams(
             Object.fromEntries(
@@ -205,7 +222,7 @@ export default async function PaginaDemandas({
               }).filter(([, v]) => v),
             ) as Record<string, string>,
           ).toString()}`}
-          className="ml-auto text-xs font-semibold text-celeste hover:underline"
+          className="text-xs font-semibold text-celeste hover:underline"
           title="Descargar lo filtrado como CSV (Excel, PowerBI, QGIS) — sin datos de contacto"
         >
           ⤓ CSV
@@ -286,11 +303,12 @@ export default async function PaginaDemandas({
               </tr>
             ))}
             {filas.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-texto-3">
-                  No hay demandas con estos filtros.
-                </td>
-              </tr>
+              <FilaVacia
+                columnas={8}
+                titulo="Ningún pedido entra en estos filtros"
+                detalle="Los filtros de arriba conservan lo que elegiste: revisá el estado, el canal y la cola antes de dar por hecho que no hay nada."
+                accion={{ texto: "Quitar los filtros", href: "/demandas" }}
+              />
             )}
           </tbody>
         </table>

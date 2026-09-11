@@ -3,7 +3,7 @@ import type { FuenteDemanda, TipoProblema } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 import { demandasParaCerrar } from "@/lib/ordenes";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
-import { Panel, TituloPagina } from "@/components/ui";
+import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { FilaCierre } from "./fila-cierre";
 
 export const dynamic = "force-dynamic";
@@ -185,15 +185,23 @@ export default async function PaginaCierres({
             {demandas.map((d) => (
               <FilaCierre key={d.demandaId} demanda={d} puedeCerrar={puedeCerrar} />
             ))}
-            {demandas.length === 0 && (
-              <tr>
-                <td colSpan={10} className="px-4 py-10 text-center text-texto-3">
-                  {hayFiltro
-                    ? "No hay reclamos pendientes de cierre con estos filtros."
-                    : "No hay reclamos pendientes de cierre: o no hay reparaciones nuevas sobre reclamos abiertos, o ya se respondió todo."}
-                </td>
-              </tr>
-            )}
+            {demandas.length === 0 &&
+              (hayFiltro ? (
+                <FilaVacia
+                  columnas={10}
+                  titulo="Ningún reclamo listo para cerrar entra en estos filtros"
+                  accion={{ texto: "Quitar los filtros", href: "/cierres" }}
+                />
+              ) : (
+                /* Bandeja al día: es una BUENA noticia y no un vacío que hay
+                   que arreglar — por eso va en verde y sin botón de salida. */
+                <FilaVacia
+                  columnas={10}
+                  bueno
+                  titulo="No hay nadie esperando respuesta"
+                  detalle="O no hay reparaciones nuevas sobre reclamos abiertos, o ya se respondió todo. Los reclamos aparecen acá solos cuando se repara cerca de uno abierto."
+                />
+              ))}
           </tbody>
         </table>
       </Panel>
