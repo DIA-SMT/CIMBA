@@ -1325,6 +1325,9 @@ export interface EmbudoDemandas {
   porDestino: { bacheo: number; sat: number; ingenieria: number };
   /** De las que están en el mapa, cuántas no tiene nadie trabajando. */
   sinAtencion: number;
+  /** De esas, cuántas entraron por una carga masiva de archivo (sin fecha
+   *  real del reclamo) y nunca pasaron por triage. */
+  sinAtencionDeArchivo: number;
   conFoto: number;
 }
 
@@ -1363,13 +1366,15 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
     // "Sin atención" con el MISMO criterio que pinta el mapa (geodata): no hay
     // ningún incidente abierto ni reparación a menos de 40 m.
     const sin = (await tx.execute(sql`
-      select count(*)::int as n from demandas d
+      select count(*)::int as n,
+             count(*) filter (where d.metadata->>'archivo' is not null)::int as de_archivo
+      from demandas d
       where d.estado in ('recibida','en_validacion') and d.geom is not null
         and not exists (
           select 1 from incidentes i
           where i.estado in ('detectado','priorizado','programado','en_ejecucion','reparado','verificado')
             and st_dwithin(i.geom::geography, d.geom::geography, 40))
-    `)) as unknown as Array<{ n: number }>;
+    `)) as unknown as Array<{ n: number; de_archivo: number }>;
 
     return {
       total: Number(f.total ?? 0),
@@ -1383,6 +1388,7 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
         ingenieria: Number(f.ingenieria ?? 0),
       },
       sinAtencion: Number(sin[0]?.n ?? 0),
+      sinAtencionDeArchivo: Number(sin[0]?.de_archivo ?? 0),
       conFoto: Number(f.con_foto ?? 0),
     };
   });

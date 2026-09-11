@@ -1089,10 +1089,28 @@ const capaDemandasBrecha = (p: Paleta): LayerProps => ({
       "posible_resuelta", p.resuelto,
       p.inactivo,
     ],
-    "circle-opacity": 0.85,
+    /**
+     * PEDIDO = ANILLO HUECO. El trabajo (incidentes) va relleno.
+     *
+     * El mapa dibuja las dos cosas a la vez sobre el mismo territorio y hay
+     * ~990 incidentes que caen a menos de 40 m de un pedido abierto: mil
+     * lugares pintados dos veces. Con el mismo color y la misma forma era
+     * imposible saber si un punto era "lo que piden" o "lo que se hizo".
+     * La forma los separa aunque se superpongan y aunque el color coincida.
+     */
+    "circle-opacity": 0,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.6, 14, 4.5, 17, 7, 19.5, 10],
-    "circle-stroke-width": 0.8,
-    "circle-stroke-color": p.trazoBrecha,
+    "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 17, 2.2],
+    "circle-stroke-color": [
+      "match",
+      ["get", "brecha"],
+      "sin_atencion", p.sinAtencion,
+      "en_cola", p.enCola,
+      "en_obra", p.enObra,
+      "posible_resuelta", p.resuelto,
+      p.inactivo,
+    ],
+    "circle-stroke-opacity": 0.95,
   },
 });
 
@@ -5240,27 +5258,47 @@ function MapaInterno({
                 TERRITORIO / FONDO. Las claves internas del acordeón conservan
                 su nombre histórico (demandas/incidentes/territorio) para no
                 tocar el mecanismo existente — solo se agregó "fondo". */}
-            {!enPluvial && <Seccion titulo="Lo pedido" resumen={numero(kpis.demandas)}
+            {!enPluvial && <Seccion titulo="Lo que piden los vecinos" resumen={numero(kpis.demandas)}
               abierta={secciones.demandas ?? false}
               alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />}
             {!enPluvial && secciones.demandas && (<>
-            <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]" title="Los pedidos (reclamos, intimaciones, notas) como puntos sobre el mapa">
-              <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: pal.demanda }} />
-              <span className="min-w-0 truncate">Pedidos (puntos)</span>
-            </label>
-            <label
-              className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Mostrar solo demandas aún sin cotejar (recibidas/en validación); apagalo para ver también las ya vinculadas o descartadas"
-            >
-              <input
-                type="checkbox"
-                checked={soloDemandasAbiertas}
-                onChange={(e) => setSoloDemandasAbiertas(e.target.checked)}
-                className="accent-[#0066ff]"
-              />
-              <span className="min-w-0 truncate">Solo pendientes</span>
-            </label>
+            {/* UN control, no dos. Antes había "Pedidos (puntos)" (prender la
+                capa) y "Solo pendientes" (filtrar adentro de la capa): dos
+                niveles lógicos distintos presentados como hermanos, y nadie
+                entendía la diferencia. Ahora es una sola pregunta con tres
+                respuestas posibles. */}
+            <p className="mb-1 text-[11px] leading-snug text-texto-3">
+              Los <b className="text-texto-2">pedidos</b> son lo que reclamó un vecino o una institución.
+              Se dibujan como <b className="text-texto-2">anillos huecos</b>.
+            </p>
+            <div className="mb-2 flex gap-1">
+              {([
+                { v: "pendientes" as const, t: "Solo pendientes", d: "Los que todavía nadie cotejó ni cerró" },
+                { v: "todos" as const, t: "Todos", d: "Incluye los ya vinculados, cerrados o descartados" },
+                { v: "ninguno" as const, t: "Ocultar", d: "Sacar los pedidos del mapa y ver solo el trabajo" },
+              ]).map((o) => {
+                const activo = !verDemandas
+                  ? o.v === "ninguno"
+                  : soloDemandasAbiertas
+                    ? o.v === "pendientes"
+                    : o.v === "todos";
+                return (
+                  <button
+                    key={o.v}
+                    title={o.d}
+                    onClick={() => {
+                      setVerDemandas(o.v !== "ninguno");
+                      if (o.v !== "ninguno") setSoloDemandasAbiertas(o.v === "pendientes");
+                    }}
+                    className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                      activo ? "border-celeste bg-celeste/15 text-celeste" : "border-borde-2 text-texto-2 hover:text-texto"
+                    }`}
+                  >
+                    {o.t}
+                  </button>
+                );
+              })}
+            </div>
             <label
               className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Mapa de calor de los pedidos: dónde se concentra la demanda. Disponible en cualquier vista (era la vieja vista Análisis)."
@@ -5310,15 +5348,20 @@ function MapaInterno({
             )}
             </>)}
 
-            {!enPluvial && <Seccion titulo="Lo hecho" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
+            {!enPluvial && <Seccion titulo="El trabajo del municipio" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
               abierta={secciones.incidentes ?? false}
               alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />}
             {!enPluvial && secciones.incidentes && (<>
+            <p className="mb-1 text-[11px] leading-snug text-texto-3">
+              Son los <b className="text-texto-2">problemas que el municipio ya tomó</b> — no los pedidos.
+              Van <b className="text-texto-2">rellenos</b>. La mayoría los detectó un inspector o los reportó
+              una empresa, sin que nadie los haya reclamado.
+            </p>
             {(
               [
-                ["abierto", "Abiertos"],
-                ["en_curso", "En curso"],
-                ["resuelto", "Resueltos"],
+                ["abierto", "Detectados, sin empezar"],
+                ["en_curso", "Programados o en obra"],
+                ["resuelto", "Ya reparados"],
                 ["inactivo", "Desestimados"],
               ] as const
             ).map(([clave, etiqueta]) => (
@@ -6081,6 +6124,20 @@ function LeyendaSemaforo({
        geolocalizar, x≈336..365), que quedaban intocables. Sigue sin capturar el
        puntero (pointer-events-none): es un rótulo, no un control. */
     <div className="panel-vidrio pointer-events-none max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
+      {/* LA CLAVE DE FORMAS va primero: el color dice el ESTADO, la forma dice
+          QUÉ ES. Sin esto, un pedido rojo y un incidente rojo eran el mismo
+          punto para el ojo, y hay ~990 lugares donde los dos se superponen. */}
+      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-borde/60 pb-1 text-[10px] text-texto-3">
+        <span className="flex items-center gap-1 whitespace-nowrap">
+          <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-texto-2" />
+          anillo = lo que <b className="font-semibold text-texto-2">piden</b>
+        </span>
+        <span className="flex items-center gap-1 whitespace-nowrap">
+          <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-texto-2" />
+          relleno = lo que el municipio <b className="font-semibold text-texto-2">trabaja</b>
+        </span>
+        <span className="whitespace-nowrap">el color dice en qué paso está</span>
+      </div>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] font-medium text-texto-2">
         {porEdad ? (
           <>

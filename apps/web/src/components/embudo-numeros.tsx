@@ -93,9 +93,21 @@ export function EmbudoNumeros({ e, compacto = false }: { e: EmbudoDemandas; comp
           <b className="num" style={{ color: "var(--color-sin-atencion)" }}>
             {numero(e.sinAtencion)}
           </b>{" "}
-          <b>no tienen a nadie trabajándolos</b> — ni una cuadrilla asignada ni una reparación cerca. Ese es
-          el número que importa.
+          <b>no tienen a nadie trabajándolos</b> — ni una cuadrilla asignada ni una reparación cerca.
         </p>
+        {/* El número asusta hasta que se ve de dónde viene: la mayoría no son
+            vecinos esperando, son registros históricos cargados de golpe por
+            archivo, con fecha de importación y sin triage. Decirlo evita leer
+            un problema de gestión donde hay un problema de datos. */}
+        {e.sinAtencionDeArchivo > 0 && (
+          <p className="mt-1.5 rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-relaxed">
+            <b className="num">{numero(e.sinAtencionDeArchivo)}</b> de esos{" "}
+            <b>entraron por carga de archivo</b>, no por un reclamo en vivo: traen la fecha del día en que
+            se importaron y nunca pasaron por triage. Los que realmente llegaron por un canal activo son{" "}
+            <b className="num">{numero(e.sinAtencion - e.sinAtencionDeArchivo)}</b>. Son dos problemas
+            distintos: uno es limpiar una base, el otro es salir a bachear.
+          </p>
+        )}
         <p className="mt-1.5 text-[11px] text-texto-3">
           Reparto por quién resuelve: Bacheo <b className="num">{numero(e.porDestino.bacheo)}</b> · SAT{" "}
           <b className="num">{numero(e.porDestino.sat)}</b> · Ingeniería{" "}
