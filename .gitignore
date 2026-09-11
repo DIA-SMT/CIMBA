@@ -29,3 +29,6 @@ data/normalizado/
 coverage/
 playwright-report/
 test-results/
+
+# Scripts de consulta ad-hoc a la base (no son parte del producto)
+scripts/_*.mjs
