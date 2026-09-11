@@ -7,6 +7,7 @@ import { tipoIntervencionSchema } from "@cimba/domain";
 import { requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { camposMedicion, resolverMedicion, volumenDe } from "./medicion";
 
 /**
  * CARGA LIBRE: trabajo hecho SIN orden previa.
@@ -51,9 +52,8 @@ export async function reportarTrabajoLibre(formData: FormData) {
       direccion: z.string().min(3).max(300),
       lat: z.coerce.number().min(-27.2).max(-26.5),
       lon: z.coerce.number().min(-65.6).max(-64.9),
-      anchoM: z.coerce.number().positive().max(50),
-      largoM: z.coerce.number().positive().max(2000),
-      espesorCm: z.coerce.number().positive().max(60),
+      // Las tres formas de medir el bache: ver lib/medicion.ts.
+      ...camposMedicion,
       tipoTrabajo: z.enum(["bache", "carpeta"]).default("bache"),
       tipoIntervencion: tipoIntervencionSchema.optional(),
       tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
@@ -67,8 +67,11 @@ export async function reportarTrabajoLibre(formData: FormData) {
       direccion: formData.get("direccion"),
       lat: formData.get("lat"),
       lon: formData.get("lon"),
-      anchoM: formData.get("anchoM"),
-      largoM: formData.get("largoM"),
+      medicion: formData.get("medicion") || undefined,
+      anchoM: formData.get("anchoM") || undefined,
+      largoM: formData.get("largoM") || undefined,
+      superficieM2: formData.get("superficieM2") || undefined,
+      volumenM3: formData.get("volumenM3") || undefined,
       espesorCm: formData.get("espesorCm"),
       tipoTrabajo: formData.get("tipoTrabajo") || undefined,
       tipoIntervencion: formData.get("tipoIntervencion") || undefined,
@@ -117,8 +120,14 @@ export async function reportarTrabajoLibre(formData: FormData) {
   if (!foto) throw new ErrorVisible("Falta la foto del trabajo terminado");
   const fotoAntes = validarFoto(formData.get("fotoAntes"), "de antes");
 
-  const superficie = Math.round(datos.anchoM * datos.largoM * 100) / 100;
-  const volumen = Math.round(superficie * (datos.espesorCm / 100) * 100) / 100;
+  let medida;
+  try {
+    medida = resolverMedicion(datos);
+  } catch (e) {
+    throw new ErrorVisible(e instanceof Error ? e.message : "Falta la medida del bache");
+  }
+  const superficie = medida.superficieM2;
+  const volumen = volumenDe(superficie, medida.espesorCm);
   const tipoIntervencion =
     datos.tipoIntervencion ?? (datos.tipoTrabajo === "carpeta" ? "carpeta" : "bacheo");
   // Misma regla de escala que SIGOV y que el reporte de la orden: un paño o
@@ -185,7 +194,11 @@ export async function reportarTrabajoLibre(formData: FormData) {
           ${id}, 'finalizada',
           st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
           now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
-          ${JSON.stringify({ ancho_m: datos.anchoM, largo_m: datos.largoM, espesor_cm: datos.espesorCm })}::jsonb,
+          ${JSON.stringify({
+            ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
+            espesor_cm: medida.espesorCm,
+            medicion: medida.medicion,
+          })}::jsonb,
           ${datos.observaciones ?? null},
           ${JSON.stringify({
             origen: "empresa_libre",
@@ -195,6 +208,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
             contratista: empresa.nombre,
             empresa: empresa.nombre,
             escala: esObra ? "obra" : "bache",
+            medicion: medida.medicion,
             cargado_por: sesion.nombre,
             ...(datos.capataz ? { capataz: datos.capataz } : {}),
             ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),

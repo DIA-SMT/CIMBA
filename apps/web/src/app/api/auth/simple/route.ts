@@ -114,12 +114,13 @@ export async function POST(req: NextRequest) {
   // 3) Usuario local del personal (Silvana, Alejandro, …): usuario y clave
   //    propios en perfiles, con clave temporal que se pide cambiar al entrar.
   const locales = (await getDb().execute(sql`
-    select id, id_persona, nombre, rol, activo, clave_hash, clave_temporal
+    select id, id_persona, nombre, rol, activo, clave_hash, clave_temporal, empresa_id
     from perfiles
     where usuario = ${usuario.toLowerCase()} and clave_hash is not null
   `)) as unknown as Array<{
     id: string; id_persona: number; nombre: string; rol: string;
     activo: boolean; clave_hash: string; clave_temporal: boolean;
+    empresa_id: number | null;
   }>;
   const local = locales[0];
   if (local && local.clave_hash === sha256(clave)) {
@@ -134,6 +135,16 @@ export async function POST(req: NextRequest) {
         select id from empresas where slug = 'administracion' and activa
       `)) as unknown as Array<{ id: number }>;
       if (adm[0]) idEmpresaCuadrilla = Number(adm[0].id);
+    }
+    /**
+     * El usuario de una contratista (calleri@cimba.com y compañía): su empresa
+     * viaja en el JWT, que es lo que lee empresaDelEjecutor() para acotar TODO
+     * lo que ve y toca en el portal. Sin esto el perfil entraría con rol
+     * empresa y sin empresa: no vería nada, o peor, el ?empresa= de la URL
+     * pasaría a mandar.
+     */
+    if (local.rol === "empresa" && local.empresa_id != null) {
+      idEmpresaCuadrilla = Number(local.empresa_id);
     }
     const jwt = await firmarSesion({
       sub: local.id,
@@ -155,7 +166,7 @@ export async function POST(req: NextRequest) {
         ? "/cierres"
         : local.rol === "planificacion"
           ? "/ordenes"
-          : local.rol === "cuadrilla"
+          : local.rol === "cuadrilla" || local.rol === "empresa"
             ? "/empresa"
             : "/mapa";
     return NextResponse.json({ ok: true, destino });

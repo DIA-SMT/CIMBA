@@ -8,6 +8,7 @@ import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { camposMedicion, resolverMedicion } from "./medicion";
 
 /**
  * Acciones del ciclo de la orden de trabajo. El principio rector: cuando la
@@ -323,9 +324,11 @@ export async function reportarItemHecho(formData: FormData) {
   const datos = z
     .object({
       itemId: z.coerce.number().int().positive(),
-      anchoM: z.coerce.number().positive().max(50),
-      largoM: z.coerce.number().positive().max(2000),
-      espesorCm: z.coerce.number().positive().max(60),
+      /**
+       * Las tres formas de medir el bache (ver lib/medicion.ts). El default
+       * "lados" mantiene andando cualquier carga vieja que no mande el campo.
+       */
+      ...camposMedicion,
       observaciones: z.string().max(2000).optional(),
       lat: z.coerce.number().min(-27.2).max(-26.5).optional(),
       lon: z.coerce.number().min(-65.6).max(-64.9).optional(),
@@ -352,8 +355,11 @@ export async function reportarItemHecho(formData: FormData) {
     })
     .parse({
       itemId: formData.get("itemId"),
-      anchoM: formData.get("anchoM"),
-      largoM: formData.get("largoM"),
+      medicion: formData.get("medicion") || undefined,
+      anchoM: formData.get("anchoM") || undefined,
+      largoM: formData.get("largoM") || undefined,
+      superficieM2: formData.get("superficieM2") || undefined,
+      volumenM3: formData.get("volumenM3") || undefined,
       espesorCm: formData.get("espesorCm"),
       observaciones: formData.get("observaciones") || undefined,
       lat: formData.get("lat") || undefined,
@@ -386,7 +392,15 @@ export async function reportarItemHecho(formData: FormData) {
   if (!foto) throw new ErrorVisible("Falta la foto del trabajo terminado");
   const fotoAntes = validarFoto(formData.get("fotoAntes"), "de antes");
 
-  const superficie = Math.round(datos.anchoM * datos.largoM * 100) / 100;
+  /* Las tres puertas al mismo triángulo: lo que se guarda es siempre
+     superficie + espesor, porque orden_items.volumen_m3 es columna generada. */
+  let medida;
+  try {
+    medida = resolverMedicion(datos);
+  } catch (e) {
+    throw new ErrorVisible(e instanceof Error ? e.message : "Falta la medida del bache");
+  }
+  const superficie = medida.superficieM2;
 
   // El punto (si viene corregido) tiene que caer en la ciudad. La caja del zod
   // es un margen laxo; esta es la frontera operativa real.
@@ -561,7 +575,13 @@ export async function reportarItemHecho(formData: FormData) {
         ${incidenteId}, 'finalizada',
         st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
         now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
-        ${JSON.stringify({ ancho_m: datos.anchoM, largo_m: datos.largoM, espesor_cm: datos.espesorCm })}::jsonb,
+        ${JSON.stringify({
+          ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
+          espesor_cm: medida.espesorCm,
+          // Cómo se midió: una superficie sacada del volumen de mezcla es una
+          // estimación, y quien firma el acta tiene que poder distinguirlas.
+          medicion: medida.medicion,
+        })}::jsonb,
         ${datos.observaciones ?? null},
         ${JSON.stringify({
           origen: "orden_trabajo",
@@ -599,12 +619,13 @@ export async function reportarItemHecho(formData: FormData) {
     await tx.execute(sql`
       update orden_items set
         estado = 'hecho',
-        ancho_m = ${datos.anchoM}, largo_m = ${datos.largoM}, espesor_cm = ${datos.espesorCm},
+        ancho_m = ${medida.anchoM}, largo_m = ${medida.largoM}, espesor_cm = ${medida.espesorCm},
         superficie_m2 = ${superficie},
         tipo_obra = ${tipoObra}::tipo_obra_bacheo,
         intervencion_id = ${intervencionId},
         reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
         metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          medicion: medida.medicion,
           ...(datos.capataz ? { capataz: datos.capataz } : {}),
           ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),
         })}::jsonb,

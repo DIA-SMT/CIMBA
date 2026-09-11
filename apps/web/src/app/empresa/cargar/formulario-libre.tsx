@@ -8,6 +8,13 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
+import {
+  CamposMedida,
+  medidaAFormData,
+  medidaVacia,
+  resumenMedida,
+  type ValorMedida,
+} from "@/components/campos-medida";
 import { Achicando } from "../orden/[id]/tarjeta-item";
 import { SelectorUbicacion, type UbicacionElegida } from "../selector-ubicacion";
 import { mensajeDeError } from "@/lib/errores";
@@ -53,9 +60,8 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
   const [ubicacion, setUbicacion] = useState<UbicacionElegida | null>(null);
 
   const [tipoTrabajo, setTipoTrabajo] = useState<"bache" | "carpeta">("bache");
-  const [ancho, setAncho] = useState("");
-  const [largo, setLargo] = useState("");
-  const [espesor, setEspesor] = useState("");
+  // Las tres formas de medir, iguales que en el item de una orden.
+  const [medida, setMedida] = useState<ValorMedida>(() => medidaVacia());
   const [tipoIntervencion, setTipoIntervencion] = useState<TipoIntervencion>("bacheo");
   const [tipoObra, setTipoObra] = useState<string | null>(null);
   const [obs, setObs] = useState("");
@@ -80,8 +86,15 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     try {
       const crudo = localStorage.getItem(CLAVE_MEMORIA);
       if (!crudo) return;
-      const m = JSON.parse(crudo) as { espesor?: string; capataz?: string; tipoObra?: string | null };
-      if (m.espesor) setEspesor(m.espesor);
+      const m = JSON.parse(crudo) as {
+        espesor?: string;
+        medicion?: ValorMedida["medicion"];
+        capataz?: string;
+        tipoObra?: string | null;
+      };
+      if (m.espesor || m.medicion) {
+        setMedida((v) => ({ ...v, espesor: m.espesor ?? v.espesor, medicion: m.medicion ?? v.medicion }));
+      }
       if (m.capataz) setCapataz(m.capataz);
       if (m.tipoObra !== undefined) setTipoObra(m.tipoObra);
     } catch {
@@ -115,11 +128,8 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     }
   };
 
-  const anchoN = aNumero(ancho);
-  const largoN = aNumero(largo);
-  const espesorN = aNumero(espesor);
-  const superficie = anchoN > 0 && largoN > 0 ? anchoN * largoN : null;
-  const volumen = superficie != null && espesorN > 0 ? (superficie * espesorN) / 100 : null;
+  const { superficie, volumen, falta: faltaMedida } = resumenMedida(medida);
+  void volumen;
   /**
    * Arriba de 50 m² el protocolo deja de considerarlo bacheo. Avisarlo acá
    * evita que un 20 × 30 tipeado de más se descubra recién en certificación,
@@ -137,8 +147,8 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
       setError("Falta el punto en el mapa: buscá la dirección o usá tu GPS y confirmá el pin.");
       return;
     }
-    if (!(anchoN > 0) || !(largoN > 0) || !(espesorN > 0)) {
-      setError("Cargá el ancho, el largo y el espesor.");
+    if (faltaMedida) {
+      setError(faltaMedida);
       return;
     }
     if (!fotoDespues) {
@@ -150,9 +160,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     fd.set("direccion", direccionTexto.trim());
     fd.set("lat", String(ubicacion.lat));
     fd.set("lon", String(ubicacion.lon));
-    fd.set("anchoM", String(anchoN));
-    fd.set("largoM", String(largoN));
-    fd.set("espesorCm", String(espesorN));
+    medidaAFormData(fd, medida);
     fd.set("tipoTrabajo", tipoTrabajo);
     fd.set("tipoIntervencion", tipoIntervencion);
     if (tipoObra) fd.set("tipoObra", tipoObra);
@@ -169,7 +177,12 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         try {
           localStorage.setItem(
             CLAVE_MEMORIA,
-            JSON.stringify({ espesor, capataz: capataz.trim() || undefined, tipoObra }),
+            JSON.stringify({
+              espesor: medida.espesor,
+              medicion: medida.medicion,
+              capataz: capataz.trim() || undefined,
+              tipoObra,
+            }),
           );
         } catch {
           /* ídem */
@@ -179,8 +192,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         setHecho(r.incidenteId);
         setDireccionTexto("");
         setUbicacion(null);
-        setAncho("");
-        setLargo("");
+        setMedida((v) => ({ ...medidaVacia(v.medicion), espesor: v.espesor }));
         setObs("");
         setTicket("");
         void elegirFoto("despues", undefined, setFotoDespues, setPreviewDespues, previewDespues);
@@ -260,62 +272,14 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
           </select>
         </div>
 
-        <div>
-          <p className="mb-1.5 text-xs font-semibold tracking-wider text-texto-3 uppercase">
-            Medidas reales
+        <CamposMedida valor={medida} alCambiar={setMedida} />
+        {demasiadoGrande && (
+          <p className="rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-snug">
+            <b className="text-amarillo">Ojo con la medida:</b> {superficie?.toFixed(0)} m² ya no es un
+            bache — arriba de 50 m² el protocolo lo trata como obra y se certifica distinto. Si te
+            equivocaste de coma, corregilo ahora.
           </p>
-          <div className="grid grid-cols-3 gap-2">
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-texto-2">Ancho (m)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step={0.1}
-                min={0}
-                value={ancho}
-                onChange={(e) => setAncho(e.target.value)}
-                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-texto-2">Largo (m)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step={0.1}
-                min={0}
-                value={largo}
-                onChange={(e) => setLargo(e.target.value)}
-                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-texto-2">Espesor (cm)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step={0.1}
-                min={0}
-                value={espesor}
-                onChange={(e) => setEspesor(e.target.value)}
-                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-              />
-            </label>
-          </div>
-          {superficie != null && (
-            <p className="num mt-1.5 text-sm text-texto-2">
-              {superficie.toFixed(2).replace(".", ",")} m²
-              {volumen != null && <> · {volumen.toFixed(2).replace(".", ",")} m³ de mezcla</>}
-            </p>
-          )}
-          {demasiadoGrande && (
-            <p className="mt-1.5 rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-snug">
-              <b className="text-amarillo">Ojo con la medida:</b> {superficie?.toFixed(0)} m² ya no es un
-              bache — arriba de 50 m² el protocolo lo trata como obra y se certifica distinto. Si te
-              equivocaste de coma, corregilo ahora.
-            </p>
-          )}
-        </div>
+        )}
 
         <div>
           <p className="mb-1.5 text-xs font-semibold tracking-wider text-texto-3 uppercase">

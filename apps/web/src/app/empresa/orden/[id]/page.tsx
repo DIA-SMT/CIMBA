@@ -349,8 +349,12 @@ function ItemHecho({ item }: { item: ItemOrden }) {
         <span className="num shrink-0 text-sm font-bold text-resuelto">{m2(item.superficieM2)} m²</span>
       </summary>
       <div className="border-t border-borde px-4 py-3 text-sm">
+        {/* Sin ancho ni largo la medida se cargó por superficie o por volumen
+            de mezcla: mostrar "— × — m" haría parecer que falta un dato. */}
         <p className="num text-texto-2">
-          {m2(item.anchoM)} × {m2(item.largoM)} m · espesor {m2(item.espesorCm)} cm
+          {item.anchoM != null && item.largoM != null
+            ? `${m2(item.anchoM)} × ${m2(item.largoM)} m · espesor ${m2(item.espesorCm)} cm`
+            : `${m2(item.superficieM2)} m² · espesor ${m2(item.espesorCm)} cm`}
         </p>
         {item.reportadoEn && (
           <p className="mt-0.5 text-xs text-texto-3">Reportado el {fechaCorta(item.reportadoEn)}</p>

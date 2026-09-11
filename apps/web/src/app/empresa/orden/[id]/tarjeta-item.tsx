@@ -10,6 +10,13 @@ import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
+import {
+  CamposMedida,
+  medidaAFormData,
+  medidaVacia,
+  resumenMedida,
+  type ValorMedida,
+} from "@/components/campos-medida";
 import { mensajeDeError } from "@/lib/errores";
 import {
   borradorTieneAlgo,
@@ -149,9 +156,9 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   const [error, setError] = useState<string | null>(null);
 
   // medidas
-  const [ancho, setAncho] = useState("");
-  const [largo, setLargo] = useState("");
-  const [espesor, setEspesor] = useState("");
+  // Las tres formas de medir el bache viven juntas en un objeto: ver
+  // components/campos-medida.tsx.
+  const [medida, setMedida] = useState<ValorMedida>(() => medidaVacia());
   const [obs, setObs] = useState("");
   // Quién carga y contra qué reclamo: ver el bloque del formulario.
   const [capataz, setCapataz] = useState("");
@@ -207,18 +214,26 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   useEffect(() => {
     const b = leerBorrador(item.id);
     if (b && borradorTieneAlgo(b)) {
-      if (b.ancho) setAncho(b.ancho);
-      if (b.largo) setLargo(b.largo);
-      if (b.espesor) setEspesor(b.espesor);
+      setMedida((v) => ({
+        ...v,
+        medicion: b.medicion ?? v.medicion,
+        ancho: b.ancho ?? "",
+        largo: b.largo ?? "",
+        superficie: b.superficie ?? "",
+        volumen: b.volumen ?? "",
+        espesor: b.espesor ?? "",
+      }));
       if (b.obs) setObs(b.obs);
       setRescatado(true);
       setAbierto(true);
       return;
     }
     const m = leerMemoria(ordenId);
-    if (m.espesor) {
-      setEspesor(m.espesor);
-      setDeMemoria(true);
+    // El modo de medir también se repite toda la jornada: el que carga por
+    // volumen lo hace con todos los baches del día.
+    if (m.espesor || m.medicion) {
+      setMedida((v) => ({ ...v, espesor: m.espesor ?? v.espesor, medicion: m.medicion ?? v.medicion }));
+      if (m.espesor) setDeMemoria(true);
     }
     if (m.tipoIntervencion) setTipoIntervencion(m.tipoIntervencion as TipoIntervencion);
     if (m.tipoObra !== undefined) setTipoObra(m.tipoObra);
@@ -230,9 +245,9 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
   /** Guardado continuo del borrador: cada tecla, sin botón de "guardar". */
   useEffect(() => {
-    const b = { ancho, largo, espesor, obs };
+    const b = { ...medida, obs };
     if (borradorTieneAlgo(b)) guardarBorrador(item.id, b);
-  }, [ancho, largo, espesor, obs, item.id]);
+  }, [medida, obs, item.id]);
 
   const buscarDireccion = async (texto: string) => {
     const q = texto.trim();
@@ -281,9 +296,15 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   const [oidoMedidas, setOidoMedidas] = useState<string | null>(null);
   const dictadoMedidas = useDictadoVoz((frase) => {
     const m = parsearMedidas(frase);
-    if (m.ancho) setAncho(m.ancho);
-    if (m.largo) setLargo(m.largo);
-    if (m.espesor) setEspesor(m.espesor);
+    // Dictar ancho/largo implica el modo por lados: si venía en otro, se
+    // cambia solo en vez de llenar campos que no se están mostrando.
+    setMedida((v) => ({
+      ...v,
+      medicion: m.ancho || m.largo ? "lados" : v.medicion,
+      ancho: m.ancho ?? v.ancho,
+      largo: m.largo ?? v.largo,
+      espesor: m.espesor ?? v.espesor,
+    }));
     setOidoMedidas(
       m.ancho || m.largo || m.espesor
         ? `Entendí: «${frase}» — revisá los números y confirmá.`
@@ -367,18 +388,14 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     }
   };
 
-  const anchoN = aNumero(ancho);
-  const largoN = aNumero(largo);
-  const superficie = anchoN > 0 && largoN > 0 ? anchoN * largoN : null;
-  const espesorN = aNumero(espesor);
-  // El volumen de mezcla en vivo (el espesor viene en cm): le dice al capataz
-  // cuánto material se llevó el paño, no solo cuánta superficie tapó.
-  const volumen = superficie != null && espesorN > 0 ? (superficie * espesorN) / 100 : null;
+
+  const { superficie } = resumenMedida(medida);
 
   const enviar = () => {
     setError(null);
-    if (!(anchoN > 0) || !(largoN > 0) || !(aNumero(espesor) > 0)) {
-      setError("Cargá el ancho, el largo y el espesor.");
+    const { falta } = resumenMedida(medida);
+    if (falta) {
+      setError(falta);
       return;
     }
     if (!fotoDespues) {
@@ -392,9 +409,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
     const fd = new FormData();
     fd.set("itemId", String(item.id));
-    fd.set("anchoM", String(anchoN));
-    fd.set("largoM", String(largoN));
-    fd.set("espesorCm", String(aNumero(espesor)));
+    medidaAFormData(fd, medida);
     fd.set("tipoIntervencion", tipoIntervencion);
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
@@ -417,7 +432,13 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         // borrador (ya no hay nada que rescatar) y se recuerda lo que se
         // repite para el bache siguiente de la misma orden.
         borrarBorrador(item.id);
-        guardarMemoria(ordenId, { espesor, tipoIntervencion, tipoObra, capataz: capataz.trim() || undefined });
+        guardarMemoria(ordenId, {
+          espesor: medida.espesor,
+          medicion: medida.medicion,
+          tipoIntervencion,
+          tipoObra,
+          capataz: capataz.trim() || undefined,
+        });
         // al refrescar, el server component mueve este item a la lista de hechos
         router.refresh();
       } catch (e) {
@@ -508,9 +529,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
           <button
             type="button"
             onClick={() => {
-              setAncho("");
-              setLargo("");
-              setEspesor("");
+              setMedida(medidaVacia(medida.medicion));
               setObs("");
               borrarBorrador(item.id);
               setRescatado(false);
@@ -641,10 +660,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         </div>
       ) : (
         <div className="mt-4 space-y-4">
-          {/* Medidas reales */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold tracking-wider text-texto-3 uppercase">Medidas reales</span>
+          <CamposMedida
+            valor={medida}
+            alCambiar={setMedida}
+            extra={
               <button
                 type="button"
                 onClick={dictadoMedidas.alternar}
@@ -657,61 +676,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               >
                 🎤 {dictadoMedidas.escuchando ? "Escuchando…" : "Dictar medidas"}
               </button>
-            </div>
-            {oidoMedidas && <p className="mb-1.5 text-[11px] text-texto-2">{oidoMedidas}</p>}
-            {dictadoMedidas.error && <p className="mb-1.5 text-[11px] text-peligro">{dictadoMedidas.error}</p>}
-            <div className="grid grid-cols-3 gap-2">
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-texto-2">Ancho (m)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step={0.1}
-                  min={0}
-                  value={ancho}
-                  onChange={(e) => setAncho(e.target.value)}
-                  className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-texto-2">Largo (m)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step={0.1}
-                  min={0}
-                  value={largo}
-                  onChange={(e) => setLargo(e.target.value)}
-                  className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-texto-2">Espesor (cm)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step={0.1}
-                  min={0}
-                  value={espesor}
-                  onChange={(e) => setEspesor(e.target.value)}
-                  className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
-                />
-              </label>
-            </div>
-            {superficie != null && (
-              <p className="num mt-2 text-xl font-extrabold text-celeste">
-                = {superficie.toLocaleString("es-AR", { maximumFractionDigits: 2 })} m²
-                {volumen != null && (
-                  <span className="text-texto-2">
-                    {" "}· {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
-                  </span>
-                )}
-              </p>
-            )}
-            <p className="mt-1 text-xs leading-relaxed text-texto-3">
-              Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero.
-            </p>
-          </div>
+            }
+          />
+          {oidoMedidas && <p className="-mt-2 text-[11px] text-texto-2">{oidoMedidas}</p>}
+          {dictadoMedidas.error && <p className="-mt-2 text-[11px] text-peligro">{dictadoMedidas.error}</p>}
 
           {/* Qué se hizo al final: pills grandes (guantes), no un select chico */}
           <div>

@@ -21,6 +21,9 @@
 
 export interface MemoriaCarga {
   espesor?: string;
+  /** Cómo mide esta cuadrilla: el que carga por volumen lo hace con todos los
+   *  baches de la jornada, no con uno. */
+  medicion?: "lados" | "superficie" | "volumen";
   tipoIntervencion?: string;
   /** null = "sin modalidad elegida"; undefined = "nunca se guardó nada". */
   tipoObra?: string | null;
@@ -29,8 +32,12 @@ export interface MemoriaCarga {
 }
 
 export interface BorradorItem {
+  medicion?: "lados" | "superficie" | "volumen";
   ancho?: string;
   largo?: string;
+  /** Los dos modos nuevos: se rescatan igual que el ancho y el largo. */
+  superficie?: string;
+  volumen?: string;
   espesor?: string;
   obs?: string;
   /** Para poder decirle al capataz de cuándo es lo que recuperó. */
@@ -83,4 +90,4 @@ export function borrarBorrador(itemId: number) {
  * o una observación escrita.
  */
 export const borradorTieneAlgo = (b: BorradorItem) =>
-  Boolean(b.ancho?.trim() || b.largo?.trim() || b.obs?.trim());
+  Boolean(b.ancho?.trim() || b.largo?.trim() || b.superficie?.trim() || b.volumen?.trim() || b.obs?.trim());
