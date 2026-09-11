@@ -71,6 +71,16 @@ export function borrarBorrador(itemId: number) {
   }
 }
 
-/** ¿Hay algo escrito? Un borrador con los cuatro campos vacíos no se guarda. */
+/**
+ * ¿Hay trabajo EMPEZADO que valga la pena rescatar?
+ *
+ * OJO con el espesor: NO cuenta. El espesor (y la modalidad, y el capataz) se
+ * precargan solos desde la memoria de la jornada apenas se monta la tarjeta,
+ * así que si contara, el guardado automático escribiría un borrador para
+ * CADA bache pendiente sin que el capataz hubiera tocado nada — y en la
+ * siguiente visita las cuarenta tarjetas se abrirían solas anunciando "quedó
+ * a medias". Lo que marca que alguien empezó de verdad es la medida del pozo
+ * o una observación escrita.
+ */
 export const borradorTieneAlgo = (b: BorradorItem) =>
-  Boolean(b.ancho?.trim() || b.largo?.trim() || b.espesor?.trim() || b.obs?.trim());
+  Boolean(b.ancho?.trim() || b.largo?.trim() || b.obs?.trim());

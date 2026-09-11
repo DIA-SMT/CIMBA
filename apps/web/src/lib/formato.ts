@@ -194,10 +194,26 @@ export function fechaCorta(iso: string | null | undefined): string {
   return new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" }).format(d);
 }
 
-/** Hoy en zona local, como "YYYY-MM-DD": para comparar contra fechas date puras. */
+/**
+ * Hoy EN TUCUMÁN, como "YYYY-MM-DD": para comparar contra fechas date puras.
+ *
+ * La zona va explícita y no se usa la del proceso. Este mismo código corre en
+ * el navegador del capataz (donde la zona del sistema es la correcta) y en el
+ * servidor de Vercel, que corre en UTC: ahí, de las 21:00 a la medianoche
+ * argentina, "hoy" ya era el día siguiente y una orden que vence HOY se
+ * renderizaba VENCIDA en rojo — en la misma página donde el KPI, que sí
+ * pregunta la fecha de Tucumán a Postgres, decía que no había ninguna.
+ *
+ * `en-CA` porque es el locale que formatea como YYYY-MM-DD, que es
+ * exactamente la forma de vence_en.
+ */
 export function hoyISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Tucuman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 /**

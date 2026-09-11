@@ -64,9 +64,16 @@ function parsearMedidas(fraseCruda: string): { ancho?: string; largo?: string; e
     [/ nueve /g, " 9 "], [/ diez /g, " 10 "], [/ medio metro /g, " 0.5 "],
   ];
   for (const [re, v] of PALABRAS) f = f.replace(re, v);
+  /**
+   * OJO: estas tres perdieron sus barras invertidas en algún momento y
+   * quedaron como `(d)s*`, que busca una letra "d" seguida de eses — o sea que
+   * NUNCA matcheaban. El dictado venía comiéndose todos los decimales en
+   * silencio: "ancho dos coma cinco" cargaba 2, y el capataz lo corregía a
+   * mano creyendo que el reconocedor no lo había entendido.
+   */
   f = f
-    .replace(/(d)s*(?:coma|con|punto)s*(d)/g, "$1.$2")
-    .replace(/(d)s*y medio/g, "$1.5")
+    .replace(/(\d)\s*(?:coma|con|punto)\s*(\d)/g, "$1.$2")
+    .replace(/(\d)\s*y medio/g, "$1.5")
     .replace(/,/g, ".");
 
   const buscar = (claves: string) => {
@@ -82,7 +89,12 @@ function parsearMedidas(fraseCruda: string): { ancho?: string; largo?: string; e
   // Sin palabras clave: "2 por 3 por 5" (o "2 x 3 x 5") en el orden de la
   // planilla de siempre — ancho, largo, espesor.
   if (!r.ancho && !r.largo && !r.espesor) {
-    const porM = /([0-9]+(?:.[0-9]+)?)s*(?:por|x)s*([0-9]+(?:.[0-9]+)?)(?:s*(?:por|x)s*([0-9]+(?:.[0-9]+)?))?/.exec(f);
+    // Ídem: sin las barras, `s*` pedía eses literales y `.` matcheaba
+    // cualquier carácter — "2 por 3 por 5" no cargaba nada.
+    const porM =
+      /([0-9]+(?:\.[0-9]+)?)\s*(?:por|x)\s*([0-9]+(?:\.[0-9]+)?)(?:\s*(?:por|x)\s*([0-9]+(?:\.[0-9]+)?))?/.exec(
+        f,
+      );
     if (porM) {
       r.ancho = porM[1];
       r.largo = porM[2];

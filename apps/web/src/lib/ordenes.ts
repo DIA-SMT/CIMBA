@@ -1,6 +1,7 @@
 import { conRls, sql, getDb } from "@cimba/db";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
+import { puedeVerContacto } from "./auth";
 import { filtroEnum } from "./consultas";
 import { urlFoto } from "./fotos";
 import { parametrosDesdeJson, type ParametrosCapacidad } from "./capacidad";
@@ -572,6 +573,7 @@ export async function demandasParaCerrar(
   // Contra lista cerrada: un valor inventado en la URL no puede reventar el
   // cast de enum y tirar /cierres a 500 — se ignora y listo.
   const { FUENTES_DEMANDA, TIPOS_PROBLEMA } = await import("@cimba/domain");
+  const verContacto = puedeVerContacto(sesion.rol_cimba);
   const fuente = filtroEnum(filtros.fuente, FUENTES_DEMANDA);
   const tipo = filtroEnum(filtros.tipo, TIPOS_PROBLEMA);
   const destino = filtroEnum(filtros.destino, ["bacheo", "sat", "ingenieria"]);
@@ -637,7 +639,14 @@ export async function demandasParaCerrar(
         .filter((x): x is { momento: string; url: string } => x.url != null),
       lat: f.lat != null ? Number(f.lat) : null,
       lon: f.lon != null ? Number(f.lon) : null,
-      contacto: (f.contacto as DemandaParaCerrar["contacto"]) ?? null,
+      /**
+       * El contacto del vecino solo para quien puede verlo. La bandeja de
+       * cierres la miran más roles de los que pueden cerrar (supervisión,
+       * planificación, información estratégica entran a mirar), y el nombre y
+       * el teléfono de una persona no son parte del tablero: el mismo
+       * criterio que ya aplican listarDemandas y la ficha del reclamo.
+       */
+      contacto: verContacto ? ((f.contacto as DemandaParaCerrar["contacto"]) ?? null) : null,
     }));
   });
 }
