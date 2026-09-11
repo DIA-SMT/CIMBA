@@ -72,7 +72,7 @@ export function FormularioUsuario() {
         <UserPlus size={14} /> Nuevo usuario <ChevronDown size={14} />
       </summary>
 
-      <div className="panel-vidrio absolute right-0 z-20 mt-1.5 w-60 rounded-xl p-3 text-sm">
+      <div className="panel-vidrio absolute left-0 z-20 mt-1.5 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl sm:right-0 sm:left-auto p-3 text-sm">
         {creado ? (
           <div>
             <p className="mb-2 text-[13px] text-texto-2">

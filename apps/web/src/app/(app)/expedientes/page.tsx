@@ -3,6 +3,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarExpedientes, renglonesParaNotaSat } from "@/lib/expedientes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,7 @@ export default async function PaginaExpedientes() {
           )}
         </Panel>
       ) : (
-        <Panel className="overflow-x-auto">
+        <PanelTabla>
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -74,7 +75,7 @@ export default async function PaginaExpedientes() {
               ))}
             </tbody>
           </table>
-        </Panel>
+        </PanelTabla>
       )}
     </div>
   );

@@ -90,7 +90,7 @@ export interface PendienteCircuito {
 }
 
 /** Las cuatro formas de delimitar el trabajo, más el colector para lo pluvial. */
-export type AmbitoOrden = "distrito" | "circuito" | "corredor" | "barrio" | "colector";
+export type AmbitoOrden = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
 
 /**
  * El WHERE de cada ámbito. El corredor y el barrio no tienen columna propia en
@@ -107,6 +107,14 @@ function filtroAmbito(ambito: AmbitoOrden, refId: number) {
     return sql`exists (
       select 1 from corredores c
       where c.id = ${refId} and st_dwithin(c.geom::geography, i.geom::geography, 30)
+    )`;
+  }
+  /* La zona del contrato de bacheo integral: contención pura, como el barrio.
+     Son polígonos grandes y fijos — uno por empresa — así que acá no hay
+     tolerancia de metros que valga. */
+  if (ambito === "zona") {
+    return sql`exists (
+      select 1 from zonas_bacheo z where z.id = ${refId} and st_contains(z.geom, i.geom)
     )`;
   }
   // El colector agrupa imbornales, no incidentes de calzada: no aporta
@@ -829,6 +837,14 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                    (select count(*) from incidentes i where i.distrito_id = d.id
                       and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes
             from distritos d order by d.id`
+        : ambito === "zona"
+          ? sql`
+            select z.id,
+                   z.nombre || coalesce(' · ' || z.empresa, '') as etiqueta,
+                   (select count(*) from incidentes i
+                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes
+            from zonas_bacheo z order by z.nombre`
         : ambito === "barrio"
           ? sql`
             select b.id, b.nombre as etiqueta,

@@ -12,6 +12,7 @@ import {
 import { fechaCorta, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { FilaInspeccion } from "./fila-inspeccion";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -72,7 +73,7 @@ export default async function PaginaCertificacion() {
         desviación</b> entre lo informado y lo medido, se vuelve a medir todo.
       </Panel>
 
-      <Panel className="mb-6 overflow-x-auto p-0">
+      <PanelTabla className="mb-6 p-0">
         <div className="px-5 pt-4 pb-2">
           <p className="text-sm font-bold">
             Pendiente de certificar
@@ -131,7 +132,7 @@ export default async function PaginaCertificacion() {
             </tbody>
           </table>
         )}
-      </Panel>
+      </PanelTabla>
 
       {/* ── Qué inspeccionar ───────────────────────────────────────────── */}
       <Panel className="mb-5 p-4 text-[13px] leading-relaxed text-texto-2">
@@ -210,7 +211,7 @@ export default async function PaginaCertificacion() {
 
       {/* ── Actas ──────────────────────────────────────────────────────── */}
       {actas.length > 0 && (
-        <Panel className="mt-6 overflow-x-auto p-0">
+        <PanelTabla className="mt-6 p-0">
           <div className="px-5 pt-4 pb-2">
             <p className="text-sm font-bold">Actas de medición conjunta</p>
           </div>
@@ -251,7 +252,7 @@ export default async function PaginaCertificacion() {
               ))}
             </tbody>
           </table>
-        </Panel>
+        </PanelTabla>
       )}
     </div>
   );

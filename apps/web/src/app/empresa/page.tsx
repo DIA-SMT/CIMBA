@@ -1,4 +1,4 @@
-import { FileCheck, Plus } from "lucide-react";
+import { Download, FileCheck, Plus } from "lucide-react";
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, ordenesDeEmpresa, type OrdenResumen } from "@/lib/ordenes";
@@ -106,6 +106,28 @@ export default async function PaginaEmpresa({
           Mi certificación
         </Link>
       </div>
+
+      {/* Lo suyo, bajable. La empresa carga bache por bache desde el teléfono
+          y hasta acá dependía de que el municipio le exportara su propio
+          trabajo para armar el remito o discutir una certificación. */}
+      {ordenes.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-2">
+          <a
+            href={`/api/empresa/exportar?que=trabajos${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
+            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+          >
+            <Download size={15} className="shrink-0" />
+            Bajar lo que cargamos
+          </a>
+          <a
+            href={`/api/empresa/exportar?que=ordenes${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
+            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+          >
+            <Download size={15} className="shrink-0" />
+            Bajar mis órdenes
+          </a>
+        </div>
+      )}
 
       {ordenes.length === 0 && (
         <p className="rounded-xl border border-borde bg-panel px-4 py-12 text-center text-base text-texto-2">

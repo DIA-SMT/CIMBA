@@ -6,6 +6,7 @@ import { fechaCorta, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { FormularioUsuario } from "./formulario-usuario";
 import { BotonClaveUsuario } from "./boton-clave-usuario";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -113,7 +114,7 @@ export default async function PaginaActividad({
       />
 
       {/* Quién usa y quién no */}
-      <Panel className="mb-6 overflow-x-auto p-0">
+      <PanelTabla className="mb-6 p-0">
         <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4 pb-2">
           <p className="text-sm font-bold">Personas — últimos 30 días</p>
           {sinUso.length > 0 && (
@@ -167,7 +168,7 @@ export default async function PaginaActividad({
             })}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
 
       {/* El feed */}
       <Panel className="p-0">

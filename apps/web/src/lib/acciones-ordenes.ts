@@ -64,7 +64,7 @@ export async function crearOrden(entrada: {
     .object({
       empresaId: z.number().int().positive(),
       tipo: z.enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio"]).default("bacheo"),
-      ambito: z.enum(["distrito","circuito","corredor","barrio","colector"]).default("circuito"),
+      ambito: z.enum(["distrito","circuito","corredor","barrio","colector","zona"]).default("circuito"),
       ambitoRef: z.union([z.number().int().positive(), z.string().max(120)]).optional(),
       circuitoId: z.number().int().positive().optional(),
       prioridad: prioridadVialSchema,
@@ -94,7 +94,7 @@ export async function crearOrden(entrada: {
   const ordenId = await conRls(claims(sesion), async (tx) => {
     const creada = (await tx.execute(sql`
       insert into ordenes_trabajo (
-        numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, colector,
+        numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, zona_id, colector,
         prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por
       )
       values (
@@ -108,6 +108,7 @@ export async function crearOrden(entrada: {
         ${datos.ambito === "distrito" ? refNum : null},
         ${datos.ambito === "barrio" ? refNum : null},
         ${datos.ambito === "corredor" ? refNum : null},
+        ${datos.ambito === "zona" ? refNum : null},
         ${datos.ambito === "colector" && typeof ref === "string" ? ref : null},
         ${datos.prioridad},
         ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},

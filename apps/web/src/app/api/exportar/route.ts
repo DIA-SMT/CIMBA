@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { leerSesion } from "@/lib/auth";
 import { listarDemandas, listarIncidentes, listarIntervenciones } from "@/lib/consultas";
+import { csv, respuestaCsv } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,30 +15,9 @@ export const maxDuration = 60;
 
 const LIMITE = 10000;
 
-function celda(v: unknown): string {
-  if (v == null) return "";
-  // Los números (ids, coordenadas negativas) pasan tal cual.
-  if (typeof v === "number") return String(v);
-  let s = String(v);
-  // Neutralizar CSV injection: Excel evalúa como fórmula las celdas que
-  // empiezan con = + - @ o tab (el texto viene de vecinos y archivos externos).
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[;"\r\n']/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-}
-
-function csv(columnas: string[], filas: unknown[][]): string {
-  const lineas = [columnas.join(";"), ...filas.map((f) => f.map(celda).join(";"))];
-  return "﻿" + lineas.join("\r\n");
-}
-
-function respuesta(nombre: string, contenido: string): NextResponse {
-  return new NextResponse(contenido, {
-    headers: {
-      "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${nombre}-${new Date().toISOString().slice(0, 10)}.csv"`,
-    },
-  });
-}
+// El armado del CSV vive en lib/csv.ts: lo comparte con el portal de
+// empresas, y la neutralización de fórmulas no puede existir en dos copias.
+const respuesta = respuestaCsv;
 
 export async function GET(req: NextRequest) {
   const sesion = await leerSesion();

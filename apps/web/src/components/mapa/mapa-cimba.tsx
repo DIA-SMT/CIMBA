@@ -2121,7 +2121,7 @@ function MapaInterno({
    * error del que el refetchInterval NO se recupera solo: ahí no va
    * "Reintentar", va "entrá de nuevo".
    */
-  const { data, isPending, isError, error, refetch } = useQuery<GeoDatos>({
+  const { data, isPending, isError, isLoadingError, error, refetch } = useQuery<GeoDatos>({
     queryKey: ["geodata"],
     queryFn: async () => {
       const res = await fetch("/api/geodata");
@@ -2130,9 +2130,21 @@ function MapaInterno({
     },
     refetchInterval: 60_000,
   });
-  /** Los números todavía no son confiables: ni llegaron ni se sabe si van a
-   *  llegar. Se usa para poner "…" en vez de un cero que miente. */
-  const sinDatos = isPending || isError;
+  /**
+   * NO HAY NINGÚN NÚMERO QUE MOSTRAR: o no llegó nunca, o falló el primer
+   * intento. Es lo único que justifica poner "…" en vez de una cifra.
+   *
+   * OJO con la diferencia: `isError` a secas también es true cuando FALLA UN
+   * REFETCH teniendo datos buenos en pantalla — TanStack marca el error sin
+   * tocar `data`. Usándolo para blanquear, un refetch fallido (la sesión dura
+   * 12 h fijas, así que tarde o temprano falla con el mapa abierto) tapaba con
+   * "…" cinco KPI correctos y afirmaba "se ven solo las calles" con la ciudad
+   * llena de puntos. `isLoadingError` es exactamente "error Y sin datos".
+   */
+  const sinDatos = isPending || isLoadingError;
+  /** Hay datos, pero son de antes: el último intento falló. La cifra sigue
+   *  siendo mejor que un "…", y lo que corresponde es avisar la antigüedad. */
+  const datosViejos = isError && !isLoadingError;
   const sesionVencida = isError && error instanceof Error && error.message === "401";
   const dataRef = useRef<GeoDatos | undefined>(undefined);
   dataRef.current = data;
@@ -4339,7 +4351,7 @@ function MapaInterno({
             {menuExportar && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setMenuExportar(false)} />
-                <div className="panel-vidrio absolute right-0 z-40 mt-1.5 w-64 rounded-xl p-1.5 text-[13px]">
+                <div className="panel-vidrio absolute right-0 z-40 mt-1.5 w-[min(16rem,calc(100vw-1.5rem))] rounded-xl p-1.5 text-[13px]">
                   <button
                     onClick={() => {
                       setMenuExportar(false);
@@ -4724,7 +4736,7 @@ function MapaInterno({
         semáforo significa "pedido sin atención" y está a centímetros, en el
         KPI y en la leyenda. Dos rojos distintos para dos cosas distintas.
       */}
-      {sinDatos && !comparar && (
+      {(sinDatos || datosViejos) && !comparar && (
         <div className="absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
           <div
             className="panel-vidrio flex max-w-[calc(100vw-24px)] items-center gap-2 rounded-full px-4 py-1.5 text-[11px] text-texto-2"
@@ -4746,7 +4758,9 @@ function MapaInterno({
             )}
             {isError && !sesionVencida && (
               <>
-                No se pudieron traer los datos — se ven solo las calles.{" "}
+                {datosViejos
+                  ? "No se pudo actualizar: los números son los de la última vez que anduvo."
+                  : "No se pudieron traer los datos — se ven solo las calles."}{" "}
                 <button type="button" onClick={() => void refetch()} className="font-bold underline">
                   Reintentar
                 </button>

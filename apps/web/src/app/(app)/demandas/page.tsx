@@ -24,6 +24,7 @@ import {
 } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 
@@ -241,7 +242,7 @@ export default async function PaginaDemandas({
         )}
       </form>
 
-      <Panel className="overflow-x-auto">
+      <PanelTabla>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -312,7 +313,7 @@ export default async function PaginaDemandas({
             )}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
 
       {paginas > 1 && (
         <div className="mt-4 flex items-center justify-center gap-3 text-sm">

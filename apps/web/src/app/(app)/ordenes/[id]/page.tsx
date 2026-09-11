@@ -13,6 +13,7 @@ import { AccionesOrden } from "./acciones-orden";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { SelectTipoIntervencion } from "./select-tipo-intervencion";
 import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
+import { PanelTabla } from "@/components/tabla-deslizable";
 import {
   COLOR_ESTADO_ITEM,
   COLOR_ESTADO_ORDEN,
@@ -264,7 +265,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             — cada carga de la empresa crea la intervención real que alimenta la brecha
           </span>
         </h2>
-        <Panel className="overflow-x-auto">
+        <PanelTabla>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -292,7 +293,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 ))}
             </tbody>
           </table>
-        </Panel>
+        </PanelTabla>
       </div>
 
       {/* ══ Hoja de impresión: la orden en papel ══ */}

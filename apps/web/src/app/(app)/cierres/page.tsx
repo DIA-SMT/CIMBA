@@ -5,6 +5,7 @@ import { demandasParaCerrar } from "@/lib/ordenes";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { FilaCierre } from "./fila-cierre";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 
@@ -163,7 +164,7 @@ export default async function PaginaCierres({
         </p>
       )}
 
-      <Panel className="overflow-x-auto">
+      <PanelTabla>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -204,7 +205,7 @@ export default async function PaginaCierres({
               ))}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
 
       <p className="mt-4 text-xs leading-relaxed text-texto-3">
         El cierre queda registrado en <code>metadata.cierre</code> de la demanda (quién, cuándo y qué se

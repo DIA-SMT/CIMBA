@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { notFound } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
@@ -175,6 +176,18 @@ export default async function PaginaOrdenEmpresa({
           </p>
         )}
       </Panel>
+
+      {/* Lo cargado en ESTA orden: el papel que la empresa lleva a la
+          medición conjunta. */}
+      {orden.cerrados > 0 && (
+        <a
+          href={`/api/empresa/exportar?orden=${orden.id}${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
+          className="mb-4 flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+        >
+          <Download size={15} className="shrink-0" />
+          Bajar lo cargado en esta orden ({numero(orden.cerrados)})
+        </a>
+      )}
 
       {!activa && (
         <p className="mb-4 rounded-xl border border-borde bg-panel px-4 py-3 text-sm text-texto-2">

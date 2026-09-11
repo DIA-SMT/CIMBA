@@ -4,6 +4,7 @@ import { obtenerCapacidad } from "@/lib/ordenes";
 import { productividad } from "@/lib/productividad";
 import { numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -86,7 +87,7 @@ export default async function PaginaProductividad() {
       </Panel>
 
       {/* Por ejecutor, últimos 30 días */}
-      <Panel className="mb-6 overflow-x-auto p-0">
+      <PanelTabla className="mb-6 p-0">
         <p className="px-5 pt-4 pb-2 text-sm font-bold">Por ejecutor — últimos 30 días</p>
         <table className="w-full min-w-[560px] text-sm">
           <thead>
@@ -123,10 +124,10 @@ export default async function PaginaProductividad() {
             )}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
 
       {/* Por mes × ejecutor: la foto grande */}
-      <Panel className="overflow-x-auto p-0">
+      <PanelTabla className="p-0">
         <p className="px-5 pt-4 pb-2 text-sm font-bold">Por mes — últimos 6 meses (baches · m²)</p>
         <table className="w-full min-w-[640px] text-sm">
           <thead>
@@ -164,7 +165,7 @@ export default async function PaginaProductividad() {
           Cuenta solo intervenciones finalizadas con fecha. El m³ sale de las medidas reales (superficie ×
           espesor); el histórico sin espesor no lo inventa.
         </p>
-      </Panel>
+      </PanelTabla>
     </div>
   );
 }

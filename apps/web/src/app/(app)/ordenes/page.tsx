@@ -15,6 +15,7 @@ import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
 import { PanelProyeccion } from "./panel-proyeccion";
 import { MapaOrdenes } from "./mapa-ordenes";
+import { PanelTabla } from "@/components/tabla-deslizable";
 import {
   COLOR_ESTADO_ORDEN,
   fondoTenue,
@@ -82,7 +83,7 @@ export default async function PaginaOrdenes({
               <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition select-none hover:border-celeste/50 hover:text-celeste [&::-webkit-details-marker]:hidden">
                 Gestión <ChevronDown size={14} />
               </summary>
-              <div className="panel-vidrio absolute right-0 z-20 mt-1.5 w-60 rounded-xl p-1.5 text-sm">
+              <div className="panel-vidrio absolute left-0 z-20 mt-1.5 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl sm:right-0 sm:left-auto p-1.5 text-sm">
                 <Link href="/ordenes/ipi" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Prioridad de corredores (IPI)
                   <span className="block text-[11px] font-normal text-texto-3">El índice oficial: qué eje se interviene primero en cada sector</span>
@@ -153,7 +154,7 @@ export default async function PaginaOrdenes({
               — ordenados por pendientes; la prioridad y la empresa se editan acá mismo
             </span>
           </h2>
-          <Panel className="overflow-x-auto">
+          <PanelTabla>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -220,7 +221,7 @@ export default async function PaginaOrdenes({
                 )}
               </tbody>
             </table>
-          </Panel>
+          </PanelTabla>
         </div>
 
         {/* Proyección de capacidad */}
@@ -270,7 +271,7 @@ export default async function PaginaOrdenes({
           </Link>
         )}
       </form>
-      <Panel className="overflow-x-auto">
+      <PanelTabla>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -366,7 +367,7 @@ export default async function PaginaOrdenes({
             )}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
     </div>
   );
 }

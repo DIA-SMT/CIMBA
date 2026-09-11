@@ -10,6 +10,7 @@ import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
 // Solo tipos: se borran al compilar, así que no arrastran @cimba/db al cliente.
 import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
+import { SelectorBuscable, type OpcionBuscable } from "@/components/selector-buscable";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
 import { ETIQUETA_PRIORIDAD } from "../etiquetas";
 import { mensajeDeError } from "@/lib/errores";
@@ -42,7 +43,8 @@ interface ImbornalPend {
 }
 
 type TipoOrden = "bacheo" | "pano_hormigon" | "carpeta" | "cordon_cuneta" | "imbornales" | "tapas" | "ripio";
-type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector";
+// Espeja AmbitoOrden de lib/ordenes.ts: si se agrega uno allá, va también acá.
+type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
 
 /** Qué trabajo se manda a hacer. De esto depende a qué empresa puede ir. */
 const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> = [
@@ -60,8 +62,22 @@ const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> =
  * pluvial: una orden de imbornales no se define por circuito sino por a dónde
  * descargan las bocas.
  */
+/** Cómo se nombra cada ámbito en una frase ("Elegí …"): el artículo va acá y
+ *  no concatenado, porque "Elegí un zona" se lee como sistema mal hecho. */
+const COMO_ELEGIR: Record<Ambito, string> = {
+  circuito: "un circuito",
+  zona: "una zona de empresa",
+  distrito: "un distrito",
+  corredor: "un corredor",
+  barrio: "un barrio",
+  colector: "un colector",
+};
+
 const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }> = [
   { valor: "circuito", etiqueta: "Circuito" },
+  /* La división fija del contrato de bacheo integral, una por empresa: es como
+     el Director piensa el reparto del trabajo, así que va segunda. */
+  { valor: "zona", etiqueta: "Zona de la empresa" },
   { valor: "distrito", etiqueta: "Distrito" },
   { valor: "corredor", etiqueta: "Corredor" },
   { valor: "barrio", etiqueta: "Barrio" },
@@ -102,6 +118,7 @@ export function FormularioOrden({
   distritos,
   barrios,
   corredores,
+  zonas,
   colectores,
   empresas,
   parametros,
@@ -111,6 +128,8 @@ export function FormularioOrden({
   distritos: OpcionAmbito[];
   barrios: OpcionAmbito[];
   corredores: OpcionAmbito[];
+  /** Las zonas fijas del contrato de bacheo integral, una por empresa. */
+  zonas: OpcionAmbito[];
   colectores: Array<{ colector: string; total: number; malos: number }>;
   empresas: EmpresaResumen[];
   parametros: ParametrosCapacidad;
@@ -205,22 +224,31 @@ export function FormularioOrden({
     void elegirAmbitoRef(0);
   };
 
-  /** Las opciones del ámbito activo, ya con su número de pendientes. */
-  const opciones: Array<{ ref: number | string; etiqueta: string }> =
+  /**
+   * Las opciones del ámbito activo. El NOMBRE va en `etiqueta` y los números
+   * en `detalle`, separados a propósito: el buscador matchea contra lo que el
+   * Director escribe ("sarmiento", "circuito 12"), no contra "— 12 pendientes
+   * · 3 reclamos", que antes formaba parte del mismo texto.
+   */
+  const opciones: OpcionBuscable[] =
     ambito === "circuito"
       ? circuitos.map((c) => ({
           ref: c.id,
-          etiqueta: `${c.codigo} — ${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos${c.empresaNombre ? ` · ${c.empresaNombre}` : ""}`,
+          etiqueta: c.empresaNombre ? `${c.codigo} · ${c.empresaNombre}` : c.codigo,
+          detalle: `${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos`,
         }))
       : ambito === "distrito"
-        ? distritos.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+        ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
         : ambito === "barrio"
-          ? barrios.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+          ? barrios.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
           : ambito === "corredor"
-            ? corredores.map((o) => ({ ref: o.id, etiqueta: `${o.etiqueta} — ${numero(o.pendientes)} pendientes` }))
+            ? corredores.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+            : ambito === "zona"
+              ? zonas.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
             : colectores.map((c) => ({
                 ref: c.colector,
-                etiqueta: `${c.colector} — ${numero(c.total)} bocas · ${numero(c.malos)} en mal estado`,
+                etiqueta: c.colector,
+                detalle: `${numero(c.total)} bocas · ${numero(c.malos)} en mal estado`,
               }));
 
   const alternarSeleccion = (id: number) => {
@@ -403,25 +431,14 @@ export function FormularioOrden({
               </button>
             ))}
           </div>
-          <select
-            value={ambito === "colector" ? colector : circuitoId || ""}
-            onChange={(e) => void elegirAmbitoRef(ambito === "colector" ? e.target.value : Number(e.target.value) || 0)}
-            className={`${claseInput} w-full max-w-xl`}
-          >
-            <option value="">
-              {ambito === "colector" ? "Elegí un colector…" : `Elegí un ${ambito}…`}
-            </option>
-            {opciones.map((o) => (
-              <option key={String(o.ref)} value={o.ref}>
-                {o.etiqueta}
-              </option>
-            ))}
-          </select>
-          {opciones.length === 0 && (
-            <p className="mt-2 text-xs text-texto-3">
-              No hay {ambito === "colector" ? "colectores relevados" : `${ambito}s con trabajo pendiente`}.
-            </p>
-          )}
+          <SelectorBuscable
+            className="w-full max-w-xl"
+            opciones={opciones}
+            valor={ambito === "colector" ? colector : circuitoId || 0}
+            alElegir={(ref) => void elegirAmbitoRef(ref)}
+            placeholder={`Elegí ${COMO_ELEGIR[ambito]}…`}
+            vacio={`No hay ${ambito === "colector" ? "colectores relevados" : `${ambito}s con trabajo pendiente`}.`}
+          />
           {errorCarga && <p className="mt-2 text-xs text-peligro">{errorCarga}</p>}
         </Panel>
 

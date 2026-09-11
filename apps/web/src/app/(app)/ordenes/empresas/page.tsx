@@ -6,6 +6,7 @@ import { numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { BotonClave } from "./boton-clave";
 import { CeldaDotacion } from "./celda-dotacion";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ export default async function PaginaEmpresas() {
         exactamente como lo ve la empresa.
       </Panel>
 
-      <Panel className="mb-4 overflow-x-auto">
+      <PanelTabla className="mb-4">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
@@ -122,7 +123,7 @@ export default async function PaginaEmpresas() {
             )}
           </tbody>
         </table>
-      </Panel>
+      </PanelTabla>
     </div>
   );
 }

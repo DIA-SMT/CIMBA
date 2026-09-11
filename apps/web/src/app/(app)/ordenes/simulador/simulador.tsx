@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { ParametrosCapacidad } from "@/lib/capacidad";
 import { numero } from "@/lib/formato";
 import { Panel } from "@/components/ui";
+import { PanelTabla } from "@/components/tabla-deslizable";
 
 /**
  * La matemática del simulador, a la vista (nada de caja negra):
@@ -120,7 +121,7 @@ export function Simulador({
       </Panel>
 
       {/* Circuito por circuito */}
-      <Panel className="overflow-x-auto p-0">
+      <PanelTabla className="p-0">
         <p className="px-5 pt-4 pb-2 text-sm font-bold">Los 10 circuitos con más deuda</p>
         <table className="w-full min-w-[560px] text-sm">
           <thead>
@@ -156,7 +157,7 @@ export function Simulador({
           terminan a la vez. «1 cuadrilla dedicada»: cuántos días le lleva a UNA cuadrilla limpiar ese
           circuito sola, con los turnos y el ritmo de las palancas.
         </p>
-      </Panel>
+      </PanelTabla>
     </div>
   );
 }

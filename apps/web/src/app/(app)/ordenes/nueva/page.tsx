@@ -36,15 +36,17 @@ export default async function PaginaNuevaOrden({
     )
     .slice(0, 500);
   const sesion = (await leerSesion())!;
-  const [circuitos, empresas, parametros, distritos, barrios, corredores, colectores] = await Promise.all([
-    resumenCircuitos(sesion),
-    listarEmpresas(sesion),
-    obtenerCapacidad(sesion),
-    opcionesAmbito(sesion, "distrito"),
-    opcionesAmbito(sesion, "barrio"),
-    opcionesAmbito(sesion, "corredor"),
-    colectoresConImbornales(sesion),
-  ]);
+  const [circuitos, empresas, parametros, distritos, barrios, corredores, zonas, colectores] =
+    await Promise.all([
+      resumenCircuitos(sesion),
+      listarEmpresas(sesion),
+      obtenerCapacidad(sesion),
+      opcionesAmbito(sesion, "distrito"),
+      opcionesAmbito(sesion, "barrio"),
+      opcionesAmbito(sesion, "corredor"),
+      opcionesAmbito(sesion, "zona"),
+      colectoresConImbornales(sesion),
+    ]);
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -70,6 +72,7 @@ export default async function PaginaNuevaOrden({
         distritos={distritos}
         barrios={barrios}
         corredores={corredores}
+        zonas={zonas}
         colectores={colectores}
         empresas={empresas}
         parametros={parametros}
