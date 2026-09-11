@@ -215,6 +215,10 @@ type FCLinea = FeatureCollection<LineString | MultiLineString, Record<string, un
 interface GeoDatos {
   incidentes: FC;
   demandas: FC;
+  /** Universo completo por canal (incluye lo que NO tiene punto y por eso no
+   *  puede estar en el geojson): es lo que permite explicar la resta entre el
+   *  total del canal y lo que se ve dibujado. */
+  porFuente?: Array<{ fuente: string; total: number; abiertas: number; sinUbicacion: number }>;
 }
 
 /** demandas.destino (enum destino_resolucion de la 0006): QUIÉN resuelve el
@@ -2130,6 +2134,45 @@ function MapaInterno({
     setFuentes(Object.fromEntries(fuentesPresentes.map((f) => [f, f === inicial.fuente])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fuentesPresentes.length]);
+
+  /**
+   * LA RESTA, ESCRITA.
+   *
+   * Aislar un canal y ver un número que no se parece al de la bandeja es el
+   * error de confianza más caro del tablero: "si Atención Ciudadana tiene 691,
+   * ¿por qué el mapa dice 155 y 146 sin atención?". Los tres escalones que
+   * faltan (cerrados, sin ubicación, y las colas ajenas que el mapa tiene
+   * apagadas) nunca estaban a la vista. Cuando queda UN solo canal prendido,
+   * se muestra la cadena completa de ese canal en vez de obligar a deducirla.
+   */
+  const cascadaFuente = useMemo(() => {
+    const activas = fuentesPresentes.filter((f) => fuentes[f] !== false);
+    if (activas.length !== 1 || fuentesPresentes.length < 2) return null;
+    const clave = activas[0]!;
+    const universo = data?.porFuente?.find((p) => p.fuente === clave);
+    const propias = (data?.demandas.features ?? []).filter(
+      (f) => String(f.properties.fuente) === clave,
+    );
+    const abiertas = propias.filter((f) =>
+      ["recibida", "en_validacion"].includes(String(f.properties.estado)),
+    );
+    const porDestino: Record<Destino, number> = { bacheo: 0, sat: 0, ingenieria: 0 };
+    for (const f of abiertas) porDestino[destinoDe(f.properties.destino)] += 1;
+    const colas = DESTINOS.filter((d) => destinos[d] === true);
+    const enCola = abiertas.filter((f) => colas.includes(destinoDe(f.properties.destino)));
+    const total = universo?.total ?? propias.length;
+    return {
+      clave,
+      total,
+      cerradas: total - (universo?.abiertas ?? abiertas.length),
+      sinUbicacion: universo?.sinUbicacion ?? 0,
+      ubicadas: abiertas.length,
+      porDestino,
+      colas,
+      enCola: enCola.length,
+      sinAtencion: enCola.filter((f) => f.properties.brecha === "sin_atencion").length,
+    };
+  }, [data, fuentes, fuentesPresentes, destinos]);
 
   const corte = dias ? Date.now() - dias * 86_400_000 : null;
 
@@ -5344,6 +5387,84 @@ function MapaInterno({
                     </button>
                   );
                 })}
+              </div>
+            )}
+            {/* La cadena completa del canal aislado: el número del mapa nunca
+                es el mismo que el de la bandeja, y acá se ve exactamente por
+                qué (cerrados + sin ubicación + colas apagadas). */}
+            {cascadaFuente && (
+              <div className="mt-2 rounded-lg border border-borde bg-panel-2 px-2.5 py-2">
+                <p className="mb-1.5 text-[11px] leading-snug font-bold">
+                  {ETIQUETA_FUENTE[cascadaFuente.clave as keyof typeof ETIQUETA_FUENTE] ??
+                    cascadaFuente.clave}
+                  , de punta a punta
+                </p>
+                <ul className="space-y-0.5 text-[11px] leading-snug">
+                  <li className="flex gap-2">
+                    <span className="num w-12 shrink-0 text-right font-bold">
+                      {numero(cascadaFuente.total)}
+                    </span>
+                    <span className="text-texto-2">entraron por este canal</span>
+                  </li>
+                  {cascadaFuente.cerradas > 0 && (
+                    <li className="flex gap-2">
+                      <span className="num w-12 shrink-0 text-right font-bold text-texto-3">
+                        −{numero(cascadaFuente.cerradas)}
+                      </span>
+                      <span className="text-texto-3">
+                        ya tienen destino: vinculados, cerrados o descartados
+                      </span>
+                    </li>
+                  )}
+                  {cascadaFuente.sinUbicacion > 0 && (
+                    <li className="flex gap-2">
+                      <span
+                        className="num w-12 shrink-0 text-right font-bold"
+                        style={{ color: "var(--color-sin-atencion)" }}
+                      >
+                        −{numero(cascadaFuente.sinUbicacion)}
+                      </span>
+                      <span className="text-texto-3">
+                        sin ubicación: no se pueden dibujar ni mandar a una cuadrilla
+                      </span>
+                    </li>
+                  )}
+                  <li className="flex gap-2">
+                    <span className="num w-12 shrink-0 text-right font-bold">
+                      {numero(cascadaFuente.ubicadas)}
+                    </span>
+                    <span className="text-texto-2">
+                      quedan con punto —{" "}
+                      {DESTINOS.map(
+                        (d) => `${ETIQUETA_DESTINO[d]} ${numero(cascadaFuente.porDestino[d])}`,
+                      ).join(" · ")}
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="num w-12 shrink-0 text-right font-bold text-celeste">
+                      {numero(cascadaFuente.enCola)}
+                    </span>
+                    <span>
+                      <b>es lo que ves ahora</b>, porque el mapa está parado en{" "}
+                      {cascadaFuente.colas.length > 0
+                        ? cascadaFuente.colas.map((d) => ETIQUETA_DESTINO[d]).join(" + ")
+                        : "ninguna cola"}
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span
+                      className="num w-12 shrink-0 text-right font-bold"
+                      style={{ color: "var(--color-sin-atencion)" }}
+                    >
+                      {numero(cascadaFuente.sinAtencion)}
+                    </span>
+                    <span className="text-texto-2">de esos no los trabaja nadie todavía</span>
+                  </li>
+                </ul>
+                <p className="mt-1.5 text-[10px] leading-snug text-texto-3">
+                  Prendé los chips de cola de arriba para sumar SAT e Ingeniería. Los filtros de
+                  tipo, período y foto recortan un poco más.
+                </p>
               </div>
             )}
             </>)}

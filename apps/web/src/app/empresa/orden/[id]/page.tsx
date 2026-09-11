@@ -8,7 +8,7 @@ import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { resolverVistaPortal } from "../../vista";
 import { ProponerItem } from "./proponer-item";
-import { TarjetaItem } from "./tarjeta-item";
+import { ListaPendientes } from "./lista-pendientes";
 
 export const dynamic = "force-dynamic";
 
@@ -146,13 +146,11 @@ export default async function PaginaOrdenEmpresa({
         </p>
       )}
 
-      {/* Lo pendiente, uno por uno y bien grande */}
+      {/* Lo pendiente, uno por uno y bien grande. La lista es una isla
+          cliente porque busca, ordena por cercanía y dibuja el mapa de la
+          orden: lo que hace navegable una orden de decenas de baches. */}
       {pendientes.length > 0 && activa && (
-        <div className="space-y-4">
-          {pendientes.map((item) => (
-            <TarjetaItem key={item.id} item={item} />
-          ))}
-        </div>
+        <ListaPendientes pendientes={pendientes} hechos={hechos} ordenId={orden.id} />
       )}
       {pendientes.length === 0 && activa && (
         <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">

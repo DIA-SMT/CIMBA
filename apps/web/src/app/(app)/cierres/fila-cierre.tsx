@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera } from "lucide-react";
+import { AtSign, Camera, Copy, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -10,6 +10,33 @@ import type { DemandaParaCerrar } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeFuente, BadgeTipo } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
+
+/**
+ * EL ÚLTIMO METRO: de la respuesta escrita a la persona que reclamó.
+ *
+ * CIDITUC todavía no expone el cierre del ticket del 147, así que el sistema
+ * no puede mandar nada solo — y tampoco debería: el que responde es el
+ * operador, con su nombre. Lo que sí se puede hacer hoy es dejar el mensaje
+ * armado y abrir el canal con un toque. WhatsApp es el canal real: de los
+ * reclamos de Atención Ciudadana, prácticamente todos traen teléfono y menos
+ * de la mitad traen mail.
+ *
+ * wa.me solo ABRE WhatsApp con el texto puesto; el envío lo hace la persona.
+ */
+
+/** Argentina para WhatsApp: 54 + 9 + área + número, sin símbolos.
+ *  Devuelve null si el número no tiene la forma esperada — mejor no ofrecer
+ *  el botón que abrir un chat con un desconocido. */
+function whatsappDe(tel: string | undefined): string | null {
+  if (!tel) return null;
+  let d = tel.replace(/[^0-9]/g, "").replace(/^00/, "");
+  if (d.startsWith("54")) d = d.slice(2);
+  if (d.startsWith("9")) d = d.slice(1);
+  if (d.startsWith("0")) d = d.slice(1);
+  // Área (2 a 4 dígitos) + el 15 viejo de celular: WhatsApp no lo lleva.
+  d = d.replace(/^(\d{2,4})15(\d{6,8})$/, "$1$2");
+  return d.length === 10 ? `549${d}` : null;
+}
 
 /** Cómo se resolvió (intervenciones.tipo_intervencion). Etiquetas locales:
  *  formato.ts no es de esta tarea. */
@@ -111,6 +138,13 @@ export function FilaCierre({
             <span className="min-w-0 flex-1 truncate" title={demanda.direccion ?? ""}>
               {demanda.direccion ?? "—"}
             </span>
+            {/* Se ve de un vistazo cuáles tienen a alguien del otro lado: es
+                la diferencia entre cerrar y poder avisar que se cerró. */}
+            {whatsappDe(demanda.contacto?.telefono) && (
+              <span className="shrink-0 text-resuelto" title="Se le puede avisar por WhatsApp">
+                <MessageCircle size={12} />
+              </span>
+            )}
           </div>
         </td>
         <td className="num px-4 py-2.5 text-texto-2">{fechaCorta(demanda.creadoEn)}</td>
@@ -183,21 +217,99 @@ export function FilaCierre({
                 {pendiente ? "Cerrando…" : "Confirmar cierre"}
               </button>
             </div>
+            <CanalesVecino demanda={demanda} texto={respuesta} />
+
             <p className="mt-1.5 text-[11px] leading-relaxed text-texto-3">
               <b className="text-texto-2">¿A dónde va esto?</b> El reclamo pasa a <b>cerrado</b> y la
               respuesta queda guardada en su ficha (
               <Link href={`/demandas/${demanda.demandaId}`} className="font-semibold text-celeste hover:underline">
                 verla acá
               </Link>
-              ), con tu nombre y la fecha — también aparece en Actividad. Por ahora <b>no le llega sola al
-              vecino</b>: cuando Innovación habilite el cierre de tickets del 147, este mismo botón va a
-              cerrar el ticket y mandarle esta respuesta con las fotos. Mientras tanto, es el texto listo
-              para responder por el canal que corresponda.
+              ), con tu nombre y la fecha — también aparece en Actividad. El aviso al vecino lo mandás
+              vos con los botones de arriba: el sistema abre el chat o el mail con el texto puesto, y el
+              envío queda en tus manos. Cuando Innovación habilite el cierre de tickets del 147, este
+              mismo botón va a cerrar el ticket y mandar la respuesta sin ese paso.
             </p>
             {error && <p className="mt-2 text-sm text-peligro">{error}</p>}
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+/**
+ * Los canales reales para avisarle a la persona, con el texto que está en el
+ * cuadro de arriba (si el operador lo editó, viaja lo editado).
+ *
+ * Cuando no hay con quién hablar lo dice fuerte y con el motivo: ese reclamo
+ * no lo trajo una persona, lo trajo una planilla. Callarlo haría creer que el
+ * cierre avisó a alguien.
+ */
+function CanalesVecino({ demanda, texto }: { demanda: DemandaParaCerrar; texto: string }) {
+  const [copiado, setCopiado] = useState(false);
+  const c = demanda.contacto;
+  const wa = whatsappDe(c?.telefono);
+  const mail = c?.email?.includes("@") ? c.email : null;
+  const nombre = c?.nombre?.trim();
+
+  if (!wa && !mail) {
+    return (
+      <p className="mt-2 rounded-lg border border-borde-2 bg-panel px-3 py-2 text-[11px] leading-relaxed text-texto-3">
+        <b className="text-texto-2">Sin contacto del vecino.</b>{" "}
+        {c?.telefono
+          ? `El teléfono cargado (${c.telefono}) no tiene forma de celular argentino: revisalo en la ficha si querés avisarle.`
+          : "Este reclamo entró por planilla, no por una persona que dejó sus datos. El cierre queda registrado igual, pero no hay a quién avisarle."}
+      </p>
+    );
+  }
+
+  const copiar = () => {
+    void navigator.clipboard?.writeText(texto).then(() => {
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    });
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-celeste/30 bg-celeste/5 px-3 py-2">
+      <p className="text-[11px] font-semibold text-texto-2">
+        Avisarle a {nombre || "quien reclamó"}
+        {c?.telefono && <span className="num ml-1.5 font-normal text-texto-3">{c.telefono}</span>}
+      </p>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {wa && (
+          <a
+            href={`https://wa.me/${wa}?text=${encodeURIComponent(texto)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 rounded-lg bg-resuelto px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110"
+          >
+            <MessageCircle size={13} /> WhatsApp
+          </a>
+        )}
+        {mail && (
+          <a
+            href={`mailto:${mail}?subject=${encodeURIComponent(
+              `Su reclamo${demanda.direccion ? ` en ${demanda.direccion}` : ""} fue resuelto`,
+            )}&body=${encodeURIComponent(texto)}`}
+            className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-3 py-1.5 text-xs font-semibold text-texto-2 transition hover:text-texto"
+          >
+            <AtSign size={13} /> Mail
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={copiar}
+          className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-3 py-1.5 text-xs font-semibold text-texto-2 transition hover:text-texto"
+        >
+          <Copy size={13} /> {copiado ? "Copiado" : "Copiar texto"}
+        </button>
+      </div>
+      <p className="mt-1.5 text-[10px] leading-snug text-texto-3">
+        Se abre el chat o el mail con el mensaje escrito. <b>Lo mandás vos</b>: el sistema no envía
+        nada solo.
+      </p>
+    </div>
   );
 }

@@ -516,6 +516,14 @@ export interface DemandaParaCerrar {
   /** Punto del incidente reparado, para verificar la dirección en el mini-mapa antes de responder. */
   lat: number | null;
   lon: number | null;
+  /**
+   * Con quién se puede hablar. Solo los reclamos de Atención Ciudadana lo
+   * traen (los de archivo — HCD, secretarías, redes, SAT — entraron por
+   * planilla y no tienen a nadie detrás): sin esto, la bandeja no distingue
+   * un cierre que se le puede avisar a una persona de uno que solo queda
+   * registrado, y son dos cosas distintas.
+   */
+  contacto: { nombre?: string; telefono?: string; email?: string } | null;
 }
 
 /**
@@ -538,7 +546,7 @@ export async function demandasParaCerrar(
   const destino = filtroEnum(filtros.destino, ["bacheo", "sat", "ingenieria"]);
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
-      select d.id as demanda_id, d.fuente, d.tipo, d.destino,
+      select d.id as demanda_id, d.fuente, d.tipo, d.destino, d.contacto,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, i.id as incidente_id, i.cerrado_en,
              st_y(i.geom) as lat, st_x(i.geom) as lon,
@@ -598,6 +606,7 @@ export async function demandasParaCerrar(
         .filter((x): x is { momento: string; url: string } => x.url != null),
       lat: f.lat != null ? Number(f.lat) : null,
       lon: f.lon != null ? Number(f.lon) : null,
+      contacto: (f.contacto as DemandaParaCerrar["contacto"]) ?? null,
     }));
   });
 }

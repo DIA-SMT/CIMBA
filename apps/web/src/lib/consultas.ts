@@ -1250,6 +1250,26 @@ export async function geodata(sesion: Sesion) {
       where d.geom is not null
     `)) as unknown as Array<Record<string, unknown>>;
 
+    /**
+     * El universo COMPLETO de cada canal, para poder explicar la resta.
+     *
+     * El geojson de arriba solo trae lo que tiene punto: si alguien pregunta
+     * "¿por qué Atención Ciudadana dice 691 en la bandeja y 155 en el mapa?",
+     * la respuesta está partida en tres (cerradas, sin ubicación, y la cola
+     * en la que está parado el mapa) y dos de esos tres no viajan en el
+     * geojson. Sin esto el mapa solo puede mostrar el número final, que es
+     * justo el que no se entiende.
+     */
+    const porFuente = (await tx.execute(sql`
+      select d.fuente::text as fuente,
+             count(*)::int as total,
+             count(*) filter (where d.estado in ('recibida','en_validacion'))::int as abiertas,
+             count(*) filter (where d.estado in ('recibida','en_validacion')
+                                and d.geom is null)::int as sin_ubicacion
+      from demandas d
+      group by 1
+    `)) as unknown as Array<Record<string, unknown>>;
+
     const macro = (estado: string) =>
       estado === "reparado" || estado === "verificado"
         ? "resuelto"
@@ -1260,6 +1280,12 @@ export async function geodata(sesion: Sesion) {
             : "abierto";
 
     return {
+      porFuente: porFuente.map((f) => ({
+        fuente: String(f.fuente),
+        total: Number(f.total ?? 0),
+        abiertas: Number(f.abiertas ?? 0),
+        sinUbicacion: Number(f.sin_ubicacion ?? 0),
+      })),
       incidentes: coleccion(
         incidentes.map((f) => ({
           type: "Feature",

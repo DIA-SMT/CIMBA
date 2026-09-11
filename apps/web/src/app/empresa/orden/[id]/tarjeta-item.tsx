@@ -2,13 +2,21 @@
 
 import { Camera, Check, LocateFixed, MapPin, Mic, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT, type TipoIntervencion } from "@cimba/domain";
 import { marcarYaResuelto, reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
+import {
+  borradorTieneAlgo,
+  borrarBorrador,
+  guardarBorrador,
+  guardarMemoria,
+  leerBorrador,
+  leerMemoria,
+} from "./memoria-carga";
 
 const ETIQUETA_TRABAJO: Record<string, string> = {
   bache: "Bache",
@@ -120,7 +128,7 @@ interface Candidato {
  * Pensado para el capataz con guantes: targets grandes, un solo camino feliz,
  * y la ubicación se resuelve dictando, escribiendo o con el GPS del teléfono.
  */
-export function TarjetaItem({ item }: { item: ItemOrden }) {
+export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: number }) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [abierto, setAbierto] = useState(false);
@@ -168,6 +176,44 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
   const [buscandoGps, setBuscandoGps] = useState(false);
   const [errorGeo, setErrorGeo] = useState<string | null>(null);
   const [candidato, setCandidato] = useState<Candidato | null>(null);
+
+  /**
+   * Lo que el teléfono ya sabía. Dos rescates, en este orden de prioridad:
+   * primero el BORRADOR de este bache (si se cortó la señal a mitad de la
+   * carga, lo tipeado vuelve tal cual y se avisa), y si no hay borrador, los
+   * valores que se repiten toda la jornada (espesor y modalidad) de la última
+   * carga de ESTA orden. Nada se manda solo: quedan escritos en los campos y
+   * el capataz confirma como siempre.
+   */
+  const [rescatado, setRescatado] = useState(false);
+  const [deMemoria, setDeMemoria] = useState(false);
+  useEffect(() => {
+    const b = leerBorrador(item.id);
+    if (b && borradorTieneAlgo(b)) {
+      if (b.ancho) setAncho(b.ancho);
+      if (b.largo) setLargo(b.largo);
+      if (b.espesor) setEspesor(b.espesor);
+      if (b.obs) setObs(b.obs);
+      setRescatado(true);
+      setAbierto(true);
+      return;
+    }
+    const m = leerMemoria(ordenId);
+    if (m.espesor) {
+      setEspesor(m.espesor);
+      setDeMemoria(true);
+    }
+    if (m.tipoIntervencion) setTipoIntervencion(m.tipoIntervencion as TipoIntervencion);
+    if (m.tipoObra !== undefined) setTipoObra(m.tipoObra);
+    // Una sola vez por tarjeta, al montar: después manda lo que tipea el capataz.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Guardado continuo del borrador: cada tecla, sin botón de "guardar". */
+  useEffect(() => {
+    const b = { ancho, largo, espesor, obs };
+    if (borradorTieneAlgo(b)) guardarBorrador(item.id, b);
+  }, [ancho, largo, espesor, obs, item.id]);
 
   const buscarDireccion = async (texto: string) => {
     const q = texto.trim();
@@ -318,6 +364,11 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
     startTransition(async () => {
       try {
         await reportarItemHecho(fd);
+        // Recién acá, con el reporte aceptado por el servidor: se tira el
+        // borrador (ya no hay nada que rescatar) y se recuerda lo que se
+        // repite para el bache siguiente de la misma orden.
+        borrarBorrador(item.id);
+        guardarMemoria(ordenId, { espesor, tipoIntervencion, tipoObra });
         // al refrescar, el server component mueve este item a la lista de hechos
         router.refresh();
       } catch (e) {
@@ -397,6 +448,36 @@ export function TarjetaItem({ item }: { item: ItemOrden }) {
       </div>
 
       {error && <p className="mt-2 text-sm font-medium text-peligro">{error}</p>}
+
+      {/* Que se note que el teléfono devolvió algo: un campo que aparece lleno
+          sin explicación se envía sin mirar, y acá lo que se envía se certifica. */}
+      {rescatado && (
+        <div className="mt-2 rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-snug">
+          <b className="text-amarillo">Recuperado de este teléfono:</b> habías empezado a cargar este
+          bache y quedó a medias. Revisá las medidas antes de enviar — las fotos hay que sacarlas de
+          nuevo.{" "}
+          <button
+            type="button"
+            onClick={() => {
+              setAncho("");
+              setLargo("");
+              setEspesor("");
+              setObs("");
+              borrarBorrador(item.id);
+              setRescatado(false);
+            }}
+            className="font-semibold text-celeste underline"
+          >
+            Empezar de cero
+          </button>
+        </div>
+      )}
+      {deMemoria && !rescatado && (
+        <p className="mt-2 text-[12px] leading-snug text-texto-3">
+          Espesor y modalidad vienen puestos de tu carga anterior en esta orden. Cambialos si este
+          bache fue distinto.
+        </p>
+      )}
 
       {!abierto ? (
         <div className="mt-3 space-y-2">
