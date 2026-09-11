@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { dentroDeSMT } from "@cimba/domain";
 import { proponerItem } from "@/lib/acciones-ordenes";
+import { comprimirFoto } from "@/lib/comprimir-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
@@ -128,15 +129,23 @@ export function ProponerItem({ ordenId }: { ordenId: number }) {
     );
   };
 
-  const elegirFoto = (archivo: File | undefined) => {
+  /** Se achica en el teléfono antes de subir: ver comprimir-foto.ts. */
+  const [preparandoFoto, setPreparandoFoto] = useState(false);
+  const elegirFoto = async (archivo: File | undefined) => {
     if (preview) URL.revokeObjectURL(preview);
     if (!archivo) {
       setFoto(null);
       setPreview(null);
       return;
     }
-    setFoto(archivo);
-    setPreview(URL.createObjectURL(archivo));
+    setPreparandoFoto(true);
+    try {
+      const { archivo: listo } = await comprimirFoto(archivo);
+      setFoto(listo);
+      setPreview(URL.createObjectURL(listo));
+    } finally {
+      setPreparandoFoto(false);
+    }
   };
 
   const cerrar = () => {
@@ -394,10 +403,10 @@ export function ProponerItem({ ordenId }: { ordenId: number }) {
 
       <button
         onClick={enviar}
-        disabled={pendiente}
+        disabled={pendiente || preparandoFoto}
         className="w-full rounded-xl bg-azul px-4 py-4 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
       >
-        {pendiente ? "Enviando…" : "PROPONER A BACHEO"}
+        {preparandoFoto ? "Preparando la foto…" : pendiente ? "Enviando…" : "PROPONER A BACHEO"}
       </button>
     </div>
   );

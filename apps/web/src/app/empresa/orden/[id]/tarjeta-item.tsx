@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT, type TipoIntervencion } from "@cimba/domain";
 import { marcarYaResuelto, reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
+import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
@@ -139,6 +140,9 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   const [largo, setLargo] = useState("");
   const [espesor, setEspesor] = useState("");
   const [obs, setObs] = useState("");
+  // Quién carga y contra qué reclamo: ver el bloque del formulario.
+  const [capataz, setCapataz] = useState("");
+  const [ticket, setTicket] = useState("");
   // Cómo se resolvió: arranca en lo que pedía la orden (carpeta → carpeta,
   // el resto → bacheo) y el capataz lo corrige si en la calle terminó siendo
   // otra cosa ("empieza como bacheo y al final se ha hecho cambio de paño").
@@ -205,6 +209,8 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     }
     if (m.tipoIntervencion) setTipoIntervencion(m.tipoIntervencion as TipoIntervencion);
     if (m.tipoObra !== undefined) setTipoObra(m.tipoObra);
+    // El capataz es el mismo toda la jornada: se escribe una vez.
+    if (m.capataz) setCapataz(m.capataz);
     // Una sola vez por tarjeta, al montar: después manda lo que tipea el capataz.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -304,7 +310,15 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     );
   };
 
-  const elegirFoto = (
+  /**
+   * La foto se achica ANTES de entrar al formulario: ver comprimir-foto.ts —
+   * las dos fotos de un celular moderno no entran en el límite de body de la
+   * función serverless, así que sin esto el reporte falla recién al enviar.
+   * El contador permite bloquear el envío mientras se está recodificando.
+   */
+  const [preparandoFotos, setPreparandoFotos] = useState(0);
+  const [ahorroFoto, setAhorroFoto] = useState<string | null>(null);
+  const elegirFoto = async (
     archivo: File | undefined,
     setFoto: (f: File | null) => void,
     setPreview: (u: string | null) => void,
@@ -316,8 +330,15 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       setPreview(null);
       return;
     }
-    setFoto(archivo);
-    setPreview(URL.createObjectURL(archivo));
+    setPreparandoFotos((n) => n + 1);
+    try {
+      const { archivo: listo, antes, despues } = await comprimirFoto(archivo);
+      setFoto(listo);
+      setPreview(URL.createObjectURL(listo));
+      if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
+    } finally {
+      setPreparandoFotos((n) => n - 1);
+    }
   };
 
   const anchoN = aNumero(ancho);
@@ -351,6 +372,8 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     fd.set("tipoIntervencion", tipoIntervencion);
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
+    if (capataz.trim()) fd.set("capataz", capataz.trim());
+    if (ticket.trim()) fd.set("ticket147", ticket.trim());
     // Solo se manda ubicación si es una corrección: si es la de la orden,
     // la acción ya la toma del propio item.
     if (ubicacion.origen !== "orden") {
@@ -368,7 +391,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         // borrador (ya no hay nada que rescatar) y se recuerda lo que se
         // repite para el bache siguiente de la misma orden.
         borrarBorrador(item.id);
-        guardarMemoria(ordenId, { espesor, tipoIntervencion, tipoObra });
+        guardarMemoria(ordenId, { espesor, tipoIntervencion, tipoObra, capataz: capataz.trim() || undefined });
         // al refrescar, el server component mueve este item a la lista de hechos
         router.refresh();
       } catch (e) {
@@ -576,10 +599,14 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               />
               <button
                 onClick={enviarYaResuelto}
-                disabled={pendiente}
+                disabled={pendiente || preparandoFotos > 0}
                 className="w-full rounded-xl bg-celeste px-4 py-3.5 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
               >
-                {pendiente ? "Subiendo foto…" : "CONFIRMAR: YA ESTABA HECHO"}
+                {preparandoFotos > 0
+                  ? "Preparando la foto…"
+                  : pendiente
+                    ? "Subiendo foto…"
+                    : "CONFIRMAR: YA ESTABA HECHO"}
               </button>
             </div>
           )}
@@ -941,6 +968,32 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             </div>
           )}
 
+          {/* Quién y contra qué reclamo: dos datos que hoy se pierden.
+              El capataz, porque la clave del portal es UNA por empresa y sin
+              esto todo queda firmado "INGECO S.A."; el ticket, porque es la
+              única forma de cerrarle al vecino sin adivinar por cercanía. */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
+              <input
+                value={capataz}
+                onChange={(e) => setCapataz(e.target.value)}
+                placeholder="Tu nombre"
+                className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-texto-2">N° de ticket 147</span>
+              <input
+                value={ticket}
+                onChange={(e) => setTicket(e.target.value)}
+                inputMode="numeric"
+                placeholder="si lo tenés"
+                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:font-sans placeholder:text-texto-3"
+              />
+            </label>
+          </div>
+
           {/* Observaciones */}
           <textarea
             value={obs}
@@ -952,11 +1005,20 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
           <button
             onClick={enviar}
-            disabled={pendiente}
+            disabled={pendiente || preparandoFotos > 0}
             className="w-full rounded-xl bg-resuelto px-4 py-4 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
           >
-            {pendiente ? "Subiendo foto…" : "CONFIRMAR TRABAJO HECHO"}
+            {preparandoFotos > 0
+              ? "Preparando la foto…"
+              : pendiente
+                ? "Subiendo foto…"
+                : "CONFIRMAR TRABAJO HECHO"}
           </button>
+          {ahorroFoto && (
+            <p className="num text-center text-[11px] text-texto-3">
+              Foto achicada para que suba rápido: {ahorroFoto}
+            </p>
+          )}
           <button
             onClick={() => setAbierto(false)}
             disabled={pendiente}

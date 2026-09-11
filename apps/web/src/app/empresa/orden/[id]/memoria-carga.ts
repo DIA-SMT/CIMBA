@@ -24,6 +24,8 @@ export interface MemoriaCarga {
   tipoIntervencion?: string;
   /** null = "sin modalidad elegida"; undefined = "nunca se guardó nada". */
   tipoObra?: string | null;
+  /** El capataz es el mismo toda la jornada: se escribe una vez por orden. */
+  capataz?: string;
 }
 
 export interface BorradorItem {

@@ -330,6 +330,19 @@ export async function reportarItemHecho(formData: FormData) {
       // Modalidad del protocolo DOV: es lo que se certifica. Distinta de
       // tipoIntervencion, que dice QUÉ se hizo, no bajo qué régimen.
       tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
+      /**
+       * Quién lo cargó, en texto. La clave del portal es UNA por empresa, así
+       * que `reportado_por` dice "INGECO S.A." y nunca quién estuvo parado
+       * arriba del bache: sin este campo, una medición dudosa no se le puede
+       * preguntar a nadie. No es autenticación — es trazabilidad.
+       */
+      capataz: z.string().max(120).optional(),
+      /**
+       * El número de ticket del 147, si el bache viene de un reclamo. Es el
+       * único dato que permite cerrarle al vecino por su reclamo y no por
+       * cercanía a 40 m, que es como se adivina hoy.
+       */
+      ticket147: z.string().max(40).optional(),
     })
     .parse({
       itemId: formData.get("itemId"),
@@ -342,6 +355,8 @@ export async function reportarItemHecho(formData: FormData) {
       direccionCorregida: formData.get("direccionCorregida") || undefined,
       tipoIntervencion: formData.get("tipoIntervencion") || undefined,
       tipoObra: formData.get("tipoObra") || undefined,
+      capataz: formData.get("capataz") || undefined,
+      ticket147: formData.get("ticket147") || undefined,
     });
 
   /**
@@ -550,6 +565,8 @@ export async function reportarItemHecho(formData: FormData) {
           contratista: item.empresa_nombre,
           empresa: item.empresa_nombre,
           escala: esObra ? "obra" : "bache",
+          ...(datos.capataz ? { capataz: datos.capataz } : {}),
+          ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),
           ...(datos.direccionCorregida ? { direccion_corregida: datos.direccionCorregida } : {}),
         })}::jsonb
       ) returning id
@@ -581,6 +598,10 @@ export async function reportarItemHecho(formData: FormData) {
         tipo_obra = ${tipoObra}::tipo_obra_bacheo,
         intervencion_id = ${intervencionId},
         reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          ...(datos.capataz ? { capataz: datos.capataz } : {}),
+          ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),
+        })}::jsonb,
         observaciones = ${datos.observaciones ?? null},
         direccion = coalesce(${datos.direccionCorregida ?? null}, direccion),
         geom = st_setsrid(st_makepoint(${lon}, ${lat}), 4326)

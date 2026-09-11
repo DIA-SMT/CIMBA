@@ -1,3 +1,4 @@
+import { FileCheck, Plus } from "lucide-react";
 import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, ordenesDeEmpresa, type OrdenResumen } from "@/lib/ordenes";
@@ -95,7 +96,27 @@ export default async function PaginaEmpresa({
       {vista.esVistaEspejo && <BannerEspejo nombreEmpresa={nombreEmpresa!} />}
 
       <h1 className="mb-1 text-2xl font-bold tracking-tight">Mis órdenes</h1>
-      <p className="mb-5 text-sm text-texto-2">Tocá una orden para cargar los baches hechos.</p>
+      <p className="mb-3 text-sm text-texto-2">Tocá una orden para cargar los baches hechos.</p>
+
+      {/* Las dos puertas que faltaban. La de cargar sin orden es la
+          importante: una empresa que tapó un bache por urgencia no tenía
+          dónde registrarlo y terminaba en la planilla de siempre. */}
+      <div className="mb-5 grid grid-cols-2 gap-2">
+        <Link
+          href={`/empresa/cargar${sufijoEspejo}`}
+          className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-azul px-3 text-center text-sm leading-snug font-bold text-white transition active:scale-[0.99]"
+        >
+          <Plus size={18} className="shrink-0" />
+          Cargar sin orden
+        </Link>
+        <Link
+          href={`/empresa/certificacion${sufijoEspejo}`}
+          className="flex min-h-14 items-center justify-center gap-2 rounded-xl border border-borde-2 px-3 text-center text-sm leading-snug font-bold text-texto-2 transition hover:border-celeste/60 hover:text-celeste active:scale-[0.99]"
+        >
+          <FileCheck size={18} className="shrink-0" />
+          Mi certificación
+        </Link>
+      </div>
 
       {ordenes.length === 0 && (
         <p className="rounded-xl border border-borde bg-panel px-4 py-12 text-center text-base text-texto-2">
