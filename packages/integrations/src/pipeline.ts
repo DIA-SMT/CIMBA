@@ -20,6 +20,51 @@ function geomSql(punto: { lat: number; lon: number } | null) {
 }
 
 /**
+ * Las claves de `demandas.metadata` que escribe una PERSONA desde la app, no
+ * el archivo de origen. Sobreviven a cualquier re-importación.
+ *
+ * Es una lista cerrada y no un "todo lo que no venga en el payload" porque el
+ * archivo sí tiene que poder refrescar sus propios campos (estado_ac, asunto,
+ * categoría…). Cada vez que una acción nueva deje una marca en metadata hay
+ * que sumarla acá, o la próxima ingesta se la lleva puesta.
+ */
+const MARCAS_HUMANAS = [
+  "ubicacion_corregida", // corrección del pin en el mapa (acciones.ts)
+  "ubicacion_corregida_en",
+  "pin_corregido", // pin aceptado en la corrección por lote (acciones-pines.ts)
+  "pin_omitido",
+  "pin_geocoder_fallo", // para no reintentar el geocoder en cada tanda
+  "destino_corregido", // bacheo ↔ pluvial corregido a mano
+  "tipo_corregido", // tipo corregido en Tratamiento
+  "cotejo_retroactivo", // vinculación masiva contra lo ya reparado
+  "duplicada_de", // descarte por duplicado, con su traza
+  "descartada_por",
+  "descartada_en",
+  "motivo_descarte",
+  "derivada", // derivación a SAT / Ingeniería
+  "expediente", // número de expediente de esa derivación
+  "ya_resuelta", // el vecino pidió algo que ya estaba hecho
+  "cierre", // la respuesta que Atención Ciudadana le dio al vecino
+  "ia", // análisis del clasificador, con su modelo y su fecha
+] as const;
+
+const marcasHumanas = sql`array[${sql.join(
+  MARCAS_HUMANAS.map((k) => sql`${k}`),
+  sql`, `,
+)}]::text[]`;
+
+/**
+ * Una ubicación puesta por una persona —a mano en el mapa, o aceptando la
+ * propuesta del geocoder en la corrección por lote— nunca se pisa con la del
+ * archivo. Las dos son decisiones humanas; la del lote también pasa por una
+ * pantalla donde alguien acepta una por una.
+ */
+const ubicacionHumana = sql`(
+  metadata->>'ubicacion_corregida' = 'true'
+  or metadata -> 'pin_corregido' is not null
+)`;
+
+/**
  * postgres.js por la vía `unsafe()` (que usa drizzle en db.execute) no
  * serializa objetos Date: hay que pasar ISO strings (Postgres castea solo).
  */
@@ -70,40 +115,53 @@ export async function ingestarDemandas(
           r.sinCambios++;
           continue;
         }
-        // Una ubicación corregida a mano en el mapa NUNCA se pisa con la del
-        // archivo: la corrección humana gana sobre cualquier re-importación.
+        /**
+         * LO QUE DECIDIÓ UNA PERSONA GANA SOBRE EL ARCHIVO.
+         *
+         * El payload refresca los datos de origen, pero cada re-importación
+         * pasa por acá y hasta ahora se llevaba puesto casi todo el trabajo
+         * humano: el tipo corregido a mano en Tratamiento volvía al del
+         * archivo, el pin aceptado en la corrección por lote volvía al punto
+         * malo, y el metadata entero —quién descartó un duplicado, quién
+         * derivó a SAT y con qué expediente, la respuesta al vecino, el
+         * cotejo retroactivo— se pisaba. Nadie se enteraba: el reclamo
+         * simplemente volvía atrás.
+         */
         await db.execute(sql`
           update demandas set
-            tipo = ${d.tipo},
+            -- Un tipo corregido a mano no se revierte; y un archivo que viene
+            -- sin tipo no borra el que ya está (la clasificación por IA lo
+            -- escribe justamente cuando el origen no lo trae).
+            tipo = case
+              when metadata -> 'tipo_corregido' is not null then tipo
+              else coalesce(${d.tipo}::tipo_problema, tipo) end,
             descripcion = ${d.descripcion},
             direccion_texto = ${d.direccionTexto},
             direccion_normalizada = case
-              when metadata->>'ubicacion_corregida' = 'true' then direccion_normalizada
+              when ${ubicacionHumana} then direccion_normalizada
               else ${d.direccionNormalizada} end,
             geocod_confianza = case
-              when metadata->>'ubicacion_corregida' = 'true' then geocod_confianza
+              when ${ubicacionHumana} then geocod_confianza
               else ${d.geocodConfianza} end,
             geom = case
-              when metadata->>'ubicacion_corregida' = 'true' then geom
+              when ${ubicacionHumana} then geom
               else ${geomSql(d.punto)} end,
             solicitante = ${d.solicitante},
             prioridad_informada = ${d.prioridadInformada},
             menciones = ${d.menciones},
             url_origen = ${d.urlOrigen},
             contacto = ${JSON.stringify(d.contacto)}::jsonb,
-            metadata = ${JSON.stringify(d.metadata)}::jsonb ||
-              case when metadata->>'ubicacion_corregida' = 'true'
-                   then jsonb_build_object(
-                          'ubicacion_corregida', metadata->'ubicacion_corregida',
-                          'ubicacion_corregida_en', metadata->'ubicacion_corregida_en')
-                   else '{}'::jsonb end ||
-              -- La marca de destino corregido a mano también sobrevive: el
-              -- trigger de clasificación la mira en NEW, y este UPDATE toca
-              -- tipo/descripcion/geom — sin preservarla, cada re-importación
-              -- pisaría la corrección humana en silencio.
-              case when metadata->'destino_corregido' is not null
-                   then jsonb_build_object('destino_corregido', metadata->'destino_corregido')
-                   else '{}'::jsonb end
+            -- Las marcas humanas del metadata viejo se copian ENCIMA del
+            -- payload. La lista es explícita a propósito: un "sacale al
+            -- payload lo que ya estaba" genérico se llevaría puesto justo lo
+            -- que el archivo sí tiene que refrescar. El coalesce cubre el
+            -- caso normal —ninguna marca presente—, donde un jsonb_object_agg
+            -- vacío devuelve NULL y borraría la columna entera.
+            metadata = ${JSON.stringify(d.metadata)}::jsonb || (
+              select coalesce(jsonb_object_agg(k, demandas.metadata -> k), '{}'::jsonb)
+              from unnest(${marcasHumanas}) as k
+              where demandas.metadata -> k is not null
+            )
           where id = ${existente[0].id_local}
         `);
         await db.execute(sql`
@@ -200,15 +258,26 @@ export async function ingestarIntervenciones(
           r.sinCambios++;
           continue;
         }
+        const punto = sql`st_setsrid(st_makepoint(${iv.punto.lon}, ${iv.punto.lat}), 4326)`;
         await db.execute(sql`
           update intervenciones set
             estado = ${iv.estado},
+            -- La obra se puede replantear unos metros: el punto de ejecución
+            -- se refresca igual que las fechas. Antes se escribía una única
+            -- vez, al insertar.
+            geom_ejecucion = ${punto},
             iniciada_en = ${fechaParam(iv.iniciadaEn)}::timestamptz,
             finalizada_en = ${fechaParam(iv.finalizadaEn)}::timestamptz,
             superficie_m2 = ${iv.superficieM2},
             materiales = ${JSON.stringify(iv.materiales)}::jsonb,
             observaciones = ${iv.observaciones},
-            metadata = ${JSON.stringify(iv.metadata)}::jsonb
+            -- El tipo de intervención corregido a mano deja esta marca; sin
+            -- preservarla, la próxima sincronización borra la traza de quién
+            -- lo corrigió y cuándo.
+            metadata = ${JSON.stringify(iv.metadata)}::jsonb ||
+              case when metadata -> 'tipo_corregido' is not null
+                   then jsonb_build_object('tipo_corregido', metadata -> 'tipo_corregido')
+                   else '{}'::jsonb end
           where id = ${existente[0].id_local}
         `);
         /**
@@ -221,9 +290,30 @@ export async function ingestarIntervenciones(
          */
         await db.execute(sql`
           update incidentes set
-            estado = ${incidenteSegun(iv.estado)},
+            /* Una verificación en campo la hace el municipio, no la planilla:
+               de 'verificado' no se baja, y su fecha de cierre no se toca. */
+            estado = case
+              when estado = 'verificado' then estado
+              else ${incidenteSegun(iv.estado)}::estado_incidente end,
             superficie_m2 = coalesce(${iv.superficieM2}, superficie_m2),
-            cerrado_en = ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz
+            /* La geometría y la dirección se escribían UNA sola vez, al
+               insertar. Si la empresa corregía la coordenada o la dirección en
+               su planilla —el caso más común de corrección que hacen—, CIMBA
+               se quedaba con el punto malo para siempre y el bache seguía
+               dibujado en la cuadra equivocada. */
+            geom = ${punto},
+            direccion = coalesce(${iv.direccionTexto}, direccion),
+            /* El trigger de territorio solo completa lo que está en NULL, así
+               que al mover el punto hay que recalcular a mano: si no, el
+               incidente se muda de lugar pero sigue sumando en el distrito y
+               el cuadrante viejos. */
+            distrito_id = (select d.id from distritos d
+              where st_contains(d.geom, ${punto}) limit 1),
+            cuadrante_id = (select c.id from cuadrantes c
+              where st_contains(c.geom, ${punto}) limit 1),
+            cerrado_en = case
+              when estado = 'verificado' then cerrado_en
+              else ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz end
           where id = (
             select id_local from external_ref
             where sistema = ${sistema} and entidad_local = 'incidente' and id_remoto = ${iv.idRemoto}

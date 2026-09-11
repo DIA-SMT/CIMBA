@@ -8,6 +8,13 @@ import { requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
 import { ErrorVisible } from "./errores";
 
+/** Lo único que se acepta subir al bucket público de fotos. */
+const TIPOS_FOTO: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
 // ── Score de prioridad (recalculado en cada evento relevante) ───────────────
@@ -199,8 +206,17 @@ export async function subirFoto(formData: FormData) {
   const archivo = formData.get("archivo");
   if (!(archivo instanceof File) || archivo.size === 0) throw new ErrorVisible("Falta la foto");
   if (archivo.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
-
-  const extension = archivo.type === "image/png" ? "png" : "jpg";
+  /**
+   * El tipo lo fija el SERVIDOR desde una lista cerrada, no lo que declare el
+   * cliente. El bucket "fotografias" es público: un archivo subido con
+   * content-type text/html se serviría como página activa desde el origen de
+   * Storage del municipio. Es la misma whitelist que ya usaban las otras
+   * cuatro acciones que suben fotos; esta se había quedado afuera.
+   */
+  const extension = TIPOS_FOTO[archivo.type];
+  if (!extension) {
+    throw new ErrorVisible("La foto tiene que ser una imagen JPG, PNG o WEBP sacada con la cámara");
+  }
   const ruta = `intervenciones/${datos.intervencionId}/${datos.momento}-${Date.now()}.${extension}`;
 
   const { createClient } = await import("@supabase/supabase-js");
@@ -210,7 +226,11 @@ export async function subirFoto(formData: FormData) {
   );
   const subida = await supabase.storage
     .from("fotografias")
-    .upload(ruta, Buffer.from(await archivo.arrayBuffer()), { contentType: archivo.type, upsert: false });
+    .upload(ruta, Buffer.from(await archivo.arrayBuffer()), {
+      // El tipo de la whitelist, no el del cliente.
+      contentType: Object.keys(TIPOS_FOTO).find((t) => TIPOS_FOTO[t] === extension),
+      upsert: false,
+    });
   if (subida.error) throw new ErrorVisible(`Storage: ${subida.error.message}`);
 
   await conRls(claims(sesion), async (tx) => {
@@ -362,7 +382,21 @@ export async function corregirUbicacionDemanda(entrada: {
         geom = st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
         geocod_confianza = 1.0,
         direccion_normalizada = coalesce(${datos.direccion ?? null}, direccion_normalizada),
-        distrito_id = null, -- el trigger espacial la recalcula
+        /**
+         * Las TRES pertenencias territoriales se recalculan, igual que hace la
+         * corrección por lote (acciones-pines.ts). Antes solo se anulaba el
+         * distrito: el reclamo se movía de lugar pero seguía contando en el
+         * barrio y el circuito viejos, así que la deuda por territorio, la
+         * asignación de circuito y el parte diario lo sumaban donde ya no
+         * estaba. Se calculan acá con st_contains y no dejándolas en NULL para
+         * el trigger: el resultado no depende del orden en que corran.
+         */
+        distrito_id = (select di.id from distritos di
+          where st_contains(di.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
+        circuito_id = (select ci.id from circuitos ci
+          where st_contains(ci.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
+        barrio_id = (select b.id from barrios b
+          where st_contains(b.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
         metadata = metadata || ${marca}::jsonb
       where id = ${datos.demandaId}
       returning id

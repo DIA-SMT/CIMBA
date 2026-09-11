@@ -27,6 +27,19 @@ export function AltaRapida({
   const [buscando, setBuscando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendiente, startTransition] = useTransition();
+  // Espejo del valor actual, para que el pedido en vuelo pueda compararlo sin
+  // capturar un valor viejo en su clausura.
+  const direccionRef = useRef("");
+  direccionRef.current = direccion;
+  /** Lo último que escribió la georreversa: si el campo sigue diciendo eso
+   *  (o está vacío), se puede reemplazar; si no, lo tocó una persona. */
+  const autoRef = useRef("");
+  const escribirSiNadieTocoNada = (nueva: string) => {
+    if (direccionRef.current.trim() !== "" && direccionRef.current !== autoRef.current) return;
+    autoRef.current = nueva;
+    setDireccion(nueva);
+  };
+
   const georevRef = useRef(0);
 
   useEffect(() => {
@@ -35,7 +48,7 @@ export function AltaRapida({
     fetch(`/api/georreversa?lat=${punto.lat}&lon=${punto.lon}`)
       .then((r) => r.json() as Promise<{ direccion: string | null }>)
       .then((d) => {
-        if (pedido === georevRef.current && d.direccion) setDireccion(d.direccion);
+        if (pedido === georevRef.current && d.direccion) escribirSiNadieTocoNada(d.direccion);
       })
       .catch(() => {})
       .finally(() => {

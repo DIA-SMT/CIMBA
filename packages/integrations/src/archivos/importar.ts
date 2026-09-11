@@ -80,14 +80,29 @@ export async function detectarYParsear(
     };
   }
   if (linea1.includes("mes_bacheo")) {
-    const etiqueta = `carga-web-${new Date().toISOString().slice(0, 10)}`;
-    return {
-      formato: "bacheo_mensual_csv",
-      descripcion: "Planilla mensual de bacheo geocodificada (csv)",
-      sistema: "bacheo_planillas",
-      demandas: [],
-      intervenciones: parsearBacheoMensualTexto(texto, etiqueta),
-    };
+    /**
+     * LA PLANILLA MENSUAL NO SE PUEDE SUBIR POR ACÁ. No es una limitación
+     * tonta: es el único formato cuya IDENTIDAD no está en el archivo.
+     *
+     * Cada fila entra a external_ref como `<etiqueta>-<id>`, y la etiqueta la
+     * elige quien importa. La CLI usa el mes ("mayo-2026"); acá se armaba con
+     * la fecha de HOY ("carga-web-2026-09-11"), así que ninguna fila coincidía
+     * con lo ya cargado: subir la planilla de mayo creaba 360 incidentes y 360
+     * intervenciones DUPLICADAS, y subirla de nuevo al día siguiente creaba
+     * otras 360.
+     *
+     * Y no alcanza con sacar la etiqueta del contenido: verificado contra la
+     * base, la planilla de mayo dice "Mayo 2025" adentro mientras en la base
+     * está como "mayo-2026" — normalizar el contenido daría "mayo-2025" y
+     * duplicaría igual. Mientras la identidad dependa de una etiqueta que se
+     * tipea a mano, el único lugar seguro para cargarla es donde esa etiqueta
+     * se elige a conciencia.
+     */
+    throw new Error(
+      "Las planillas mensuales de bacheo (con columna mes_bacheo) se cargan con la CLI local " +
+        "(pnpm ingest:archivos), no por acá: la identidad de cada fila depende de la etiqueta del mes " +
+        "y subirla desde el navegador duplicaría todo lo ya cargado.",
+    );
   }
   if (linea1.includes("tipo de trabajo") && linea1.includes("geo_confianza")) {
     return {

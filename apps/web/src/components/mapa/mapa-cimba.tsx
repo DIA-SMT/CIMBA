@@ -2982,11 +2982,14 @@ function MapaInterno({
   // KPIs: estado del territorio bajo los filtros de tipo/período — NO dependen
   // de qué capas estén visibles (apagar una capa no hace desaparecer el problema).
   const kpis = useMemo(() => {
-    const inc = (data?.incidentes.features ?? []).filter((f) => {
-      if (tipos[String(f.properties.tipo)] === false) return false;
-      if (corte && Date.parse(String(f.properties.detectado_en)) < corte) return false;
-      return true;
-    });
+    /**
+     * Los incidentes salen de incidentesParaMetricas y NO de un filtro
+     * rearmado acá: ese filtro duplicado se olvidaba del distrito aislado, así
+     * que con "Solo Distrito 7" prendido los KPI seguían contando toda la
+     * ciudad — el chip decía que estabas mirando un distrito y los números
+     * eran de los veinte. Un solo lugar que decide qué entra en las métricas.
+     */
+    const inc = incidentesParaMetricas.features;
     return {
       demandas: demandasFiltradas.features.length,
       // Sobre el MISMO conjunto que "Demandas" (ver AYUDA_KPI.sinAtencion): las
@@ -2996,9 +2999,12 @@ function MapaInterno({
       abiertos: inc.filter((f) => f.properties.macro === "abierto").length,
       enCurso: inc.filter((f) => f.properties.macro === "en_curso").length,
       resueltos: inc.filter((f) => f.properties.macro === "resuelto").length,
+      /* m² se queda como viene del servidor a propósito: es el total de la
+         ciudad y su rótulo lo dice. Recalcularlo del geojson mezclaría
+         superficies de incidentes sin reparar con las reparadas. */
       m2: kpisIniciales.m2Intervenidos,
     };
-  }, [data, tipos, corte, demandasFiltradas, kpisIniciales]);
+  }, [incidentesParaMetricas, demandasFiltradas, kpisIniciales]);
 
   /** Qué cifras de la fila de arriba sobreviven al nivel de detalle. */
   const verKpi = (clave: string) => detalle === "completo" || KPIS_ESENCIALES[vista].includes(clave);
@@ -4619,30 +4625,35 @@ function MapaInterno({
       )}
 
       {/* Tooltip instantáneo al pasar el mouse.
-          Se VOLTEA contra los bordes: abajo a la derecha del cursor por
-          defecto, pero si no entra se re-ancla al otro lado. Antes se dibujaba
-          siempre a +14/+14 y contra el borde derecho quedaba media tarjeta
-          afuera — justo con la dirección, que es lo que se está mirando.
-          Re-anclar con la propiedad right y no con translateX: con translate el ancho ya
-          se calculó apretado contra el borde y queda una astilla vertical.
-          El alto es una constante conservadora (con foto ~185 px, sin foto
-          ~55): medirlo de verdad obligaría a leer el layout en cada mousemove
-          sobre una feature. */}
+          Se ubica abajo a la derecha del cursor; si de ese lado no entra, pasa
+          al otro; y si no entra de ninguno —un mapa angosto en el celular— se
+          encaja adentro aunque tape el cursor. Antes el volteo se hacía
+          anclando con `right`, y cuando el cursor estaba cerca del borde
+          IZQUIERDO de un mapa angosto eso dejaba la tarjeta con 30 px de ancho:
+          una astilla vertical con la dirección partida letra por letra. Encajar
+          siempre reservando el ancho completo evita las dos cosas.
+          El alto y el ancho son constantes conservadoras (con foto ~185 px, sin
+          foto ~55): medirlos de verdad obligaría a leer el layout en cada
+          mousemove sobre una feature. */}
       {tooltip && !modoAnalisis && (() => {
         const anchoMapa = contenedorRef.current?.clientWidth ?? 0;
         const altoMapa = contenedorRef.current?.clientHeight ?? 0;
-        const voltearX = anchoMapa > 0 && tooltip.x + 14 + 272 > anchoMapa;
+        const anchoTip = anchoMapa > 0 ? Math.min(272, anchoMapa - 16) : 272;
         const altoTip = tooltip.foto ? 185 : 55;
-        const voltearY = altoMapa > 0 && tooltip.y + 14 + altoTip > altoMapa;
+        /** Preferido / volteado / encajado, en ese orden. */
+        const ubicar = (cursor: number, tam: number, disponible: number) => {
+          if (disponible <= 0) return cursor + 14;
+          if (cursor + 14 + tam + 8 <= disponible) return cursor + 14;
+          if (cursor - 14 - tam >= 8) return cursor - 14 - tam;
+          return Math.max(8, Math.min(cursor + 14, disponible - tam - 8));
+        };
         return (
         <div
-          className="pointer-events-none absolute z-30 max-w-64 rounded-lg border border-borde-2 bg-panel-2/95 px-2.5 py-1.5 shadow-xl"
+          className="pointer-events-none absolute z-30 rounded-lg border border-borde-2 bg-panel-2/95 px-2.5 py-1.5 shadow-xl"
           style={{
-            ...(voltearX
-              ? { right: Math.max(8, anchoMapa - (tooltip.x - 14)) }
-              : { left: Math.max(8, tooltip.x + 14) }),
-            top: voltearY ? undefined : Math.max(8, tooltip.y + 14),
-            bottom: voltearY ? Math.max(8, altoMapa - (tooltip.y - 14)) : undefined,
+            maxWidth: anchoTip,
+            left: ubicar(tooltip.x, anchoTip, anchoMapa),
+            top: ubicar(tooltip.y, altoTip, altoMapa),
           }}
         >
           <p className="truncate text-[12px] font-semibold">{tooltip.lineas[0]}</p>
@@ -5140,8 +5151,12 @@ function MapaInterno({
           zona={zonaActiva}
           setRadio={setRadioZona}
           alCambiarForma={cambiarFormaZona}
-          demandas={demandasFiltradas}
-          incidentes={incidentesFiltrados}
+          /* Los conjuntos de MÉTRICAS y no los de dibujo: los mismos que usan
+             el balance del encuadre y el top 20. Con los de dibujo, apagar la
+             capa "Ya reparados" —que está apagada por defecto— hacía que el
+             panel dijera "0 reparaciones" en una zona llena de reparaciones. */
+          demandas={demandasParaMetricas}
+          incidentes={incidentesParaMetricas}
           zonaA={zonaA}
           alFijarA={() => zona && setZonaA({ centro: zona, radio: radioZona })}
           alQuitarA={() => setZonaA(null)}

@@ -40,6 +40,9 @@ async function main() {
       ...(ac.existentes > 0 ? { hastaId: ac.ultimoIdVisto } : {}),
       idsExistentes: ac.existentes,
       descartados: ac.descartados,
+      // Los ids que no se pudieron leer: sin esto se perdían en silencio y el
+      // cursor seguía de largo. Quedan en el sync_run para poder re-pedirlos.
+      ...(ac.fallos.length > 0 ? { fallos: ac.fallos } : {}),
     });
 
     barridos += ac.ultimoIdVisto - cursor;

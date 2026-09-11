@@ -4,6 +4,7 @@ import { Camera, CheckCircle2, LocateFixed, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { finalizarIntervencion, iniciarIntervencion, subirFoto } from "@/lib/acciones";
+import { comprimirFoto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { mensajeDeError } from "@/lib/errores";
@@ -62,11 +63,18 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
     setSubiendo(momento);
     setError(null);
     try {
+      /**
+       * Se achica ANTES de subir, igual que en el portal de empresas: la foto
+       * viaja en una server action y Vercel corta el body en 4,5 MB, así que
+       * una foto de celular podía fallar recién al final. De paso la pasada
+       * por el canvas la normaliza a JPEG, que es lo que acepta el servidor.
+       */
+      const { archivo: listo } = await comprimirFoto(archivo);
       const gps = await obtenerGps();
       const fd = new FormData();
       fd.set("intervencionId", String(intervencion.id));
       fd.set("momento", momento);
-      fd.set("archivo", archivo);
+      fd.set("archivo", listo);
       if (gps) {
         fd.set("lat", String(gps.lat));
         fd.set("lon", String(gps.lon));

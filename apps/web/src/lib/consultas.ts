@@ -899,9 +899,22 @@ export async function estadisticasBrecha(sesion: Sesion): Promise<EstadisticasBr
     `)) as unknown as Array<{ fuente: string; abiertas: number; atendidas: number }>;
 
     const porTipo = (await tx.execute(sql`
+      /* Mismo criterio que la brecha real: cuenta como deuda si no hay
+         trabajo en curso ni una reparación POSTERIOR al pedido. Antes el
+         exists no filtraba estado —descontaba hasta los desestimados— y esta
+         tabla daba un tercer total distinto en la misma pantalla. */
       select d.tipo, count(*)::int as abiertas,
-        count(*) filter (where not exists (select 1 from incidentes i
-          where st_dwithin(i.geom::geography, d.geom::geography, 40)))::int as sin_nada
+        count(*) filter (
+          where not exists (
+            select 1 from incidentes i
+            where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+              and st_dwithin(i.geom::geography, d.geom::geography, 40))
+            and not exists (
+              select 1 from incidentes i
+              where i.estado in ('reparado','verificado')
+                and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
+        )::int as sin_nada
       from demandas d
       where d.estado in ('recibida','en_validacion') and d.geom is not null and d.tipo is not null
       group by 1 order by 3 desc
@@ -1055,8 +1068,15 @@ export async function brechaPorDistrito(sesion: Sesion): Promise<BrechaDistrito[
           count(*)::int as abiertas,
           count(*) filter (where reparacion_posterior)::int as ya_resueltas,
           count(*) filter (where hay_reparacion and not reparacion_posterior)::int as reincidencias,
-          count(*) filter (where not hay_reparacion and incidente_abierto)::int as en_cola,
-          count(*) filter (where not hay_reparacion and not incidente_abierto)::int as brecha_real
+          /* not reparacion_posterior y NO not hay_reparacion: una reparación
+             ANTERIOR al pedido no lo saca de la deuda, lo convierte en
+             reincidencia. Con el criterio viejo esta tabla sumaba 1.863
+             mientras el encabezado de la misma pantalla decía 1.939, y el
+             ranking de distritos salía mal (el 15 aparecía peor que el 9
+             cuando es al revés). Ahora ya_resueltas + en_cola + brecha_real
+             da exactamente abiertas. */
+          count(*) filter (where not reparacion_posterior and incidente_abierto)::int as en_cola,
+          count(*) filter (where not reparacion_posterior and not incidente_abierto)::int as brecha_real
         from cruce group by 1
       ), m2_por_incidente as (
         -- Separados por escala: un distrito con 33 paños de hormigón no hizo
@@ -1390,7 +1410,11 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
         count(*) filter (where abierta)::int as abiertas,
         count(*) filter (where abierta and geom is null)::int as sin_ubicacion,
         count(*) filter (where abierta and geom is not null)::int as en_el_mapa,
-        count(*) filter (where abierta and geom is not null and destino = 'bacheo')::int as bacheo,
+        /* coalesce como en el mapa y en estadisticasBrecha: destino es
+           nullable y lo puebla un trigger, así que el primero que entre sin
+           clasificar haría que las tres colas dejaran de sumar enElMapa. */
+        count(*) filter (where abierta and geom is not null
+                           and coalesce(destino::text, 'bacheo') = 'bacheo')::int as bacheo,
         count(*) filter (where abierta and geom is not null and destino = 'sat')::int as sat,
         count(*) filter (where abierta and geom is not null and destino = 'ingenieria')::int as ingenieria,
         count(*) filter (where foto_propia)::int as con_foto
@@ -1398,8 +1422,18 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
     `)) as unknown as Array<Record<string, unknown>>;
     const f = filas[0] ?? {};
 
-    // "Sin atención" con el MISMO criterio que pinta el mapa (geodata): no hay
-    // ningún incidente abierto ni reparación a menos de 40 m.
+    /**
+     * "Sin atención" con el MISMO criterio que pinta el mapa (geodata) y que
+     * la brecha: no hay trabajo en curso cerca NI una reparación POSTERIOR al
+     * pedido. Son dos exists y no uno: metiendo 'reparado' en la misma lista,
+     * una reparación ANTERIOR sacaba el pedido de la deuda — y esa es la
+     * definición de reincidencia, que sigue siendo deuda.
+     *
+     * OJO: la comparación de fechas va DENTRO del exists. Si alguien la
+     * "simplifica" sacándola afuera bajo el NOT, el NULL de las demandas sin
+     * la clave sin_fecha invierte el sentido — la misma trampa que obligó al
+     * coalesce(..., false) del lateral de geodata.
+     */
     const sin = (await tx.execute(sql`
       select count(*)::int as n,
              count(*) filter (where d.metadata->>'archivo' is not null)::int as de_archivo
@@ -1407,8 +1441,13 @@ export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
       where d.estado in ('recibida','en_validacion') and d.geom is not null
         and not exists (
           select 1 from incidentes i
-          where i.estado in ('detectado','priorizado','programado','en_ejecucion','reparado','verificado')
+          where i.estado in ('detectado','priorizado','programado','en_ejecucion')
             and st_dwithin(i.geom::geography, d.geom::geography, 40))
+        and not exists (
+          select 1 from incidentes i
+          where i.estado in ('reparado','verificado')
+            and st_dwithin(i.geom::geography, d.geom::geography, 40)
+            and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
     `)) as unknown as Array<{ n: number; de_archivo: number }>;
 
     /* Mismo criterio, línea por línea, que estadisticasBrecha: hay reparación

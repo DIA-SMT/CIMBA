@@ -16,7 +16,9 @@ export const maxDuration = 60;
 export default async function PaginaPulso() {
   await leerSesion(); // (app) ya garantiza sesión interna; el guard es del layout
   const p = await datosPulso();
-  const deltaDeuda = p.deuda.sinAtencionBacheo - p.deuda.hace7dias;
+  /* null mientras la serie diaria no tenga una semana: ahí no se dice ni
+     "sube" ni "baja", porque no hay con qué comparar. */
+  const deltaDeuda = p.deuda.hace7dias == null ? null : p.deuda.sinAtencionBacheo - p.deuda.hace7dias;
 
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
@@ -81,13 +83,25 @@ export default async function PaginaPulso() {
             <Link href="/mapa?vista=brecha&brecha=sin_atencion" className="num font-bold text-celeste hover:underline">
               {numero(p.deuda.sinAtencionBacheo)}
             </Link>{" "}
-            pedidos —{" "}
-            {deltaDeuda <= 0 ? (
-              <b style={{ color: "var(--color-hecho)" }}>baja</b>
+            pedidos{" "}
+            {deltaDeuda == null ? (
+              <span className="text-texto-3">
+                — {numero(p.deuda.masDeUnaSemana)} esperan hace más de una semana (la comparación
+                contra hace 7 días empieza cuando haya esa historia guardada)
+              </span>
             ) : (
-              <b style={{ color: "var(--color-sin-atencion)" }}>sube</b>
-            )}{" "}
-            <span className="text-texto-3">(hace 7 días: {numero(p.deuda.hace7dias)})</span>
+              <>
+                —{" "}
+                {deltaDeuda === 0 ? (
+                  <b className="text-texto-2">igual</b>
+                ) : deltaDeuda < 0 ? (
+                  <b style={{ color: "var(--color-hecho)" }}>baja</b>
+                ) : (
+                  <b style={{ color: "var(--color-sin-atencion)" }}>sube</b>
+                )}{" "}
+                <span className="text-texto-3">(hace 7 días: {numero(p.deuda.hace7dias ?? 0)})</span>
+              </>
+            )}
           </p>
           <p>
             {p.ordenes.vencenHoy.length > 0 ? (

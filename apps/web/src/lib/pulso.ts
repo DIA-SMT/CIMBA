@@ -21,8 +21,14 @@ export interface Pulso {
   cerradas: number;
   /** Barrios con más pedidos NUEVOS de bacheo ayer. */
   barriosCalientes: Array<{ barrio: string; pedidos: number }>;
-  /** La foto de la deuda de bacheo, hoy contra hace 7 días. */
-  deuda: { sinAtencionBacheo: number; hace7dias: number };
+  /**
+   * La foto de la deuda de bacheo. `hace7dias` sale de la serie `deuda_diaria`
+   * y es null mientras no haya una semana de historia guardada: el estado de
+   * hace siete días no se puede reconstruir hacia atrás. `masDeUnaSemana` es
+   * otra cosa —cuánto de la deuda de hoy ya lleva más de siete días esperando—
+   * y es la que antes se mostraba, mal rotulada, como si fuera la comparación.
+   */
+  deuda: { sinAtencionBacheo: number; hace7dias: number | null; masDeUnaSemana: number };
   ordenes: { vencenHoy: Array<{ numero: string; empresa: string }>; vencidasActivas: number };
   cierresPendientes: number;
   /** Barrio cuyo volumen de ayer superó 3× su promedio diario del mes (mín. 5). */
@@ -67,9 +73,12 @@ export async function datosPulso(): Promise<Pulso> {
                  or (i.estado in ('reparado','verificado')
                      and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))))
     ),
-    deuda_7 as (
-      -- La misma foto pero solo con lo que ya existía hace 7 días: la
-      -- comparación honesta de si la deuda crece o baja.
+    vieja as (
+      /* NO es "la deuda de hace 7 días": es la parte de la deuda de HOY que ya
+         lleva más de una semana esperando. Durante mucho tiempo se mostró como
+         si fuera la comparación semanal, y como es un subconjunto de la deuda
+         de hoy siempre daba menor o igual: el parte no podía decir "baja" ni
+         aunque la deuda bajara. La comparación real sale de deuda_diaria. */
       select count(*)::int as n from demandas d, dias
       where d.estado in ('recibida','en_validacion') and d.geom is not null
         and coalesce(d.destino::text, 'bacheo') = 'bacheo'
@@ -90,9 +99,13 @@ export async function datosPulso(): Promise<Pulso> {
     )
     select entradas.total, entradas.bacheo, entradas.sat, entradas.ingenieria,
            reparados.baches, reparados.m2, cerradas.n as cerradas,
-           deuda_hoy.n as deuda_hoy, deuda_7.n as deuda_7, cerrables.n as cerrables,
+           deuda_hoy.n as deuda_hoy, vieja.n as vieja, cerrables.n as cerrables,
+           /* La foto guardada hace exactamente una semana. Null hasta que la
+              serie tenga esa antigüedad — no se inventa un valor. */
+           (select dd.sin_atencion from deuda_diaria dd, dias
+             where dd.fecha = dias.hoy - 7) as hace7dias,
            to_char((select ayer from dias), 'DD/MM') as fecha_ayer
-    from entradas, reparados, cerradas, deuda_hoy, deuda_7, cerrables
+    from entradas, reparados, cerradas, deuda_hoy, vieja, cerrables
   `)) as unknown as Array<Record<string, unknown>>;
   const f = filas[0] ?? {};
 
@@ -160,7 +173,11 @@ export async function datosPulso(): Promise<Pulso> {
     },
     cerradas: Number(f.cerradas ?? 0),
     barriosCalientes: barrios.map((b) => ({ barrio: String(b.barrio), pedidos: Number(b.pedidos) })),
-    deuda: { sinAtencionBacheo: Number(f.deuda_hoy ?? 0), hace7dias: Number(f.deuda_7 ?? 0) },
+    deuda: {
+      sinAtencionBacheo: Number(f.deuda_hoy ?? 0),
+      hace7dias: f.hace7dias == null ? null : Number(f.hace7dias),
+      masDeUnaSemana: Number(f.vieja ?? 0),
+    },
     ordenes: {
       vencenHoy: ordenesHoy.map((o) => ({ numero: String(o.numero), empresa: String(o.empresa) })),
       vencidasActivas: Number(vencidas[0]?.n ?? 0),
@@ -172,7 +189,39 @@ export async function datosPulso(): Promise<Pulso> {
   };
 }
 
+/**
+ * Guarda la foto de hoy en `deuda_diaria`. La llama el cron de las 7:00, una
+ * vez por día: es lo único que hace posible la comparación semanal, porque el
+ * estado de la deuda depende del estado ACTUAL de cada reclamo y no queda
+ * historiado en ningún lado. Es un upsert por fecha, así que correr el cron de
+ * nuevo el mismo día no duplica ni corrompe la serie.
+ */
+export async function guardarFotoDeuda(p: Pulso): Promise<void> {
+  await getDb().execute(sql`
+    insert into deuda_diaria (fecha, sin_atencion)
+    values ((now() at time zone ${TZ})::date, ${p.deuda.sinAtencionBacheo})
+    on conflict (fecha) do update
+      set sin_atencion = excluded.sin_atencion, registrado_en = now()
+  `);
+}
+
 const n = (x: number) => x.toLocaleString("es-AR");
+
+/**
+ * Cómo se cuenta la deuda en el parte. Mientras la serie no tenga una semana,
+ * el parte NO dice ni "sube" ni "baja": dice que todavía no hay con qué
+ * comparar y muestra cuánto de la deuda ya lleva más de siete días. Es la
+ * diferencia entre un dato y una corazonada con números.
+ */
+export function textoDeuda(p: Pulso): string {
+  const hoy = `${n(p.deuda.sinAtencionBacheo)} pedidos`;
+  if (p.deuda.hace7dias == null) {
+    return `${hoy} — ${n(p.deuda.masDeUnaSemana)} de ellos ya esperan hace más de una semana (la comparación semanal necesita 7 días de historia y empieza a estar disponible recién ahora)`;
+  }
+  const delta = p.deuda.sinAtencionBacheo - p.deuda.hace7dias;
+  if (delta === 0) return `${hoy} — igual que hace 7 días`;
+  return `${hoy} — ${delta < 0 ? "baja" : "sube"}: hace 7 días eran ${n(p.deuda.hace7dias)}`;
+}
 
 /** El push corto de la mañana: dos líneas que dan ganas de abrir el parte. */
 export function pushDelPulso(p: Pulso): { titulo: string; cuerpo: string } {
@@ -204,11 +253,7 @@ export function emailDelPulso(p: Pulso): string {
       : "",
     "",
     "HOY",
-    `· Deuda de bacheo sin atención: ${n(p.deuda.sinAtencionBacheo)} pedidos (${
-      p.deuda.sinAtencionBacheo <= p.deuda.hace7dias
-        ? `baja: hace 7 días eran ${n(p.deuda.hace7dias)}`
-        : `sube: hace 7 días eran ${n(p.deuda.hace7dias)}`
-    }).`,
+    `· Deuda de bacheo sin atención: ${textoDeuda(p)}.`,
     p.ordenes.vencenHoy.length > 0
       ? `· Vencen HOY: ${p.ordenes.vencenHoy.map((o) => `${o.numero} (${o.empresa})`).join(", ")}.`
       : "· No vence ninguna orden hoy.",

@@ -53,6 +53,19 @@ export function FormularioCiudadano() {
     setDescripcion((previa) => (previa ? `${previa} ${frase}` : frase)),
   );
 
+  // Espejo del valor actual, para que el pedido en vuelo pueda compararlo sin
+  // capturar un valor viejo en su clausura.
+  const direccionRef = useRef("");
+  direccionRef.current = direccion;
+  /** Lo último que escribió la georreversa: si el campo sigue diciendo eso
+   *  (o está vacío), se puede reemplazar; si no, lo tocó una persona. */
+  const autoRef = useRef("");
+  const escribirSiNadieTocoNada = (nueva: string) => {
+    if (direccionRef.current.trim() !== "" && direccionRef.current !== autoRef.current) return;
+    autoRef.current = nueva;
+    setDireccion(nueva);
+  };
+
   const georevRef = useRef(0);
   const resolverDireccion = async (lat: number, lon: number) => {
     setBuscandoDireccion(true);
@@ -60,7 +73,7 @@ export function FormularioCiudadano() {
     try {
       const res = await fetch(`/api/georreversa?lat=${lat}&lon=${lon}`);
       const data = (await res.json()) as { direccion: string | null };
-      if (pedido === georevRef.current && data.direccion) setDireccion(data.direccion);
+      if (pedido === georevRef.current && data.direccion) escribirSiNadieTocoNada(data.direccion);
     } catch {
       // sin dirección automática: se escribe (o dicta) a mano
     } finally {

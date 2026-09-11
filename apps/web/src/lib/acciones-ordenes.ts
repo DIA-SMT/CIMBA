@@ -653,7 +653,7 @@ export async function reportarItemHecho(formData: FormData) {
       where id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
         and not exists (
           select 1 from orden_items oi
-          where oi.orden_id = ${Number(item.orden_id)} and oi.estado = 'pendiente'
+          where oi.orden_id = ${Number(item.orden_id)} and oi.estado in ('pendiente','propuesto')
         )
     `);
 
@@ -725,7 +725,7 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
       where id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
         and not exists (
           select 1 from orden_items oi
-          where oi.orden_id = ${Number(fila.orden_id)} and oi.estado = 'pendiente'
+          where oi.orden_id = ${Number(fila.orden_id)} and oi.estado in ('pendiente','propuesto')
         )
     `);
   });
@@ -1015,6 +1015,19 @@ export async function resolverPropuesto(entrada: {
       returning orden_id
     `)) as unknown as Array<{ orden_id: number }>;
     if (!r[0]) throw new ErrorVisible("El item no está en estado propuesto");
+
+    /**
+     * Cinturón: si la orden ya estaba cerrada (por ejemplo porque se completó
+     * antes de que existiera el arreglo de arriba), validar la reabre. Sin
+     * esto el item quedaría pendiente sobre una orden completada y la empresa
+     * no podría reportarlo nunca.
+     */
+    if (datos.decision === "validar") {
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'en_ejecucion', cerrada_en = null
+        where id = ${Number(r[0].orden_id)} and estado = 'completada'
+      `);
+    }
   });
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
@@ -1149,7 +1162,7 @@ export async function marcarYaResuelto(formData: FormData) {
         where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
           and not exists (
             select 1 from orden_items oi
-            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado = 'pendiente'
+            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
           )
       `);
     });

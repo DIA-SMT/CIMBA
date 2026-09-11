@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb, sql } from "@cimba/db";
 import { notificarEvento } from "@/lib/notificar";
-import { datosPulso, emailDelPulso, pushDelPulso } from "@/lib/pulso";
+import { datosPulso, emailDelPulso, guardarFotoDeuda, pushDelPulso } from "@/lib/pulso";
 
 export const maxDuration = 60;
 
@@ -93,6 +93,9 @@ export async function GET(req: NextRequest) {
     `)) as unknown as Array<{ clave: string }>;
     if (marca[0]) {
       const pulso = await datosPulso();
+      // La foto del día ANTES de mandar nada: si el envío falla, la serie no
+      // se corta. Es la única fuente de la comparación semanal del parte.
+      await guardarFotoDeuda(pulso);
       const push = pushDelPulso(pulso);
       const r = await notificarEvento("pulso_diario", {
         titulo: push.titulo,

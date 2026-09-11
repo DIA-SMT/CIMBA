@@ -373,8 +373,12 @@ export async function ejecutarHerramientaMigue(
         select count(*)::int as pedidos_abiertos,
           count(*) filter (where ya_resuelta)::int as probablemente_ya_resueltos,
           count(*) filter (where hay_reparacion and not ya_resuelta)::int as reincidencias,
-          count(*) filter (where not hay_reparacion and en_cola)::int as en_cola,
-          count(*) filter (where not hay_reparacion and not en_cola)::int as brecha_real_sin_tocar,
+          /* not ya_resuelta y NO not hay_reparacion: una reparación ANTERIOR
+             al pedido no lo saca de la deuda (es una reincidencia). Con el
+             criterio viejo, Migue contestaba 1.863 y mandaba a /brecha, que
+             mostraba 1.939 para lo mismo. */
+          count(*) filter (where not ya_resuelta and en_cola)::int as en_cola,
+          count(*) filter (where not ya_resuelta and not en_cola)::int as brecha_real_sin_tocar,
           (select count(*)::int from incidentes i where i.estado in ('reparado','verificado')
             and not exists (select 1 from demandas dd where dd.geom is not null
               and st_dwithin(dd.geom::geography, i.geom::geography, 40))) as trabajos_sin_pedido_cerca,

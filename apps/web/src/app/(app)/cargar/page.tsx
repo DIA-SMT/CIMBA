@@ -15,7 +15,7 @@ export default async function PaginaCargar() {
     <div className="mx-auto max-w-3xl p-6">
       <TituloPagina
         titulo="Cargar datos"
-        sub="Todo entra por acá: archivos de las fuentes conocidas o una demanda puntual. La ingesta es idempotente — repetir un archivo nunca duplica."
+        sub="Archivos de las fuentes conocidas o una demanda puntual. Repetir un archivo no duplica: cada fila se reconoce por su id de origen. La excepción son las planillas mensuales de bacheo, que se cargan con la CLI porque su identidad depende de la etiqueta del mes."
       />
       {puede ? (
         <FormularioCarga />

@@ -64,7 +64,15 @@ function statsConFiltro(
   const porPaso = (paso: PasoSemaforo) =>
     i.filter((f) => pasoDeEstado(String(f.properties.estado) as EstadoIncidente) === paso).length;
 
-  const m2 = i.reduce((acc, f) => acc + (Number(f.properties.m2) || 0), 0);
+  /**
+   * Solo lo REPARADO. La fila se llama "m² intervenidos" y sumaba la
+   * superficie de todo lo que cayera en la zona —detectado, programado y
+   * hasta desestimado—, o sea metros que nadie pavimentó. Es el mismo filtro
+   * que usa el balance del encuadre antes de sumar.
+   */
+  const m2 = i
+    .filter((f) => pasoDeEstado(String(f.properties.estado) as EstadoIncidente) === "resuelto")
+    .reduce((acc, f) => acc + (Number(f.properties.m2) || 0), 0);
   const porDireccion = new Map<string, number>();
   for (const f of d) {
     const dir = String(f.properties.direccion ?? "").trim();
