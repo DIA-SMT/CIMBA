@@ -1167,29 +1167,33 @@ export async function geodata(sesion: Sesion) {
              st_x(d.geom) as lon, st_y(d.geom) as lat,
              /**
               * La foto del pedido, para verla al pasar el mouse. Primero la
-              * que mandó quien reclamó; si no hay, la de una reparación hecha
-              * a menos de 40 m —el mismo radio con el que se marca "posible
-              * resuelta"—, que responde la pregunta que uno se hace mirando un
-              * pedido viejo en el mapa: "¿esto ya está arreglado?".
+              * que mandó quien reclamó; si no hay, la de una reparación a
+              * menos de 40 m — el mismo radio con el que se marca "posible
+              * resuelta".
+              *
+              * OJO con la fecha: una reparación ANTERIOR al reclamo no
+              * significa "ya está arreglado" — significa que volvió a
+              * romperse, o que es otro bache de la misma cuadra. Mostrarla sin
+              * aclararlo contradecía al semáforo (un punto rojo con una foto
+              * que decía "así quedó"). Por eso viaja también la fecha, la
+              * distancia y si fue antes o después: el rótulo lo explica en vez
+              * de desmentir al color.
               */
              coalesce(
                (select f.url_externa from fotografias f
                  where f.demanda_id = d.id and f.url_externa is not null limit 1),
-               (select f.url_externa from fotografias f
-                 join intervenciones iv on iv.id = f.intervencion_id
-                 join incidentes i on i.id = iv.incidente_id
-                 where i.estado in ('reparado','verificado') and i.geom is not null
-                   and f.url_externa is not null
-                   and st_dwithin(i.geom::geography, d.geom::geography, 40)
-                 order by case f.momento when 'despues' then 0 else 1 end
-                 limit 1)
+               rep.url
              ) as foto,
              case
                when exists (select 1 from fotografias f
                             where f.demanda_id = d.id and f.url_externa is not null)
                  then 'reclamo'
-               else 'reparacion'
+               when rep.url is null then null
+               when rep.posterior then 'reparacion_posterior'
+               else 'reparacion_anterior'
              end as foto_momento,
+             rep.metros as foto_metros,
+             rep.cerrado_en as foto_fecha,
              -- Los cuatro pasos del semáforo salen de este case, y el ORDEN de
              -- las ramas es la regla: una reparación posterior al pedido manda
              -- sobre cualquier trabajo en curso (si ya se arregló, se arregló),
@@ -1214,6 +1218,35 @@ export async function geodata(sesion: Sesion) {
                else 'sin_atencion'
              end as brecha
       from demandas d
+      /* La reparación fotografiada más cercana, con su distancia y su fecha:
+         se elige la MÁS CERCANA (no una cualquiera) para que el rótulo pueda
+         decir "a X metros" sin mentir. */
+      left join lateral (
+        select f.url_externa as url,
+               round(st_distance(i.geom::geography, d.geom::geography)::numeric, 0) as metros,
+               i.cerrado_en,
+               /* coalesce obligatorio: la mayoría de las demandas no tiene la
+                  clave sin_fecha, así que la comparación da NULL y un NULL or
+                  false sigue siendo NULL — no false. Sin esto, el orden de
+                  abajo (DESC, que en Postgres pone los NULL primero) elegía
+                  justo las reparaciones anteriores que quería evitar. */
+               coalesce(d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en, false) as posterior
+        from incidentes i
+        join intervenciones iv on iv.incidente_id = i.id
+        join fotografias f on f.intervencion_id = iv.id
+        where i.estado in ('reparado','verificado') and i.geom is not null
+          and f.url_externa is not null
+          and st_dwithin(i.geom::geography, d.geom::geography, 40)
+        /* Primero las POSTERIORES al reclamo y recién después por cercanía:
+           el semáforo marca "posible resuelta" si existe alguna posterior, así
+           que elegir la más cercana a secas podía mostrar una reparación vieja
+           sobre un punto pintado de ámbar — otra vez foto y color diciendo
+           cosas distintas. */
+        order by coalesce(d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en, false) desc,
+                 st_distance(i.geom::geography, d.geom::geography),
+                 case f.momento when 'despues' then 0 else 1 end
+        limit 1
+      ) rep on true
       where d.geom is not null
     `)) as unknown as Array<Record<string, unknown>>;
 
@@ -1267,6 +1300,8 @@ export async function geodata(sesion: Sesion) {
             creado_en: String(f.creado_en),
             foto: (f.foto as string) ?? null,
             foto_momento: (f.foto_momento as string) ?? null,
+            foto_metros: f.foto_metros != null ? Number(f.foto_metros) : null,
+            foto_fecha: f.foto_fecha != null ? String(f.foto_fecha) : null,
           },
         })),
       ),

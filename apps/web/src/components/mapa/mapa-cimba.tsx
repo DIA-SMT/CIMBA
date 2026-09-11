@@ -148,13 +148,42 @@ const KPIS_ESENCIALES: Record<Vista, readonly string[]> = {
 };
 
 /** Qué muestra la foto de cada punto, dicho con todas las letras. */
-const ROTULO_FOTO: Record<string, { texto: string; color: string }> = {
-  despues: { texto: "así quedó después de repararlo", color: "var(--color-hecho)" },
-  antes: { texto: "así estaba antes de repararlo", color: "var(--color-en-cola)" },
-  durante: { texto: "durante el trabajo", color: "var(--color-en-obra)" },
-  reclamo: { texto: "foto que mandó quien reclamó — todavía sin reparar", color: "var(--color-sin-atencion)" },
-  reparacion: { texto: "hay una reparación cerca: así quedó", color: "var(--color-hecho)" },
-};
+/**
+ * Qué muestra la foto, dicho con todas las letras.
+ *
+ * El caso que obligó a escribir esto: un pedido ROJO con la foto de una
+ * reparación cercana decía "así quedó" y contradecía al color. La reparación
+ * era de cinco semanas ANTES del reclamo y estaba a 40 m: no estaba
+ * arreglado — volvió a romperse, o era otro bache de la cuadra. El rótulo
+ * ahora explica el rojo en vez de desmentirlo.
+ */
+function rotuloFoto(
+  momento: string | null | undefined,
+  metros: number | null | undefined,
+  fecha: string | null | undefined,
+): { texto: string; color: string } {
+  const donde = metros != null ? ` a ${metros} m` : "";
+  const cuando = fecha ? ` el ${fechaCorta(fecha)}` : "";
+  switch (momento) {
+    case "despues":
+      return { texto: "así quedó después de repararlo", color: "var(--color-hecho)" };
+    case "antes":
+      return { texto: "así estaba antes de repararlo", color: "var(--color-en-cola)" };
+    case "durante":
+      return { texto: "durante el trabajo", color: "var(--color-en-obra)" };
+    case "reclamo":
+      return { texto: "la mandó quien reclamó — todavía sin reparar", color: "var(--color-sin-atencion)" };
+    case "reparacion_posterior":
+      return { texto: `se reparó${donde}${cuando}, DESPUÉS del reclamo: cotejalo`, color: "var(--color-hecho)" };
+    case "reparacion_anterior":
+      return {
+        texto: `ojo: reparación${donde}${cuando}, ANTES del reclamo — volvió a romperse o es otro bache`,
+        color: "var(--color-en-cola)",
+      };
+    default:
+      return { texto: "foto del lugar", color: "var(--color-texto-3)" };
+  }
+}
 
 const AYUDA_KPI = {
   demandas:
@@ -1523,7 +1552,7 @@ function MapaInterno({
   const [tiempoIdx, setTiempoIdx] = useState(0);
   const [reproduciendo, setReproduciendo] = useState(false);
   // Tooltip al pasar el mouse + acordeón del panel
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[]; foto?: string | null; fotoMomento?: string | null } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[]; foto?: string | null; fotoMomento?: string | null; fotoMetros?: number | null; fotoFecha?: string | null } | null>(null);
   // Acordeón del panel de capas. Las claves quedaron con su nombre histórico
   // aunque los títulos visibles sean otros (demandas → "Lo pedido",
   // incidentes → "Lo hecho"): así no se rompe nada que dependa de ellas.
@@ -3438,6 +3467,8 @@ function MapaInterno({
             lineas,
             foto: (p.foto as string) ?? null,
             fotoMomento: (p.foto_momento as string) ?? null,
+            fotoMetros: p.foto_metros != null ? Number(p.foto_metros) : null,
+            fotoFecha: (p.foto_fecha as string) ?? null,
           });
         }}
         attributionControl={{ compact: true }}
@@ -4514,8 +4545,11 @@ function MapaInterno({
           {tooltip.foto && (
             /* Decir QUÉ se está viendo: una foto del pozo sin arreglar y una
                del arreglo terminado se parecen demasiado para adivinarlo. */
-            <p className="mt-0.5 text-[10px] font-semibold" style={{ color: ROTULO_FOTO[tooltip.fotoMomento ?? ""]?.color ?? "var(--color-texto-3)" }}>
-              {ROTULO_FOTO[tooltip.fotoMomento ?? ""]?.texto ?? "foto del lugar"}
+            <p
+              className="mt-0.5 text-[10px] leading-snug font-semibold"
+              style={{ color: rotuloFoto(tooltip.fotoMomento, tooltip.fotoMetros, tooltip.fotoFecha).color }}
+            >
+              {rotuloFoto(tooltip.fotoMomento, tooltip.fotoMetros, tooltip.fotoFecha).texto}
             </p>
           )}
         </div>
