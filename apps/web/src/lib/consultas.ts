@@ -1159,6 +1159,25 @@ export async function geodata(sesion: Sesion) {
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.creado_en, (d.metadata->>'sin_fecha' = 'true') as sin_fecha,
              st_x(d.geom) as lon, st_y(d.geom) as lat,
+             /**
+              * La foto del pedido, para verla al pasar el mouse. Primero la
+              * que mandó quien reclamó; si no hay, la de una reparación hecha
+              * a menos de 40 m —el mismo radio con el que se marca "posible
+              * resuelta"—, que responde la pregunta que uno se hace mirando un
+              * pedido viejo en el mapa: "¿esto ya está arreglado?".
+              */
+             coalesce(
+               (select f.url_externa from fotografias f
+                 where f.demanda_id = d.id and f.url_externa is not null limit 1),
+               (select f.url_externa from fotografias f
+                 join intervenciones iv on iv.id = f.intervencion_id
+                 join incidentes i on i.id = iv.incidente_id
+                 where i.estado in ('reparado','verificado') and i.geom is not null
+                   and f.url_externa is not null
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                 order by case f.momento when 'despues' then 0 else 1 end
+                 limit 1)
+             ) as foto,
              -- Los cuatro pasos del semáforo salen de este case, y el ORDEN de
              -- las ramas es la regla: una reparación posterior al pedido manda
              -- sobre cualquier trabajo en curso (si ya se arregló, se arregló),
@@ -1233,6 +1252,7 @@ export async function geodata(sesion: Sesion) {
             distrito: f.distrito_id != null ? Number(f.distrito_id) : null,
             sin_fecha: Boolean(f.sin_fecha),
             creado_en: String(f.creado_en),
+            foto: (f.foto as string) ?? null,
           },
         })),
       ),

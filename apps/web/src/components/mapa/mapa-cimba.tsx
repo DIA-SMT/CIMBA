@@ -786,12 +786,19 @@ const capaColectivos = (p: Paleta): LayerProps => ({
  * tiene que aprender una segunda paleta para leer que rojo es lo peor. Los
  * 398 sin dato quedan grises — que es lo honesto: nadie los calificó.
  */
-const capaImbornales = (p: Paleta): LayerProps => ({
+/** Colores de los colectores: 6 troncales, cada uno con su matiz propio. */
+const PALETA_COLECTORES = [
+  "#4f9cf9", "#f2a33c", "#3ec9a7", "#e06fae", "#b18cff", "#6fd1e8",
+] as const;
+
+const capaImbornales = (p: Paleta, porColector: boolean): LayerProps => ({
   id: "imbornales-punto",
   type: "circle",
   source: "imbornales",
   paint: {
-    "circle-color": [
+    "circle-color": porColector
+      ? ["coalesce", ["get", "color_colector"], p.inactivo]
+      : [
       "match",
       ["coalesce", ["get", "estado"], "sin_dato"],
       "colapsado", p.sinAtencion,
@@ -1292,6 +1299,12 @@ function MapaInterno({
   // setStyle porque react-map-gl las re-agrega al nuevo estilo.
   const tema = usarTemaMapa();
   const pal = useMemo(() => paleta(tema), [tema]);
+  /**
+   * Cómo se pinta cada boca: por ESTADO (en qué condición está) o por
+   * COLECTOR (a dónde descarga). Son las dos preguntas distintas que se le
+   * hacen a la red pluvial — "qué hay que arreglar" y "qué cuelga de qué".
+   */
+  const [modoImbornal, setModoImbornal] = useState<"estado" | "colector">("estado");
   const capas = useMemo(
     () => ({
       avenidasNombre: capaAvenidasNombre(pal),
@@ -1313,7 +1326,7 @@ function MapaInterno({
       cuadrantesBorde: capaCuadrantesBorde(pal),
       cuadrantesEtiqueta: capaCuadrantesEtiqueta(pal),
       colectivos: capaColectivos(pal),
-      imbornales: capaImbornales(pal),
+      imbornales: capaImbornales(pal, modoImbornal === "colector"),
       anegamientoHalo: capaAnegamientoHalo(pal),
       anegamiento: capaAnegamiento(pal),
       pulso: capaPulso(pal),
@@ -1329,7 +1342,7 @@ function MapaInterno({
       hexagonos: capaHexagonos(pal),
       calor: capaCalor(pal),
     }),
-    [pal],
+    [pal, modoImbornal],
   );
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
   const [panelCapas, setPanelCapas] = useState(true);
@@ -1789,14 +1802,44 @@ function MapaInterno({
   }, [verRiesgo, riesgoGeo]);
   // En el mapa pluvial los imbornales y el anegamiento SON el contenido: se
   // encienden solos al entrar. En el de bache y asfalto no aparecen nunca.
+  // Y la ficha abierta se cierra al cambiar de mapa: un pedido de bacheo
+  // colgado sobre la red de desagües no tiene sentido.
   useEffect(() => {
+    setSeleccion(null);
+    setCotejo(null);
     if (!enPluvial) return;
     setVerImbornales(true);
     setVerAnegamiento(true);
   }, [enPluvial]);
   useEffect(() => {
     if (!verImbornales || imbornalesGeo) return;
-    fetch("/data/imbornales.json").then((r) => r.json()).then(setImbornalesGeo).catch(() => {});
+    fetch("/data/imbornales.json")
+      .then((r) => r.json() as Promise<FC>)
+      .then((fc) => {
+        /**
+         * El color por colector se precalcula UNA vez, igual que en los
+         * sectores de licitación: MapLibre no puede hashear un texto adentro
+         * de una expresión de pintado.
+         */
+        const colectores = [
+          ...new Set(fc.features.map((f) => String(f.properties?.colector ?? "")).filter(Boolean)),
+        ].sort();
+        setImbornalesGeo({
+          type: "FeatureCollection",
+          features: fc.features.map((f) => {
+            const c = String(f.properties?.colector ?? "");
+            const i = colectores.indexOf(c);
+            return {
+              ...f,
+              properties: {
+                ...f.properties,
+                color_colector: i >= 0 ? (PALETA_COLECTORES[i % PALETA_COLECTORES.length] ?? "#6b7280") : "#6b7280",
+              },
+            };
+          }),
+        });
+      })
+      .catch(() => {});
   }, [verImbornales, imbornalesGeo]);
   useEffect(() => {
     if (!verAnegamiento || anegamientoGeo) return;
@@ -5124,10 +5167,10 @@ function MapaInterno({
                 TERRITORIO / FONDO. Las claves internas del acordeón conservan
                 su nombre histórico (demandas/incidentes/territorio) para no
                 tocar el mecanismo existente — solo se agregó "fondo". */}
-            <Seccion titulo="Lo pedido" resumen={numero(kpis.demandas)}
+            {!enPluvial && <Seccion titulo="Lo pedido" resumen={numero(kpis.demandas)}
               abierta={secciones.demandas ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />
-            {secciones.demandas && (<>
+              alConmutar={() => setSecciones((v) => ({ ...v, demandas: !v.demandas }))} />}
+            {!enPluvial && secciones.demandas && (<>
             <label className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]" title="Los pedidos (reclamos, intimaciones, notas) como puntos sobre el mapa">
               <input type="checkbox" checked={verDemandas} onChange={(e) => setVerDemandas(e.target.checked)} className="accent-[#0066ff]" />
               <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: pal.demanda }} />
@@ -5194,10 +5237,10 @@ function MapaInterno({
             )}
             </>)}
 
-            <Seccion titulo="Lo hecho" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
+            {!enPluvial && <Seccion titulo="Lo hecho" resumen={numero(kpis.abiertos + kpis.enCurso + kpis.resueltos)}
               abierta={secciones.incidentes ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />
-            {secciones.incidentes && (<>
+              alConmutar={() => setSecciones((v) => ({ ...v, incidentes: !v.incidentes }))} />}
+            {!enPluvial && secciones.incidentes && (<>
             {(
               [
                 ["abierto", "Abiertos"],
@@ -5262,6 +5305,76 @@ function MapaInterno({
             </label>
             </>)}
 
+            {/* SISTEMA PLUVIAL: solo en su propio mapa. Es el otro mundo —
+                la red de desagües tiene otro dueño, otro trabajo y otra
+                lectura que el bacheo (Leo, 10/9). */}
+            {enPluvial && (
+              <>
+                <Seccion
+                  titulo="Sistema pluvial"
+                  resumen={imbornalesGeo ? numero(imbornalesGeo.features.length) : undefined}
+                  abierta={secciones.pluvial ?? true}
+                  alConmutar={() => setSecciones((v) => ({ ...v, pluvial: !(v.pluvial ?? true) }))}
+                />
+                {(secciones.pluvial ?? true) && (
+                  <>
+                    <label
+                      className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="Las bocas de tormenta relevadas por la DOV"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verImbornales}
+                        onChange={(e) => setVerImbornales(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.enCola }} />
+                      <span className="min-w-0 flex-1 truncate">Imbornales</span>
+                    </label>
+                    {/* Las dos preguntas que se le hacen a la red: en qué
+                        estado está, y qué cuelga de qué colector. */}
+                    {verImbornales && (
+                      <div className="mb-2 ml-6 flex gap-1">
+                        {([
+                          { v: "estado" as const, t: "Por estado" },
+                          { v: "colector" as const, t: "Por colector" },
+                        ]).map((m) => (
+                          <button
+                            key={m.v}
+                            onClick={() => setModoImbornal(m.v)}
+                            className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
+                              modoImbornal === m.v
+                                ? "border-celeste bg-celeste/15 text-celeste"
+                                : "border-borde-2 text-texto-3 hover:text-texto"
+                            }`}
+                          >
+                            {m.t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <label
+                      className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="Puntos donde el agua se acumula: el halo crece con el tirante que relataron los vecinos. Donde hay anegamiento recurrente la norma manda estudio hidráulico antes que intervención vial."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verAnegamiento}
+                        onChange={(e) => setVerAnegamiento(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
+                      <span className="min-w-0 truncate">Puntos de anegamiento</span>
+                    </label>
+                    <p className="mb-2 text-[10px] leading-snug text-texto-3">
+                      Los canales a cielo abierto y las cuencas todavía no están: hay que pedirle a la DOV
+                      esas capas.
+                    </p>
+                  </>
+                )}
+              </>
+            )}
+
             <Seccion titulo="Territorio" abierta={secciones.territorio ?? false}
               alConmutar={() => setSecciones((v) => ({ ...v, territorio: !v.territorio }))} />
             {secciones.territorio && (<>
@@ -5311,22 +5424,6 @@ function MapaInterno({
               <input type="checkbox" checked={verColectivos} onChange={(e) => setVerColectivos(e.target.checked)} className="accent-[#0066ff]" />
               <span className="inline-block h-0.5 w-4 shrink-0 rounded" style={{ background: pal.colectivo }} />
               <span className="min-w-0 truncate">Recorridos de colectivos</span>
-            </label>
-            <label
-              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Las 1.325 bocas de tormenta relevadas por la DOV, pintadas por su estado: verde leve, ámbar moderado, naranja grave, rojo colapsado (gris: nadie las calificó). Pasá el mouse por una para ver a qué colector descarga."
-            >
-              <input type="checkbox" checked={verImbornales} onChange={(e) => setVerImbornales(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.enCola }} />
-              <span className="min-w-0 truncate">Imbornales (estado)</span>
-            </label>
-            <label
-              className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
-              title="Puntos donde el agua se acumula: el halo crece con el tirante que relataron los vecinos. Donde hay anegamiento recurrente, la norma manda estudio hidráulico antes que intervención vial — bachear ahí es tirar plata."
-            >
-              <input type="checkbox" checked={verAnegamiento} onChange={(e) => setVerAnegamiento(e.target.checked)} className="accent-[#0066ff]" />
-              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
-              <span className="min-w-0 truncate">Puntos de anegamiento</span>
             </label>
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
@@ -5485,9 +5582,9 @@ function MapaInterno({
             </label>
             </>)}
 
-            <Seccion titulo="Tipo de problema" abierta={secciones.tipos ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, tipos: !v.tipos }))} />
-            {secciones.tipos && (
+            {!enPluvial && <Seccion titulo="Tipo de problema" abierta={secciones.tipos ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, tipos: !v.tipos }))} />}
+            {!enPluvial && secciones.tipos && (
             <div className="flex flex-wrap gap-1">
               {(Object.keys(ETIQUETA_TIPO) as Array<keyof typeof ETIQUETA_TIPO>).map((t) => {
                 const activo = tipos[t] !== false;
@@ -5506,9 +5603,9 @@ function MapaInterno({
             </div>
             )}
 
-            <Seccion titulo="Período" resumen={dias ? dias + "d" : "Todo"} abierta={secciones.periodo ?? false}
-              alConmutar={() => setSecciones((v) => ({ ...v, periodo: !v.periodo }))} />
-            {secciones.periodo && (
+            {!enPluvial && <Seccion titulo="Período" resumen={dias ? dias + "d" : "Todo"} abierta={secciones.periodo ?? false}
+              alConmutar={() => setSecciones((v) => ({ ...v, periodo: !v.periodo }))} />}
+            {!enPluvial && secciones.periodo && (
             <div className="flex gap-1">
               {(
                 [
