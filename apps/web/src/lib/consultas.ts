@@ -1145,7 +1145,13 @@ export async function geodata(sesion: Sesion) {
                where iv.incidente_id = i.id and f.url_externa is not null
                order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
                         f.tomada_en desc nulls last
-               limit 1) as foto
+               limit 1) as foto,
+             (select f.momento::text from fotografias f
+               join intervenciones iv on iv.id = f.intervencion_id
+               where iv.incidente_id = i.id and f.url_externa is not null
+               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
+                        f.tomada_en desc nulls last
+               limit 1) as foto_momento
       from incidentes i
     `)) as unknown as Array<Record<string, unknown>>;
 
@@ -1178,6 +1184,12 @@ export async function geodata(sesion: Sesion) {
                  order by case f.momento when 'despues' then 0 else 1 end
                  limit 1)
              ) as foto,
+             case
+               when exists (select 1 from fotografias f
+                            where f.demanda_id = d.id and f.url_externa is not null)
+                 then 'reclamo'
+               else 'reparacion'
+             end as foto_momento,
              -- Los cuatro pasos del semáforo salen de este case, y el ORDEN de
              -- las ramas es la regla: una reparación posterior al pedido manda
              -- sobre cualquier trabajo en curso (si ya se arregló, se arregló),
@@ -1233,6 +1245,7 @@ export async function geodata(sesion: Sesion) {
             detectado_en: String(f.detectado_en),
             cerrado_en: f.cerrado_en != null ? String(f.cerrado_en) : null,
             foto: (f.foto as string) ?? null,
+            foto_momento: (f.foto_momento as string) ?? null,
           },
         })),
       ),
@@ -1253,9 +1266,89 @@ export async function geodata(sesion: Sesion) {
             sin_fecha: Boolean(f.sin_fecha),
             creado_en: String(f.creado_en),
             foto: (f.foto as string) ?? null,
+            foto_momento: (f.foto_momento as string) ?? null,
           },
         })),
       ),
+    };
+  });
+}
+
+// ── El embudo de los pedidos: de dónde sale cada número ──────────────────────
+
+export interface EmbudoDemandas {
+  total: number;
+  /** Ya tienen destino final: vinculadas a un incidente, cerradas o descartadas. */
+  cerradas: number;
+  /** Esperando que alguien las trabaje. */
+  abiertas: number;
+  /** Abiertas que NO tienen punto: no se pueden dibujar ni trabajar. */
+  sinUbicacion: number;
+  /** Abiertas con punto: lo máximo que el mapa puede mostrar. */
+  enElMapa: number;
+  /** De las que están en el mapa, cuántas por cola. */
+  porDestino: { bacheo: number; sat: number; ingenieria: number };
+  /** De las que están en el mapa, cuántas no tiene nadie trabajando. */
+  sinAtencion: number;
+  conFoto: number;
+}
+
+/**
+ * UNA sola cuenta para todas las pantallas.
+ *
+ * El problema que resuelve: /demandas decía "Bacheo 1.876" y el mapa "Bacheo
+ * 1.543" con el mismo rótulo, porque una contaba TODAS las demandas y el otro
+ * solo las abiertas con ubicación. Dos números distintos con el mismo nombre
+ * destruyen la confianza en el tablero entero. Acá se calcula la cadena
+ * completa una vez y las dos pantallas muestran los mismos eslabones.
+ */
+export async function embudoDemandas(sesion: Sesion): Promise<EmbudoDemandas> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      with base as (
+        select d.id, d.estado, d.geom, d.destino,
+               (d.estado in ('recibida','en_validacion')) as abierta,
+               exists (select 1 from fotografias f where f.demanda_id = d.id and f.url_externa is not null) as foto_propia
+        from demandas d
+      )
+      select
+        count(*)::int as total,
+        count(*) filter (where not abierta)::int as cerradas,
+        count(*) filter (where abierta)::int as abiertas,
+        count(*) filter (where abierta and geom is null)::int as sin_ubicacion,
+        count(*) filter (where abierta and geom is not null)::int as en_el_mapa,
+        count(*) filter (where abierta and geom is not null and destino = 'bacheo')::int as bacheo,
+        count(*) filter (where abierta and geom is not null and destino = 'sat')::int as sat,
+        count(*) filter (where abierta and geom is not null and destino = 'ingenieria')::int as ingenieria,
+        count(*) filter (where foto_propia)::int as con_foto
+      from base
+    `)) as unknown as Array<Record<string, unknown>>;
+    const f = filas[0] ?? {};
+
+    // "Sin atención" con el MISMO criterio que pinta el mapa (geodata): no hay
+    // ningún incidente abierto ni reparación a menos de 40 m.
+    const sin = (await tx.execute(sql`
+      select count(*)::int as n from demandas d
+      where d.estado in ('recibida','en_validacion') and d.geom is not null
+        and not exists (
+          select 1 from incidentes i
+          where i.estado in ('detectado','priorizado','programado','en_ejecucion','reparado','verificado')
+            and st_dwithin(i.geom::geography, d.geom::geography, 40))
+    `)) as unknown as Array<{ n: number }>;
+
+    return {
+      total: Number(f.total ?? 0),
+      cerradas: Number(f.cerradas ?? 0),
+      abiertas: Number(f.abiertas ?? 0),
+      sinUbicacion: Number(f.sin_ubicacion ?? 0),
+      enElMapa: Number(f.en_el_mapa ?? 0),
+      porDestino: {
+        bacheo: Number(f.bacheo ?? 0),
+        sat: Number(f.sat ?? 0),
+        ingenieria: Number(f.ingenieria ?? 0),
+      },
+      sinAtencion: Number(sin[0]?.n ?? 0),
+      conFoto: Number(f.con_foto ?? 0),
     };
   });
 }

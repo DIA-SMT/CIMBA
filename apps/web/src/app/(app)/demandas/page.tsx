@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { FUENTES_DEMANDA, ESTADOS_DEMANDA, type FuenteDemanda } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
-import { listarDemandas, resumenDemandas } from "@/lib/consultas";
+import { embudoDemandas, listarDemandas, resumenDemandas } from "@/lib/consultas";
 import { ETIQUETA_ESTADO_DEMANDA, ETIQUETA_FUENTE, fechaCorta, numero } from "@/lib/formato";
 import { GLOSARIO, type ClaveGlosario } from "@/lib/glosario";
 import { CadenaFlujo } from "@/components/cadena-flujo";
+import { EmbudoNumeros } from "@/components/embudo-numeros";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { BusquedaNatural } from "@/components/busqueda-natural";
@@ -30,9 +31,10 @@ export default async function PaginaDemandas({
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
   const pagina = Math.max(1, Number(filtros.pagina ?? 1) || 1);
-  const [{ filas, total }, resumen] = await Promise.all([
+  const [{ filas, total }, resumen, embudo] = await Promise.all([
     listarDemandas(sesion, { ...filtros, pagina, limite: 50 }),
     resumenDemandas(sesion),
+    embudoDemandas(sesion),
   ]);
   const ETIQUETA_CALIDAD: Record<string, string> = {
     geocod_baja: "geocodificación imprecisa",
@@ -57,6 +59,10 @@ export default async function PaginaDemandas({
       />
 
       <CadenaFlujo actual={1} />
+
+      <div className="mb-5">
+        <EmbudoNumeros e={embudo} />
+      </div>
 
       {/* La bandeja en números: cada estado y cada fuente es un filtro de un clic */}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -112,6 +118,11 @@ export default async function PaginaDemandas({
           des-filtra con otro clic. */}
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">¿Quién lo resuelve?</span>
+        {/* Sin esta aclaración, el mismo rótulo daba 1.876 acá y 1.543 en el
+            mapa, y el tablero entero perdía credibilidad. */}
+        <span className="text-[10px] text-texto-3 normal-case">
+          (sobre los {numero(resumen.total)} de la bandeja — el mapa cuenta solo lo abierto y ubicado)
+        </span>
         {DESTINOS.map(([clave, etiqueta, color, ayuda]) => {
           const n = resumen.porDestino[clave] ?? 0;
           if (n === 0) return null;

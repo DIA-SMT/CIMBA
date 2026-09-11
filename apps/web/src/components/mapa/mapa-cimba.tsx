@@ -147,8 +147,18 @@ const KPIS_ESENCIALES: Record<Vista, readonly string[]> = {
   historial: ["resueltos", "m2"],
 };
 
+/** Qué muestra la foto de cada punto, dicho con todas las letras. */
+const ROTULO_FOTO: Record<string, { texto: string; color: string }> = {
+  despues: { texto: "así quedó después de repararlo", color: "var(--color-hecho)" },
+  antes: { texto: "así estaba antes de repararlo", color: "var(--color-en-cola)" },
+  durante: { texto: "durante el trabajo", color: "var(--color-en-obra)" },
+  reclamo: { texto: "foto que mandó quien reclamó — todavía sin reparar", color: "var(--color-sin-atencion)" },
+  reparacion: { texto: "hay una reparación cerca: así quedó", color: "var(--color-hecho)" },
+};
+
 const AYUDA_KPI = {
-  demandas: "Pedidos visibles con la vista y filtros actuales: reclamos de vecinos (AC), pedidos del Concejo, intimaciones SAT, redes y secretarías.",
+  demandas:
+    "Pedidos ABIERTOS y CON UBICACIÓN de las colas que tenés prendidas, con los filtros actuales. NO es el total del sistema: en la bandeja de Demandas hay más, porque ahí se cuentan también los ya vinculados o cerrados y los que no tienen punto. La cadena completa está explicada arriba de esa bandeja.",
   /**
    * Era "Sin vincular", pero ese número salía de un count GLOBAL del servidor
    * sin ningún filtro y convivía con "Demandas", que sí respeta destino, tipo,
@@ -1447,6 +1457,12 @@ function MapaInterno({
   const [verMacro, setVerMacro] = useState<Record<string, boolean>>({ ...VISTAS[vistaInicial].macro });
   const [soloDemandasAbiertas, setSoloDemandasAbiertas] = useState(VISTAS[vistaInicial].demandasAbiertas);
   const [verDemandas, setVerDemandas] = useState(VISTAS[vistaInicial].verDemandas);
+  /**
+   * Filtro por foto: "todos" · solo los que TIENEN foto (se puede ver el
+   * pozo o cómo quedó sin ir al lugar) · solo los que NO tienen (lo que le
+   * falta evidencia al expediente).
+   */
+  const [filtroFoto, setFiltroFoto] = useState<"todos" | "con" | "sin">("todos");
   // La densidad de demanda (ex vista Análisis) es una capa más: arranca
   // apagada salvo pedido explícito (?calor=1) o un link viejo de esa vista.
   const [verCalor, setVerCalor] = useState(inicial?.calor ?? inicial?.vista === "analisis");
@@ -1507,7 +1523,7 @@ function MapaInterno({
   const [tiempoIdx, setTiempoIdx] = useState(0);
   const [reproduciendo, setReproduciendo] = useState(false);
   // Tooltip al pasar el mouse + acordeón del panel
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[]; foto?: string | null } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; lineas: string[]; foto?: string | null; fotoMomento?: string | null } | null>(null);
   // Acordeón del panel de capas. Las claves quedaron con su nombre histórico
   // aunque los títulos visibles sean otros (demandas → "Lo pedido",
   // incidentes → "Lo hecho"): así no se rompe nada que dependa de ellas.
@@ -2201,6 +2217,8 @@ function MapaInterno({
     // falta apagar capa por capa cada una de las que cuelgan de acá.
     if (enPluvial) return { type: "FeatureCollection", features: [] };
     const features = (data?.incidentes.features ?? []).filter((f) => {
+      if (filtroFoto === "con" && !f.properties.foto) return false;
+      if (filtroFoto === "sin" && f.properties.foto) return false;
       if (distritoFoco != null && f.properties.distrito !== distritoFoco) return false;
       if (finMesCursor !== null) {
         // Modo película: solo reparaciones ya concretadas a esa fecha
@@ -2240,7 +2258,7 @@ function MapaInterno({
         }
         return true;
       }),
-    [data, fuentes, tipos, soloDemandasAbiertas, corte, finMesCursor, distritoFoco, enPluvial],
+    [data, fuentes, tipos, soloDemandasAbiertas, corte, finMesCursor, distritoFoco, enPluvial, filtroFoto],
   );
 
   /** El filtro de brecha solo existe dentro de la vista Brecha. */
@@ -2261,6 +2279,8 @@ function MapaInterno({
     if (enPluvial) return { type: "FeatureCollection", features: [] };
     const features = demandasBase.filter((f) => {
       if (destinos[destinoDe(f.properties.destino)] !== true) return false;
+      if (filtroFoto === "con" && !f.properties.foto) return false;
+      if (filtroFoto === "sin" && f.properties.foto) return false;
       if (filtroBrechaActivo && String(f.properties.brecha) !== filtroBrechaActivo) return false;
       return true;
     });
@@ -2279,7 +2299,7 @@ function MapaInterno({
       return { ...f, properties: { ...f.properties, edad_dias: edadDias } };
     });
     return { type: "FeatureCollection", features: conEdad };
-  }, [demandasBase, destinos, filtroBrechaActivo, enPluvial]);
+  }, [demandasBase, destinos, filtroBrechaActivo, enPluvial, filtroFoto]);
 
   /** Cuántos pedidos pendientes hay en cada categoría de brecha, para la
    *  leyenda de esa vista. Respeta el destino prendido (si no, el chip decía
@@ -2407,11 +2427,15 @@ function MapaInterno({
       // Sin esto el balance de abajo y las cifras de deuda por zona seguirían
       // contando el agua y el ripio que los chips acaban de sacar del mapa.
       if (destinos[destinoDe(f.properties.destino)] !== true) return false;
+      // La foto también es filtro de DATOS: si el mapa muestra solo los que
+      // tienen foto, la cifra de abajo tiene que contar lo mismo.
+      if (filtroFoto === "con" && !f.properties.foto) return false;
+      if (filtroFoto === "sin" && f.properties.foto) return false;
       if (corte && Date.parse(String(f.properties.creado_en)) < corte) return false;
       return true;
     });
     return { type: "FeatureCollection", features };
-  }, [data, fuentes, tipos, destinos, corte, distritoFoco]);
+  }, [data, fuentes, tipos, destinos, corte, distritoFoco, filtroFoto]);
 
   /**
    * Coropletas: pinta cada distrito según qué proporción de sus pedidos
@@ -3408,7 +3432,13 @@ function MapaInterno({
           }
           // La foto del bache viaja en el geodata: verla al pasar el mouse
           // evita entrar a la ficha para saber cómo quedó.
-          setTooltip({ x: e.point.x, y: e.point.y, lineas, foto: (p.foto as string) ?? null });
+          setTooltip({
+            x: e.point.x,
+            y: e.point.y,
+            lineas,
+            foto: (p.foto as string) ?? null,
+            fotoMomento: (p.foto_momento as string) ?? null,
+          });
         }}
         attributionControl={{ compact: true }}
       >
@@ -4434,7 +4464,9 @@ function MapaInterno({
           style={{ top: altoHerr > 0 ? altoHerr + 24 : 64 }}
         >
           {verKpi("demandas") && (
-            <Kpi etiqueta="Demandas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
+            /* "Demandas" a secas prometía el total del sistema y mostraba
+               una cola filtrada: el rótulo ahora dice de qué habla. */
+            <Kpi etiqueta="Pedidos en estas colas" valor={kpis.demandas} color="var(--color-texto-2)" ayuda={AYUDA_KPI.demandas} />
           )}
           {/* Pinta con el ROJO del semáforo, no con el amarillo de marca: es
               literalmente el paso "sin atención" de la leyenda de abajo. */}
@@ -4478,6 +4510,13 @@ function MapaInterno({
               referrerPolicy="no-referrer"
               className="mt-1.5 h-28 w-full rounded-md object-cover"
             />
+          )}
+          {tooltip.foto && (
+            /* Decir QUÉ se está viendo: una foto del pozo sin arreglar y una
+               del arreglo terminado se parecen demasiado para adivinarlo. */
+            <p className="mt-0.5 text-[10px] font-semibold" style={{ color: ROTULO_FOTO[tooltip.fotoMomento ?? ""]?.color ?? "var(--color-texto-3)" }}>
+              {ROTULO_FOTO[tooltip.fotoMomento ?? ""]?.texto ?? "foto del lugar"}
+            </p>
           )}
         </div>
       )}
@@ -5581,6 +5620,41 @@ function MapaInterno({
               <span className="min-w-0 truncate">Realce de avenidas</span>
             </label>
             </>)}
+
+            {/* CON O SIN FOTO: "la visibilidad de TODO es importante". Con
+                foto se puede decidir sin ir al lugar; sin foto es lo que al
+                expediente le falta evidencia. */}
+            {!enPluvial && (
+              <>
+                <p className="mt-2 mb-1 text-[10px] font-bold tracking-wider text-texto-3 uppercase">Foto</p>
+                <div className="mb-3 flex gap-1">
+                  {([
+                    { v: "todos" as const, t: "Todos" },
+                    { v: "con" as const, t: "Con foto" },
+                    { v: "sin" as const, t: "Sin foto" },
+                  ]).map((o) => (
+                    <button
+                      key={o.v}
+                      onClick={() => setFiltroFoto(o.v)}
+                      title={
+                        o.v === "con"
+                          ? "Solo los puntos que tienen foto: se puede ver el pozo o cómo quedó sin ir al lugar"
+                          : o.v === "sin"
+                            ? "Solo los que NO tienen foto: son los que quedan sin respaldo visual"
+                            : "Sin filtrar por foto"
+                      }
+                      className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                        filtroFoto === o.v
+                          ? "border-celeste bg-celeste/15 text-celeste"
+                          : "border-borde-2 text-texto-2 hover:text-texto"
+                      }`}
+                    >
+                      {o.t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             {!enPluvial && <Seccion titulo="Tipo de problema" abierta={secciones.tipos ?? false}
               alConmutar={() => setSecciones((v) => ({ ...v, tipos: !v.tipos }))} />}
