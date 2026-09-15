@@ -158,6 +158,8 @@ export interface RegimenEmpresa {
   motivo: string;
   itemsSinCertificar: number;
   m2SinCertificar: number;
+  /** Toneladas de asfalto sin certificar: la unidad con la que se paga. */
+  tnSinCertificar: number;
   ultimaActa: string | null;
   ultimaDesviacion: number | null;
 }
@@ -177,6 +179,11 @@ export async function regimenPorEmpresa(sesion: Sesion): Promise<RegimenEmpresa[
         coalesce((select sum(oi.superficie_m2) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as m2_sin,
+        /* La tonelada es la unidad con la que se firma el acta: volumen
+           (columna generada) por la densidad de la mezcla, 2,4 t/m³. */
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as tn_sin,
         (select max(a.fecha) from actas_medicion a
           where a.empresa_id = e.id and a.estado = 'firmada') as ultima_acta,
         (select min(a.fecha) from actas_medicion a
@@ -214,6 +221,7 @@ export async function regimenPorEmpresa(sesion: Sesion): Promise<RegimenEmpresa[
         motivo,
         itemsSinCertificar: Number(f.sin_certificar ?? 0),
         m2SinCertificar: Number(f.m2_sin ?? 0),
+        tnSinCertificar: Number(f.tn_sin ?? 0),
         ultimaActa: f.ultima_acta != null ? String(f.ultima_acta) : null,
         ultimaDesviacion: desviacion,
       };

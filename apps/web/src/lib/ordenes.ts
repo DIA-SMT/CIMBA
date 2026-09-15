@@ -898,9 +898,25 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
             order by c.nivel, c.nombre`;
 
     const filas = (await tx.execute(consulta)) as unknown as Array<Record<string, unknown>>;
-    return filas
-      .map((f) => ({ id: Number(f.id), etiqueta: String(f.etiqueta), pendientes: Number(f.pendientes ?? 0) }))
-      .filter((o) => o.pendientes > 0);
+    /**
+     * TODOS los ámbitos, tengan o no pendientes. Acá había un
+     * `.filter((o) => o.pendientes > 0)` y escondía la mitad del territorio:
+     * `pendientes` cuenta INCIDENTES, y un incidente solo existe después de
+     * consolidar los reclamos. Con 2.700 reclamos todavía sin consolidar, un
+     * distrito con 35 pedidos reales figuraba en cero y directamente no
+     * aparecía en la lista — el Director elegía un distrito que sabía cargado
+     * de reclamos y el selector se lo negaba, sin decirle por qué.
+     *
+     * Pedido explícito de la Dirección de Bacheo (14/09): que estén los 20
+     * distritos, todos los barrios y todos los circuitos, al menos hasta que
+     * esté la conexión con Atención Ciudadana. Un ámbito en cero es
+     * información —"acá no hay nada cargado"— y no un motivo para ocultarlo.
+     */
+    return filas.map((f) => ({
+      id: Number(f.id),
+      etiqueta: String(f.etiqueta),
+      pendientes: Number(f.pendientes ?? 0),
+    }));
   });
 }
 

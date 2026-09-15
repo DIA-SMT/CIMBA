@@ -36,10 +36,16 @@ const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }
   { valor: "enripiado", etiqueta: "Enripiado" },
 ];
 
+/**
+ * Las mismas tres que la tarjeta del item (ver empresa/orden/[id]/tarjeta-item):
+ * "Extendido" no se elige, lo deriva el servidor de la superficie porque el
+ * protocolo lo define por encima de 4 m². Si estas dos listas divergen, la
+ * misma empresa ve dos criterios distintos para el mismo dato según entre por
+ * la orden o por la carga libre — y la certificación recibe los dos.
+ */
 const OPCIONES_OBRA: Array<{ valor: string; etiqueta: string }> = [
   { valor: "planificado", etiqueta: "Planificado" },
   { valor: "provisorio", etiqueta: "Provisorio (urgencia)" },
-  { valor: "extendido", etiqueta: "Extendido (+4 m²)" },
   { valor: "sobre_adoquin", etiqueta: "Sobre adoquín" },
 ];
 
@@ -66,7 +72,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
   const [tipoObra, setTipoObra] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const [capataz, setCapataz] = useState("");
-  const [ticket, setTicket] = useState("");
 
   const refDespues = useRef<HTMLInputElement>(null);
   const refAntes = useRef<HTMLInputElement>(null);
@@ -166,7 +171,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     if (capataz.trim()) fd.set("capataz", capataz.trim());
-    if (ticket.trim()) fd.set("ticket147", ticket.trim());
     if (empresaId != null) fd.set("empresaId", String(empresaId));
     fd.set("foto", fotoDespues);
     if (fotoAntes) fd.set("fotoAntes", fotoAntes);
@@ -194,7 +198,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         setUbicacion(null);
         setMedida((v) => ({ ...medidaVacia(v.medicion), espesor: v.espesor }));
         setObs("");
-        setTicket("");
         void elegirFoto("despues", undefined, setFotoDespues, setPreviewDespues, previewDespues);
         void elegirFoto("antes", undefined, setFotoAntes, setPreviewAntes, previewAntes);
         router.refresh();
@@ -387,7 +390,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
             <input
@@ -397,16 +400,10 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
               className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
             />
           </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-texto-2">N° de ticket 147</span>
-            <input
-              value={ticket}
-              onChange={(e) => setTicket(e.target.value)}
-              inputMode="numeric"
-              placeholder="si lo tenés"
-              className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:font-sans placeholder:text-texto-3"
-            />
-          </label>
+          {/* El N° de ticket 147 se fue de acá igual que de la tarjeta del
+              item: lo emite Atención Ciudadana, que es el único sistema que los
+              genera. Pedírselo al capataz era pedirle un dato que el sistema ya
+              tiene, con la única garantía de que a veces lo iba a tipear mal. */}
         </div>
 
         <textarea

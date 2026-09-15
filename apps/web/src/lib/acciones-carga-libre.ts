@@ -134,7 +134,16 @@ export async function reportarTrabajoLibre(formData: FormData) {
   // una carpeta no se promedian con baches de 4 m².
   const esObra =
     tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
-  const tipoObra = datos.tipoObra ?? (superficie > 4 ? "extendido" : "planificado");
+  /**
+   * "Extendido" lo deriva el servidor, igual que en reportarItemHecho: el
+   * protocolo lo define por encima de 4 m², así que es consecuencia de la
+   * medida y no opinión de quien carga. Antes ganaba la elección explícita, y
+   * marcar "Planificado" en un trabajo de 6 m² lo certificaba mal teniendo el
+   * sistema el dato para saberlo. Las otras dos modalidades sí son criterio de
+   * quien ejecuta y se respetan tal cual vienen.
+   */
+  const modalidad = datos.tipoObra ?? "planificado";
+  const tipoObra = modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
 
   /**
    * Las fotos van a Storage ANTES de tocar la base, igual que en el reporte
