@@ -28,6 +28,9 @@ interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /** Espeja OpcionAmbito de lib/ordenes.ts: las empresas cuya zona de contrato
+   *  pisa este ámbito, ordenadas por cuánto les toca. */
+  empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
 }
 
 interface ImbornalPend {
@@ -197,10 +200,34 @@ export function FormularioOrden({
       setPendientes(j.pendientes ?? []);
       setImbornales(j.imbornales ?? []);
       setRojas(j.rojas ?? 0);
-      // Si el circuito ya tiene empresa asignada, se propone sola.
-      if (ambito === "circuito") {
-        const c = circuitos.find((x) => x.id === ref);
-        if (c?.empresaId && !empresaId) setEmpresaId(c.empresaId);
+      /**
+       * La empresa se propone sola. El circuito ya lo hacía por su columna
+       * empresa_id; el resto de los ámbitos no tenía cómo — y era justo donde
+       * más falta hacía, porque un distrito se reparte entre varias zonas y
+       * había que acordarse de cuál le toca a cada una.
+       *
+       * Se propone la que MÁS territorio tiene ahí (las empresas vienen
+       * ordenadas por superficie), y solo si todavía no se eligió ninguna: si
+       * el Director ya decidió, no se le pisa la decisión.
+       */
+      if (!empresaId) {
+        if (ambito === "circuito") {
+          const c = circuitos.find((x) => x.id === ref);
+          if (c?.empresaId) setEmpresaId(c.empresaId);
+        } else {
+          const lista =
+            ambito === "distrito"
+              ? distritos
+              : ambito === "barrio"
+                ? barrios
+                : ambito === "corredor"
+                  ? corredores
+                  : ambito === "zona"
+                    ? zonas
+                    : [];
+          const dominante = lista.find((o) => o.id === ref)?.empresas[0];
+          if (dominante?.empresaId) setEmpresaId(dominante.empresaId);
+        }
       }
     } catch (e) {
       if (pedido !== pedidoRef.current) return;
@@ -225,6 +252,43 @@ export function FormularioOrden({
   };
 
   /**
+   * DE QUÉ EMPRESA ES ESTE PEDAZO DE CIUDAD.
+   *
+   * La ciudad está repartida en cuatro zonas fijas del contrato de bacheo
+   * integral, una por empresa, y los ámbitos NO respetan esa división: el
+   * distrito 9 es 66% de CALLERI, 31% de UOCRA y 3% de INGECO-1. El Director
+   * tenía que traducir "distrito 9" a "¿y a quién se lo doy?" de memoria, cada
+   * vez que armaba una orden.
+   *
+   * Ahora cada opción dice de quién es, y al elegirla se propone sola la
+   * empresa que más territorio tiene ahí. Se PROPONE y no se impone: la
+   * decisión sigue siendo suya, y hay empresas que no trabajan por zonas
+   * (Administración cubre toda la ciudad; las de SIGOV van por obra).
+   */
+  const detalleAmbito = (o: OpcionAmbito) =>
+    [
+      `${numero(o.pendientes)} pendientes`,
+      o.empresas.length > 0 ? o.empresas.map((e) => `${e.nombre} ${e.pct}%`).join(", ") : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+  /** Las empresas de la opción elegida, para marcar el paso 4. */
+  const empresasDeLaZona: OpcionAmbito["empresas"] =
+    !circuitoId
+      ? []
+      : ((ambito === "distrito"
+          ? distritos
+          : ambito === "barrio"
+            ? barrios
+            : ambito === "corredor"
+              ? corredores
+              : ambito === "zona"
+                ? zonas
+                : []
+        ).find((o) => o.id === circuitoId)?.empresas ?? []);
+
+  /**
    * Las opciones del ámbito activo. El NOMBRE va en `etiqueta` y los números
    * en `detalle`, separados a propósito: el buscador matchea contra lo que el
    * Director escribe ("sarmiento", "circuito 12"), no contra "— 12 pendientes
@@ -238,13 +302,13 @@ export function FormularioOrden({
           detalle: `${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos`,
         }))
       : ambito === "distrito"
-        ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+        ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
         : ambito === "barrio"
-          ? barrios.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+          ? barrios.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
           : ambito === "corredor"
-            ? corredores.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+            ? corredores.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
             : ambito === "zona"
-              ? zonas.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+              ? zonas.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
             : colectores.map((c) => ({
                 ref: c.colector,
                 etiqueta: c.colector,
@@ -767,6 +831,22 @@ export function FormularioOrden({
       <div className="space-y-4">
         <Panel className="p-5">
           <p className="mb-3 text-sm font-bold">4 · La empresa</p>
+          {/* Qué dice el contrato sobre el pedazo de ciudad ya elegido. No
+              filtra la lista: un distrito se reparte entre varias zonas y a
+              veces hay que darle a una empresa el pedazo que no es "suyo".
+              Informa, que es lo que faltaba. */}
+          {empresasDeLaZona.length > 0 && (
+            <p className="mb-2 rounded-lg border border-celeste/30 bg-celeste/5 px-3 py-2 text-[12px] leading-snug text-texto-2">
+              Por contrato, acá trabaja{empresasDeLaZona.length > 1 ? "n" : ""}{" "}
+              {empresasDeLaZona.map((e, i) => (
+                <span key={e.nombre}>
+                  {i > 0 && ", "}
+                  <b className="text-celeste">{e.nombre}</b> ({e.pct}%)
+                </span>
+              ))}
+              .
+            </p>
+          )}
           <div className="space-y-2">
             {empresas.map((e) => (
               <label
@@ -787,6 +867,13 @@ export function FormularioOrden({
                     className="accent-[#2eb1ff]"
                   />
                   <span className="text-sm font-bold">{e.nombre}</span>
+                  {/* La que el contrato pone en esta zona, marcada. Sin esto el
+                      Director tenía que acordarse de memoria cuál era. */}
+                  {empresasDeLaZona.some((z) => z.empresaId === e.id) && (
+                    <span className="rounded bg-celeste/15 px-1.5 py-0.5 text-[10px] font-bold text-celeste">
+                      LE TOCA
+                    </span>
+                  )}
                   {!e.activa && <span className="text-[10px] text-texto-3">inactiva</span>}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 pl-6 text-[11px] text-texto-2">

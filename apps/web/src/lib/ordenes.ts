@@ -896,6 +896,21 @@ export interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /**
+   * QUÉ EMPRESAS TRABAJAN ACÁ, según las zonas del contrato de bacheo integral.
+   *
+   * Un distrito casi nunca cae entero en una sola zona: el 9 es 66% de
+   * CALLERI, 31% de UOCRA y 3% de INGECO-1. Por eso no es una empresa sino una
+   * lista, ordenada por cuánto del ámbito le toca a cada una, y por eso el
+   * porcentaje viaja: "casi todo tuyo" y "un pedacito tuyo" son decisiones
+   * distintas para quien arma la orden.
+   *
+   * Vacío significa dos cosas distintas y las dos son válidas: el ámbito no
+   * pisa ninguna zona, o la empresa que lo va a hacer no trabaja por zonas
+   * (Administración cubre toda la ciudad; las contratistas de SIGOV van por
+   * obra). Por eso esto NO filtra: informa.
+   */
+  empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
 }
 
 /**
@@ -910,7 +925,16 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
         ? sql`
             select d.id, 'Distrito ' || d.id as etiqueta,
                    (select count(*) from incidentes i where i.distrito_id = d.id
-                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes
+                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom)))
+                                     / nullif(st_area(st_makevalid(d.geom)), 0))
+                      ) order by st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(d.geom, z.geom)
+                        and st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom)))
+                            > 0.05 * st_area(st_makevalid(d.geom))) as empresas
             from distritos d order by d.id`
         : ambito === "zona"
           ? sql`
@@ -918,14 +942,26 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                    z.nombre || coalesce(' · ' || z.empresa, '') as etiqueta,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes
+                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                      'empresaId', z.empresa_id, 'nombre', coalesce(e2.nombre, z.empresa), 'pct', 100
+                    )), '[]'::json) from empresas e2 where e2.id = z.empresa_id) as empresas
             from zonas_bacheo z order by z.nombre`
         : ambito === "barrio"
           ? sql`
             select b.id, b.nombre as etiqueta,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes
+                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
+                                     / nullif(st_area(st_makevalid(b.geom)), 0))
+                      ) order by st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(b.geom, z.geom)
+                        and st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
+                            > 0.05 * st_area(st_makevalid(b.geom))) as empresas
             from barrios b order by b.nombre`
           : sql`
             select c.id,
@@ -933,7 +969,16 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
                         and i.geom is not null
-                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes
+                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_length(st_intersection(c.geom, st_makevalid(z.geom))::geography)
+                                     / nullif(st_length(c.geom::geography), 0))
+                      ) order by st_length(st_intersection(c.geom, st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(c.geom, z.geom)
+                        and st_length(st_intersection(c.geom, st_makevalid(z.geom))::geography)
+                            > 0.05 * st_length(c.geom::geography)) as empresas
             from corredores c
             left join sectores_licitacion s on s.id = c.sector_id
             order by c.nivel, c.nombre`;
@@ -957,6 +1002,30 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
       id: Number(f.id),
       etiqueta: String(f.etiqueta),
       pendientes: Number(f.pendientes ?? 0),
+      /**
+       * Se suman las zonas de una MISMA empresa. INGECO tiene dos por contrato
+       * (Centro-Este y SE), así que el distrito 10 salía diciendo "INGECO S.A.
+       * 55%, INGECO S.A. 45%" — dos veces la misma empresa, como si fueran
+       * rivales repartiéndose el distrito. Para la pregunta que esto contesta
+       * —"¿a quién se lo doy?"— son la misma: INGECO S.A. 100%.
+       */
+      empresas: Object.values(
+        ((f.empresas as Array<{ empresaId: number | null; nombre: string | null; pct: number | null }>) ?? [])
+          .filter((e) => e.nombre)
+          .reduce<Record<string, { empresaId: number | null; nombre: string; pct: number }>>((acc, e) => {
+            const clave = e.empresaId != null ? `id:${e.empresaId}` : `n:${e.nombre}`;
+            const previo = acc[clave];
+            if (previo) previo.pct += Number(e.pct ?? 0);
+            else {
+              acc[clave] = {
+                empresaId: e.empresaId != null ? Number(e.empresaId) : null,
+                nombre: String(e.nombre),
+                pct: Number(e.pct ?? 0),
+              };
+            }
+            return acc;
+          }, {}),
+      ).sort((a, b) => b.pct - a.pct),
     }));
   });
 }
