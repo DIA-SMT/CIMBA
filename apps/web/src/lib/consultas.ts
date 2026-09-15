@@ -1,6 +1,6 @@
 import { conRls, getDb, sql } from "@cimba/db";
 import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain";
-import { ESTADOS_DEMANDA, FUENTES_DEMANDA, TIPOS_INTERVENCION } from "@cimba/domain";
+import { ESTADOS_DEMANDA, FUENTES_DEMANDA, TIPOS_INTERVENCION, grupoSigov, materialSigov } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 
@@ -1299,6 +1299,41 @@ export async function geodata(sesion: Sesion) {
             ? "inactivo"
             : "abierto";
 
+    /**
+     * LAS OBRAS DEL SIGOV COMO CAPA PROPIA.
+     *
+     * "Las obras del SIGOV deberían aparecer más significativas en el mapa
+     * dado que son intervenciones importantes y definitivas. Podría ser una
+     * capa separada o un grupo separado donde esté dividido por hormigón y
+     * asfalto" — Dirección de Bacheo, 12/09.
+     *
+     * Hasta ahora eran un anillo celeste sobre el punto del incidente: se
+     * perdían entre 2.900 puntos de bacheo, cuando son la intervención que de
+     * verdad cambia una calle. Van con su propia geometría (geom_ejecucion,
+     * que las 472 tienen), su estado agrupado y su material.
+     */
+    const obrasSigov = (await tx.execute(sql`
+      select iv.id,
+             st_x(st_centroid(iv.geom_ejecucion)) as lon,
+             st_y(st_centroid(iv.geom_ejecucion)) as lat,
+             iv.superficie_m2, iv.tipo_intervencion::text as tipo_intervencion,
+             iv.metadata->>'estado_sigov' as estado_sigov,
+             iv.metadata->>'licitacion' as licitacion,
+             iv.metadata->>'contratista' as contratista,
+             iv.metadata->>'obra_id' as obra_id,
+             i.direccion
+      from intervenciones iv
+      left join incidentes i on i.id = iv.incidente_id
+      where iv.metadata ? 'estado_sigov'
+        and iv.geom_ejecucion is not null
+        /* Las anuladas no se dibujan: son obras que SIGOV dio de baja y
+           pintarlas de amarillo diría que están planificadas. El flag viene
+           como booleano JSON (true), no como '1' — comparar contra '1' no
+           atrapaba ninguna de las 16 y entraban todas al mapa. */
+        and iv.estado <> 'anulada'
+        and coalesce((iv.metadata->>'cancelada')::boolean, false) = false
+    `)) as unknown as Array<Record<string, unknown>>;
+
     return {
       porFuente: porFuente.map((f) => ({
         fuente: String(f.fuente),
@@ -1306,6 +1341,24 @@ export async function geodata(sesion: Sesion) {
         abiertas: Number(f.abiertas ?? 0),
         sinUbicacion: Number(f.sin_ubicacion ?? 0),
       })),
+      /** Las obras contratadas, en su propia capa: tres estados y dos materiales. */
+      obrasSigov: coleccion(
+        obrasSigov.map((f) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [Number(f.lon), Number(f.lat)] },
+          properties: {
+            id: Number(f.id),
+            obra: (f.obra_id as string) ?? null,
+            grupo: grupoSigov((f.estado_sigov as string) ?? null),
+            estadoSigov: (f.estado_sigov as string) ?? null,
+            material: materialSigov((f.tipo_intervencion as string) ?? null),
+            m2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
+            licitacion: (f.licitacion as string) ?? null,
+            contratista: (f.contratista as string) ?? null,
+            direccion: (f.direccion as string) ?? null,
+          },
+        })),
+      ),
       incidentes: coleccion(
         incidentes.map((f) => ({
           type: "Feature",

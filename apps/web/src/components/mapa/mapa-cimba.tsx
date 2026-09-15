@@ -48,7 +48,7 @@ import {
 } from "react-map-gl/maplibre";
 import type { Feature, FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
-import { dentroDeSMT, type EstadoIncidente, type RolUsuario } from "@cimba/domain";
+import { dentroDeSMT, type EstadoIncidente, type RolUsuario, COLOR_GRUPO_SIGOV, ETIQUETA_GRUPO_SIGOV, ETIQUETA_MATERIAL_SIGOV } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import type { CircuitoResumen, DeudaTerritorial } from "@/lib/ordenes";
 import {
@@ -216,6 +216,9 @@ type FCLinea = FeatureCollection<LineString | MultiLineString, Record<string, un
 interface GeoDatos {
   incidentes: FC;
   demandas: FC;
+  /** Las obras contratadas por SIGOV, en capa propia: tres estados agrupados
+   *  y dos materiales (hormigón / asfalto). Ver lib/consultas.ts. */
+  obrasSigov?: FC;
   /** Universo completo por canal (incluye lo que NO tiene punto y por eso no
    *  puede estar en el geojson): es lo que permite explicar la resta entre el
    *  total del canal y lo que se ve dibujado. */
@@ -835,6 +838,47 @@ const PALETA_COLECTORES = [
   "#4f9cf9", "#f2a33c", "#3ec9a7", "#e06fae", "#b18cff", "#6fd1e8",
 ] as const;
 
+/**
+ * LAS OBRAS DEL SIGOV, COMO CAPA PROPIA.
+ *
+ * "Deberían aparecer más significativas en el mapa dado que son
+ * intervenciones importantes y definitivas" — Dirección de Bacheo, 12/09.
+ * Eran un anillo celeste sobre el punto del incidente y se perdían entre
+ * 2.900 baches; son 472 obras que rehacen la calzada entera.
+ *
+ * Por eso van con círculo grande y borde grueso, y no compiten con el
+ * semáforo del bacheo: el COLOR es el de los tres estados que eligió la
+ * Dirección (amarillo/rojo/verde) y la FORMA separa el material — relleno
+ * para hormigón, anillo hueco para asfalto. Dos variables visuales, dos
+ * preguntas: "¿en qué anda?" y "¿de qué es?".
+ */
+const capaObrasSigov = (p: Paleta): LayerProps => ({
+  id: "sigov-obra",
+  type: "circle",
+  source: "obras-sigov",
+  paint: {
+    // Relleno = hormigón; el asfalto queda hueco (relleno del fondo).
+    "circle-color": [
+      "case",
+      ["==", ["get", "material"], "asfalto"], p.halo,
+      ["match", ["get", "grupo"],
+        "planificada", COLOR_GRUPO_SIGOV.planificada,
+        "en_ejecucion", COLOR_GRUPO_SIGOV.en_ejecucion,
+        COLOR_GRUPO_SIGOV.finalizada],
+    ],
+    "circle-stroke-color": [
+      "match", ["get", "grupo"],
+      "planificada", COLOR_GRUPO_SIGOV.planificada,
+      "en_ejecucion", COLOR_GRUPO_SIGOV.en_ejecucion,
+      COLOR_GRUPO_SIGOV.finalizada,
+    ],
+    // Más grandes que un bache a propósito: son la obra definitiva.
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4.5, 14, 8, 17, 13, 19.5, 18],
+    "circle-stroke-width": 2.5,
+    "circle-opacity": ["case", ["==", ["get", "material"], "asfalto"], 0.85, 0.9],
+  },
+});
+
 const capaImbornales = (p: Paleta, porColector: boolean): LayerProps => ({
   id: "imbornales-punto",
   type: "circle",
@@ -1388,6 +1432,7 @@ function MapaInterno({
       cuadrantesBorde: capaCuadrantesBorde(pal),
       cuadrantesEtiqueta: capaCuadrantesEtiqueta(pal),
       colectivos: capaColectivos(pal),
+      obrasSigov: capaObrasSigov(pal),
       imbornales: capaImbornales(pal, modoImbornal === "colector"),
       anegamientoHalo: capaAnegamientoHalo(pal),
       anegamiento: capaAnegamiento(pal),
@@ -1838,6 +1883,9 @@ function MapaInterno({
   // La red hidráulica del relevamiento de la DOV: los imbornales hablan el
   // mismo semáforo que el resto (leve→colapsado) y los puntos de anegamiento
   // son la evidencia de "acá el problema no es el asfalto, es el agua".
+  /** Las obras contratadas, en su propia capa. Prendida por defecto: son la
+    *  intervención definitiva y la Dirección las quiere ver. */
+  const [verSigov, setVerSigov] = useState(true);
   const [verImbornales, setVerImbornales] = useState(false);
   const [imbornalesGeo, setImbornalesGeo] = useState<FC | null>(null);
   const [verAnegamiento, setVerAnegamiento] = useState(false);
@@ -3676,6 +3724,14 @@ function MapaInterno({
                 "circle-stroke-color": pal.tinta,
               }}
             />
+          </Source>
+        )}
+        {/* Las obras contratadas van DESPUÉS de los puntos de bacheo para
+            quedar encima: son la intervención definitiva y el pedido fue que
+            "aparezcan más significativas en el mapa". */}
+        {verSigov && data?.obrasSigov && (
+          <Source id="obras-sigov" type="geojson" data={data.obrasSigov}>
+            <Layer {...capas.obrasSigov} />
           </Source>
         )}
         {verImbornales && imbornalesGeo && (
@@ -5646,6 +5702,67 @@ function MapaInterno({
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-celeste" /> anillo celeste = obra SIGOV
               (procedencia, no estado)
             </p>
+
+            {/**
+              * LAS OBRAS DEL SIGOV, EN SU PROPIA CAPA.
+              *
+              * "Deberían aparecer más significativas en el mapa dado que son
+              * intervenciones importantes y definitivas" (12/09). Eran solo el
+              * anillo celeste de arriba —procedencia sobre el punto del
+              * bache— y se perdían entre 2.900 puntos. Son 472 obras que
+              * rehacen la calzada entera.
+              *
+              * El color dice en qué anda (los tres grupos que agrupó la
+              * Dirección) y la forma de qué es: relleno hormigón, hueco
+              * asfalto. Dos variables, dos preguntas.
+              */}
+            <label
+              className="mt-2 mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Las obras contratadas por SIGOV, en capa propia: rehacen la calzada entera"
+            >
+              <input
+                type="checkbox"
+                checked={verSigov}
+                onChange={(e) => setVerSigov(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span
+                className="inline-block h-3 w-3 shrink-0 rounded-full border-2"
+                style={{ background: COLOR_GRUPO_SIGOV.finalizada, borderColor: COLOR_GRUPO_SIGOV.finalizada }}
+              />
+              <span className="min-w-0 flex-1 truncate font-semibold">Obras SIGOV</span>
+            </label>
+            {verSigov && (
+              <div className="mb-2 ml-6 space-y-1 text-[10px] text-texto-3">
+                <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  {(["planificada", "en_ejecucion", "finalizada"] as const).map((g) => (
+                    <span key={g} className="flex items-center gap-1">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-full"
+                        style={{ background: COLOR_GRUPO_SIGOV[g] }}
+                      />
+                      {ETIQUETA_GRUPO_SIGOV[g]}
+                    </span>
+                  ))}
+                </p>
+                <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: pal.inactivo }}
+                    />
+                    {ETIQUETA_MATERIAL_SIGOV.hormigon}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full border-2"
+                      style={{ background: "transparent", borderColor: pal.inactivo }}
+                    />
+                    {ETIQUETA_MATERIAL_SIGOV.asfalto}
+                  </span>
+                </p>
+              </div>
+            )}
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
