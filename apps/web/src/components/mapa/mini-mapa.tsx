@@ -119,6 +119,10 @@ export function MiniMapa({
   lon,
   etiqueta,
   alMover,
+  latHasta,
+  lonHasta,
+  etiquetaHasta,
+  alMoverHasta,
   alto = 260,
   conTerreno = false,
 }: {
@@ -127,6 +131,21 @@ export function MiniMapa({
   etiqueta?: string | null;
   /** Si viene, el pin es arrastrable (y un click lo mueve): modo "afinar el punto". */
   alMover?: (punto: { lat: number; lon: number }) => void;
+  /**
+   * EL SEGUNDO EXTREMO DE UN TRAMO. "Avda. Siria del 1000 al 1900" son dos
+   * puntos y una línea, y el mapa dibujaba solo el primero: el Director
+   * cargaba las dos alturas, el sistema resolvía las dos, y en pantalla veía
+   * un pin suelto — "no se ve la línea cuando marcás entre 2 alturas ni se
+   * marcan los dos puntos" (12/09).
+   *
+   * Con esto el tramo se ve como lo que es, y los dos extremos se afinan a
+   * mano igual que el punto simple: el geocodificador le pifia media cuadra
+   * seguido, y en un tramo eso se nota el doble.
+   */
+  latHasta?: number | null;
+  lonHasta?: number | null;
+  etiquetaHasta?: string | null;
+  alMoverHasta?: (punto: { lat: number; lon: number }) => void;
   alto?: number;
   /**
    * Abre con imagen satelital y la red vial encima. Es lo que pidió Leo para
@@ -152,6 +171,50 @@ export function MiniMapa({
     mapRef.current?.getMap()?.easeTo({ center: [lon, lat], duration: 350 });
   }, [lat, lon]);
 
+  // El segundo extremo vive en su propio estado, con la misma mecánica que el
+  // primero: arrastre local + eco al padre.
+  const hayTramo = latHasta != null && lonHasta != null;
+  const [hasta, setHasta] = useState(() => ({ lat: latHasta ?? 0, lon: lonHasta ?? 0 }));
+  const hastaRef = useRef({ lat: latHasta ?? 0, lon: lonHasta ?? 0 });
+  useEffect(() => {
+    if (latHasta == null || lonHasta == null) return;
+    if (hastaRef.current.lat === latHasta && hastaRef.current.lon === lonHasta) return;
+    hastaRef.current = { lat: latHasta, lon: lonHasta };
+    setHasta({ lat: latHasta, lon: lonHasta });
+  }, [latHasta, lonHasta]);
+
+  /**
+   * Con dos extremos el encuadre tiene que mostrar los DOS: centrar en el
+   * primero dejaba el otro a 1.100 px fuera de pantalla, que es justo el caso
+   * para el que existe el tramo.
+   *
+   * Depende de las PROPS y no del estado local a propósito: si mirara
+   * `hasta`, cada arrastre del pin re-encuadraría el mapa debajo del dedo.
+   * Y el encuadre inicial va en initialViewState —no acá— porque en el primer
+   * render el mapa todavía no está montado y fitBounds no tenía a quién
+   * hablarle: la línea salía dibujada y el segundo pin no se veía.
+   */
+  const bordes = (): [[number, number], [number, number]] | null =>
+    latHasta == null || lonHasta == null
+      ? null
+      : [
+          [Math.min(lon, lonHasta), Math.min(lat, latHasta)],
+          [Math.max(lon, lonHasta), Math.max(lat, latHasta)],
+        ];
+  useEffect(() => {
+    const b = bordes();
+    const mapa = mapRef.current?.getMap();
+    if (!b || !mapa) return;
+    mapa.fitBounds(b, { padding: 48, maxZoom: 17, duration: 350 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lon, latHasta, lonHasta]);
+
+  const moverHasta = (nLat: number, nLon: number) => {
+    hastaRef.current = { lat: nLat, lon: nLon };
+    setHasta({ lat: nLat, lon: nLon });
+    alMoverHasta?.({ lat: nLat, lon: nLon });
+  };
+
   const mover = (nLat: number, nLon: number) => {
     puntoRef.current = { lat: nLat, lon: nLon };
     setPunto({ lat: nLat, lon: nLon });
@@ -163,13 +226,69 @@ export function MiniMapa({
       <div className="overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
         <MapaGL
           ref={mapRef}
-          initialViewState={{ longitude: lon, latitude: lat, zoom: 16 }}
+          initialViewState={
+            hayTramo && latHasta != null && lonHasta != null
+              ? {
+                  bounds: [
+                    [Math.min(lon, lonHasta), Math.min(lat, latHasta)],
+                    [Math.max(lon, lonHasta), Math.max(lat, latHasta)],
+                  ],
+                  fitBoundsOptions: { padding: 48, maxZoom: 17 },
+                }
+              : { longitude: lon, latitude: lat, zoom: 16 }
+          }
           mapStyle={estiloMapa(tema)}
           attributionControl={false}
           onClick={alMover ? (e) => mover(e.lngLat.lat, e.lngLat.lng) : undefined}
         >
           <NavigationControl position="bottom-right" showCompass={false} />
           {conTerreno && <CapasTerreno />}
+          {/* La línea del tramo, debajo de los dos pines. */}
+          {hayTramo && (
+            <Source
+              id="tramo-mini"
+              type="geojson"
+              data={{
+                type: "Feature",
+                properties: {},
+                geometry: {
+                  type: "LineString",
+                  coordinates: [
+                    [punto.lon, punto.lat],
+                    [hasta.lon, hasta.lat],
+                  ],
+                },
+              }}
+            >
+              <Layer
+                id="tramo-mini-linea"
+                type="line"
+                layout={{ "line-cap": "round" }}
+                paint={{ "line-color": "#0066ff", "line-width": 5, "line-opacity": 0.75 }}
+              />
+            </Source>
+          )}
+          {hayTramo && (
+            <Marker
+              longitude={hasta.lon}
+              latitude={hasta.lat}
+              anchor={alMoverHasta ? "bottom" : "center"}
+              draggable={Boolean(alMoverHasta)}
+              onDragEnd={alMoverHasta ? (e) => moverHasta(e.lngLat.lat, e.lngLat.lng) : undefined}
+            >
+              <span
+                onClick={(ev) => ev.stopPropagation()}
+                title={etiquetaHasta ?? undefined}
+              >
+                <MapPin
+                  size={30}
+                  className={alMoverHasta ? "cursor-grab drop-shadow active:cursor-grabbing" : "drop-shadow"}
+                  style={{ color: tema === "oscuro" ? "#f4dc00" : "#ffffff" }}
+                  fill="#0066ff"
+                />
+              </span>
+            </Marker>
+          )}
           <Marker
             longitude={punto.lon}
             latitude={punto.lat}
@@ -204,7 +323,15 @@ export function MiniMapa({
       {alMover && (
         <p className="num mt-1.5 text-[11px] text-texto-3">
           {punto.lat.toFixed(6)}, {punto.lon.toFixed(6)}
-          <span className="ml-2 font-sans text-texto-2">— arrastrá el pin hasta el lugar exacto</span>
+          {hayTramo && (
+            <>
+              {" → "}
+              {hasta.lat.toFixed(6)}, {hasta.lon.toFixed(6)}
+            </>
+          )}
+          <span className="ml-2 font-sans text-texto-2">
+            — arrastrá {hayTramo ? "los pines" : "el pin"} hasta el lugar exacto
+          </span>
         </p>
       )}
     </div>

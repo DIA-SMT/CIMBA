@@ -944,6 +944,9 @@ export interface OpcionAmbito {
    * obra). Por eso esto NO filtra: informa.
    */
   empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
+  /** Solo corredores: jerarquía vial (1 = troncal) e índice de priorización. */
+  nivel?: number | null;
+  ipi?: number | null;
 }
 
 /**
@@ -997,8 +1000,14 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                             > 0.05 * st_area(st_makevalid(b.geom))) as empresas
             from barrios b order by b.nombre`
           : sql`
+            /* Los MISMOS corredores que lista el IPI, y con sus datos: el
+               Director pidió "que aparezcan todos los del filtro del IPI"
+               para poder dar tramos de guía a recorrer. El nivel y el índice
+               son lo que le permite elegir cuál: sin eso son 149 nombres de
+               calle en una lista. */
             select c.id,
                    c.nombre || coalesce(' · ' || s.sector, '') as etiqueta,
+                   c.nivel, c.ipi,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
                         and i.geom is not null
@@ -1035,6 +1044,8 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
       id: Number(f.id),
       etiqueta: String(f.etiqueta),
       pendientes: Number(f.pendientes ?? 0),
+      nivel: f.nivel != null ? Number(f.nivel) : null,
+      ipi: f.ipi != null ? Number(f.ipi) : null,
       /**
        * Se suman las zonas de una MISMA empresa. INGECO tiene dos por contrato
        * (Centro-Este y SE), así que el distrito 10 salía diciendo "INGECO S.A.

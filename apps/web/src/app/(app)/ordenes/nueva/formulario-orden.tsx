@@ -33,6 +33,9 @@ interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /** Solo corredores: jerarquía vial (1 = troncal) e índice de priorización. */
+  nivel?: number | null;
+  ipi?: number | null;
   /** Espeja OpcionAmbito de lib/ordenes.ts: las empresas cuya zona de contrato
    *  pisa este ámbito, ordenadas por cuánto les toca. */
   empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
@@ -295,6 +298,9 @@ export function FormularioOrden({
   const detalleAmbito = (o: OpcionAmbito) =>
     [
       `${numero(o.pendientes)} pendientes`,
+      // Corredores: los mismos datos con los que se los mira en el IPI.
+      o.nivel != null ? `nivel ${o.nivel}` : null,
+      o.ipi != null ? `IPI ${o.ipi.toFixed(1)}` : null,
       o.empresas.length > 0 ? o.empresas.map((e) => `${e.nombre} ${e.pct}%`).join(", ") : null,
     ]
       .filter(Boolean)
@@ -470,7 +476,14 @@ export function FormularioOrden({
           imbornalIds: ambito === "colector" ? [...seleccion] : [],
           tramos: tramosValidos.map((t) => ({
             direccion: t.direccion.trim(),
-            tipoTrabajo: t.tipoTrabajo,
+            /**
+             * Un tramo con dos alturas ES un tramo, diga lo que diga el
+             * selector. Se guardaban con tipo_trabajo='bache' —el valor con el
+             * que nace la fila— y quedaban en la base como si fueran un pozo
+             * puntual: "Avda. Siria del 1000 al 1900" contaba como un bache.
+             */
+            tipoTrabajo:
+              t.alturaDesde && t.alturaHasta ? "tramo" : t.recorrido ? "tramo" : t.tipoTrabajo,
             lat: t.lat,
             lon: t.lon,
             latHasta: t.latHasta,
@@ -860,15 +873,30 @@ export function FormularioOrden({
                   <div className="w-full">
                     <span className="text-[11px]" style={{ color: "#199e70" }}>
                       ✓ {t.resuelta ?? "ubicado"}
+                      {t.latHasta != null && t.lonHasta != null && (
+                        <> → {t.resueltaHasta ?? "segundo extremo"}</>
+                      )}
                     </span>
                     {/* El geocodificador le pifia media cuadra seguido: el pin se
                         afina a mano y ese lat/lon ajustado es el que viaja en
-                        crearOrden (actualizarTramo pisa t.lat/t.lon). */}
+                        crearOrden (actualizarTramo pisa t.lat/t.lon).
+
+                        Con dos alturas van los DOS extremos y la línea entre
+                        ellos: antes el mapa dibujaba solo el primero, así que
+                        un tramo de nueve cuadras se veía igual que un bache
+                        suelto y no había forma de comprobar que el sistema
+                        hubiera entendido de dónde a dónde. */}
                     <div className="mt-1.5">
                       <MiniMapa
                         lat={t.lat}
                         lon={t.lon}
                         etiqueta={t.resuelta ?? t.direccion}
+                        latHasta={t.latHasta}
+                        lonHasta={t.lonHasta}
+                        etiquetaHasta={t.resueltaHasta ?? null}
+                        alMoverHasta={({ lat, lon }) =>
+                          actualizarTramo(i, { latHasta: lat, lonHasta: lon })
+                        }
                         alto={220}
                         alMover={({ lat, lon }) => actualizarTramo(i, { lat, lon })}
                       />
