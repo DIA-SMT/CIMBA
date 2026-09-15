@@ -64,6 +64,20 @@ export const COLOR_PRIORIDAD: Record<PrioridadVial, string> = {
   terciaria: "var(--color-texto-2)",
 };
 
+/**
+ * Cómo se llama cada forma de delimitar el trabajo. Una sola fuente para la
+ * hoja impresa, la cabecera de la orden y el formulario: si divergen, el papel
+ * que firma la empresa dice una cosa y la pantalla otra.
+ */
+export const ETIQUETA_AMBITO: Record<string, string> = {
+  circuito: "Circuito",
+  distrito: "Distrito",
+  barrio: "Barrio",
+  corredor: "Corredor",
+  zona: "Zona",
+  colector: "Colector",
+};
+
 export const ETIQUETA_TIPO_TRABAJO: Record<string, string> = {
   bache: "Bache",
   carpeta: "Carpeta",

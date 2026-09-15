@@ -369,6 +369,17 @@ export interface ItemOrden {
 
 export interface OrdenDetalle extends OrdenResumen {
   circuitoId: number | null;
+  /**
+   * POR DÓNDE SE DEFINIÓ la orden: lo que el Director eligió en el paso "2 ·
+   * Por dónde se define". La hoja impresa decía siempre "Circuito: —" porque
+   * solo miraba `circuitoCodigo`, y una orden armada por distrito o por barrio
+   * —que son la mayoría— salía a la calle sin decir de qué distrito era. El
+   * capataz recibía un papel con siete direcciones y ninguna referencia de
+   * zona.
+   */
+  ambito: AmbitoOrden;
+  /** El nombre del ámbito elegido: "12", "Néstor Kirchner", "C-14"… */
+  ambitoNombre: string | null;
   indicaciones: string | null;
   /** N° de contrato o decreto que respalda la orden (va en la hoja impresa). */
   contratoDecreto: string | null;
@@ -384,10 +395,16 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
   const empresaEjecutora = await empresaDelEjecutor(sesion);
   return conRls(claims(sesion), async (tx) => {
     const cab = (await tx.execute(sql`
-      select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo
+      select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo,
+             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
+      -- Para que la hoja impresa pueda decir de qué distrito/barrio/corredor
+      -- es la orden y no un "Circuito: —" que no informa nada.
+      left join barrios b on b.id = ot.barrio_id
+      left join corredores co on co.id = ot.corredor_id
+      left join zonas_bacheo z on z.id = ot.zona_id
       where ot.id = ${id}
         ${
           empresaEjecutora != null
@@ -486,6 +503,30 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       empresaNombre: String(o.empresa_nombre),
       circuitoId: o.circuito_id != null ? Number(o.circuito_id) : null,
       circuitoCodigo: (o.circuito_codigo as string) ?? null,
+      ambito: ((o.ambito as AmbitoOrden) ?? "circuito"),
+      /**
+       * El nombre según el ámbito, resuelto acá y no en la pantalla: la hoja
+       * impresa y la cabecera tienen que decir lo mismo, y si cada una lo
+       * arma por su cuenta terminan divergiendo. El distrito no tiene tabla de
+       * nombres —son 20 numerados— así que su "nombre" es el número.
+       */
+      ambitoNombre:
+        ((): string | null => {
+          switch ((o.ambito as AmbitoOrden) ?? "circuito") {
+            case "distrito":
+              return o.distrito_id != null ? String(o.distrito_id) : null;
+            case "barrio":
+              return (o.barrio_nombre as string) ?? null;
+            case "corredor":
+              return (o.corredor_nombre as string) ?? null;
+            case "zona":
+              return (o.zona_nombre as string) ?? null;
+            case "colector":
+              return (o.colector as string) ?? null;
+            default:
+              return (o.circuito_codigo as string) ?? null;
+          }
+        })(),
       indicaciones: (o.indicaciones as string) ?? null,
       // La cabecera selecciona ot.*: la columna ya viene, solo faltaba mapearla.
       contratoDecreto: (o.contrato_decreto as string) ?? null,

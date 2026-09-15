@@ -19,6 +19,7 @@ import {
   COLOR_ESTADO_ORDEN,
   fondoTenue,
   COLOR_PRIORIDAD,
+  ETIQUETA_AMBITO,
   ETIQUETA_ESTADO_ITEM,
   ETIQUETA_ESTADO_ORDEN,
   ETIQUETA_PRIORIDAD,
@@ -142,9 +143,10 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <span className="text-xs font-semibold" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
                 Prioridad {ETIQUETA_PRIORIDAD[o.prioridad].toLowerCase()}
               </span>
-              {o.circuitoCodigo && (
+              {/* Mismo dato que la hoja impresa, misma fuente. */}
+              {o.ambitoNombre && (
                 <span className="rounded-md border border-borde-2 px-2 py-0.5 text-xs font-semibold">
-                  Circuito {o.circuitoCodigo}
+                  {ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"} {o.ambitoNombre}
                 </span>
               )}
             </div>
@@ -321,8 +323,14 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <td style={{ width: "34%" }}>
                 <b>Empresa:</b> {o.empresaNombre}
               </td>
+              {/* Por dónde se definió la orden. Antes decía siempre "Circuito"
+                  y leía solo circuitoCodigo: una orden armada por distrito
+                  —que es el caso más común— salía impresa como "Circuito: —" y
+                  el capataz recibía siete direcciones sin ninguna referencia de
+                  zona. Ahora dice lo que se eligió en "2 · Por dónde se
+                  define": "Distrito: 12", "Barrio: Néstor Kirchner"… */}
               <td style={{ width: "22%" }}>
-                <b>Circuito:</b> {o.circuitoCodigo ?? "—"}
+                <b>{ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"}:</b> {o.ambitoNombre ?? "—"}
               </td>
               <td style={{ width: "22%" }}>
                 <b>Emitida:</b> {fechaCorta(o.emitidaEn)}
