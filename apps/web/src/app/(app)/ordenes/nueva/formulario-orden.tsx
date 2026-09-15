@@ -3,7 +3,12 @@
 import { LocateFixed, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import { PRIORIDADES_VIALES, type FuenteDemanda, type PrioridadVial } from "@cimba/domain";
+import {
+  EMPRESAS_HABILITADAS_AGUA,
+  PRIORIDADES_VIALES,
+  type FuenteDemanda,
+  type PrioridadVial,
+} from "@cimba/domain";
 import { crearOrden } from "@/lib/acciones-ordenes";
 import { proyectar, type ParametrosCapacidad } from "@/lib/capacidad";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
@@ -45,7 +50,15 @@ interface ImbornalPend {
   enOrden: boolean;
 }
 
-type TipoOrden = "bacheo" | "pano_hormigon" | "carpeta" | "cordon_cuneta" | "imbornales" | "tapas" | "ripio";
+type TipoOrden =
+  | "bacheo"
+  | "pano_hormigon"
+  | "carpeta"
+  | "cordon_cuneta"
+  | "imbornales"
+  | "tapas"
+  | "ripio"
+  | "perdida_agua";
 // Espeja AmbitoOrden de lib/ordenes.ts: si se agrega uno allá, va también acá.
 type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
 
@@ -58,6 +71,13 @@ const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> =
   { valor: "imbornales", etiqueta: "Imbornales", desc: "Limpieza y reparación de bocas de tormenta" },
   { valor: "tapas", etiqueta: "Tapas", desc: "Reposición o reparación de tapas de cámara" },
   { valor: "ripio", etiqueta: "Ripio", desc: "Pasado de máquina y enripiado" },
+  /**
+   * Es de la SAT, pero el municipio la ejecuta cuando no puede esperar — y
+   * solo con UOCRA e INGECO, las únicas habilitadas por contrato. La misma
+   * orden sirve de relevamiento con foto para la nota a la SAT cuando no se
+   * puede resolver en el momento.
+   */
+  { valor: "perdida_agua", etiqueta: "Pérdida de agua", desc: "Ejecución o relevamiento — solo UOCRA e INGECO" },
 ];
 
 /**
@@ -152,6 +172,8 @@ export function FormularioOrden({
   // Pedidos ROJOS limpios del circuito que todavía no son incidentes: el
   // botón de relevar los convierte en cola de un paso.
   const [rojas, setRojas] = useState(0);
+  /** Lo que hay en la zona y no entra en ESTA orden, por tipo. Se dice, no se esconde. */
+  const [fueraDeAlcance, setFueraDeAlcance] = useState<Array<{ tipo: string; n: number }>>([]);
   const [relevando, setRelevando] = useState(false);
   const [avisoRelevar, setAvisoRelevar] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -184,22 +206,27 @@ export function FormularioOrden({
     setImbornales([]);
     setErrorCarga(null);
     setRojas(0);
+    setFueraDeAlcance([]);
     setAvisoRelevar(null);
     if (!ref) return;
     const pedido = ++pedidoRef.current;
     setCargando(true);
     try {
-      const r = await fetch(`/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}`);
+      const r = await fetch(
+        `/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}&tipo=${tipo}`,
+      );
       if (!r.ok) throw new Error("No se pudo cargar lo pendiente de esa zona");
       const j = (await r.json()) as {
         pendientes?: PendienteCircuito[];
         imbornales?: ImbornalPend[];
         rojas?: number;
+        fueraDeAlcance?: Array<{ tipo: string; n: number }>;
       };
       if (pedido !== pedidoRef.current) return;
       setPendientes(j.pendientes ?? []);
       setImbornales(j.imbornales ?? []);
       setRojas(j.rojas ?? 0);
+      setFueraDeAlcance(j.fueraDeAlcance ?? []);
       /**
        * La empresa se propone sola. El circuito ya lo hacía por su columna
        * empresa_id; el resto de los ámbitos no tenía cómo — y era justo donde
@@ -314,6 +341,14 @@ export function FormularioOrden({
                 etiqueta: c.colector,
                 detalle: `${numero(c.total)} bocas · ${numero(c.malos)} en mal estado`,
               }));
+
+  /**
+   * "Solo podemos resolver pérdidas de agua con la UOCRA e INGECO" (12/09). Es
+   * una restricción del contrato, no una preferencia: las demás contratistas
+   * no están habilitadas para tocar la red de agua, así que ni se ofrecen.
+   */
+  const empresaHabilitada = (slug: string) =>
+    tipo !== "perdida_agua" || (EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(slug);
 
   const alternarSeleccion = (id: number) => {
     setSeleccion((s) => {
@@ -559,6 +594,36 @@ export function FormularioOrden({
               Elegí arriba por dónde se define la orden y acá aparece lo pendiente para elegir.
             </p>
           </Panel>
+        )}
+
+        {/**
+          * LO QUE HAY ACÁ Y NO ENTRA EN ESTA ORDEN.
+          *
+          * Filtrar sin avisar habría cambiado un problema por otro peor: antes
+          * las pérdidas de agua aparecían listas para mandárselas a quien no
+          * puede resolverlas; escondidas, el Director no sabría que están. Se
+          * cuentan, se nombran, y si son de agua se ofrece el atajo de armar la
+          * orden que sí corresponde.
+          */}
+        {circuitoId > 0 && fueraDeAlcance.length > 0 && (
+          <div className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-4 py-3 text-[13px] leading-snug">
+            <b className="text-amarillo">Acá hay {numero(fueraDeAlcance.reduce((a, f) => a + f.n, 0))} pedidos que no entran en esta orden:</b>{" "}
+            <span className="text-texto-2">
+              {fueraDeAlcance
+                .map((f) => `${numero(f.n)} ${ETIQUETA_TIPO[f.tipo as keyof typeof ETIQUETA_TIPO] ?? f.tipo}`)
+                .join(", ")}
+              . No son de Bacheo: van a la SAT o a Ingeniería por nota.
+            </span>
+            {tipo !== "perdida_agua" &&
+              fueraDeAlcance.some((f) => f.tipo === "perdida_agua" || f.tipo === "perdida_cloacal") && (
+                <button
+                  onClick={() => cambiarTipo("perdida_agua")}
+                  className="ml-1 font-semibold text-celeste underline"
+                >
+                  Armar la orden de pérdida de agua
+                </button>
+              )}
+          </div>
         )}
 
         {circuitoId > 0 && (
@@ -848,7 +913,14 @@ export function FormularioOrden({
             </p>
           )}
           <div className="space-y-2">
-            {empresas.map((e) => (
+            {tipo === "perdida_agua" && (
+              <p className="mb-2 rounded-lg border border-amarillo/40 bg-amarillo/5 px-3 py-2 text-[12px] leading-snug text-texto-2">
+                La red de agua es de la SAT: por contrato solo la pueden tocar{" "}
+                <b className="text-amarillo">UOCRA</b> e <b className="text-amarillo">INGECO</b>. Si acá no
+                se puede resolver, la orden sirve igual como relevamiento con foto para la nota a la SAT.
+              </p>
+            )}
+            {empresas.filter((e) => empresaHabilitada(e.slug)).map((e) => (
               <label
                 key={e.id}
                 className={`block cursor-pointer rounded-xl border p-3 transition ${

@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
-import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
+import { EMPRESAS_HABILITADAS_AGUA, prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
@@ -65,7 +65,9 @@ export async function crearOrden(entrada: {
   const datos = z
     .object({
       empresaId: z.number().int().positive(),
-      tipo: z.enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio"]).default("bacheo"),
+      tipo: z
+        .enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio","perdida_agua"])
+        .default("bacheo"),
       ambito: z.enum(["distrito","circuito","corredor","barrio","colector","zona"]).default("circuito"),
       ambitoRef: z.union([z.number().int().positive(), z.string().max(120)]).optional(),
       circuitoId: z.number().int().positive().optional(),
@@ -82,6 +84,28 @@ export async function crearOrden(entrada: {
 
   if (datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0) {
     throw new ErrorVisible("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
+  }
+
+  /**
+   * LA RED DE AGUA SOLO LA TOCAN UOCRA E INGECO.
+   *
+   * Es una restricción del contrato, no una preferencia de la pantalla: las
+   * demás contratistas no están habilitadas. El formulario ya no las ofrece,
+   * pero esto es lo que la hace cierta — un POST armado a mano entra por acá
+   * igual, y el resto de las acciones de este archivo confían en que la orden
+   * que existe es una orden válida.
+   */
+  if (datos.tipo === "perdida_agua") {
+    const filas = (await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`select slug from empresas where id = ${datos.empresaId}`)) as unknown as Array<{
+        slug: string;
+      }>,
+    ))[0];
+    if (!filas || !(EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(filas.slug)) {
+      throw new ErrorVisible(
+        "Las pérdidas de agua son de la SAT: por contrato solo las pueden ejecutar UOCRA e INGECO",
+      );
+    }
   }
 
   /**

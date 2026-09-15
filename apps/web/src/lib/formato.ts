@@ -41,7 +41,14 @@ export const ETIQUETA_ESTADO_DEMANDA: Record<string, string> = {
   en_validacion: "En validación",
   vinculada: "Vinculada",
   descartada: "Descartada",
-  fuera_de_alcance: "Fuera de alcance",
+  /**
+   * "Derivado" y no "Fuera de alcance": el reclamo NO se descartó ni se cerró
+   * —el pozo sigue ahí— sino que se mandó por nota a quien corresponde (la
+   * SAT, Ingeniería). "Fuera de alcance" describía el trámite desde adentro de
+   * Bacheo y sonaba a "no es nuestro problema"; "derivado" dice lo que pasó y
+   * es la palabra que usa la Dirección. Pedido del 12/09.
+   */
+  fuera_de_alcance: "Derivado",
   cerrada: "Cerrada (respondida)",
 };
 

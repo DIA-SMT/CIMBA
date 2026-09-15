@@ -1,4 +1,5 @@
 import { conRls, sql, getDb } from "@cimba/db";
+import { entraEnOrden, type TipoOrden } from "@cimba/domain";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
@@ -129,11 +130,23 @@ function filtroAmbito(ambito: AmbitoOrden, refId: number) {
  * barrio — "son esas cuatro alternativas". El corredor filtra por cercanía
  * (30 m) porque es una línea, no un polígono con incidentes adentro.
  */
+export interface PendientesDelAmbito {
+  pendientes: PendienteCircuito[];
+  /**
+   * Lo que hay en la zona y NO entra en esta orden, contado por tipo. No se
+   * esconde: se cuenta y se dice. Sacar 59 pérdidas de agua de la lista sin
+   * avisar sería cambiar un problema (ofrecer lo que no corresponde) por otro
+   * peor (que el Director no sepa que están ahí).
+   */
+  fueraDeAlcance: Array<{ tipo: TipoProblema; n: number }>;
+}
+
 export async function pendientesEnAmbito(
   sesion: Sesion,
   ambito: AmbitoOrden,
   refId: number,
-): Promise<PendienteCircuito[]> {
+  tipoOrden: TipoOrden = "bacheo",
+): Promise<PendientesDelAmbito> {
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
@@ -156,7 +169,7 @@ export async function pendientesEnAmbito(
       order by reclamos desc, i.score_prioridad desc nulls last, i.detectado_en
     `)) as unknown as Array<Record<string, unknown>>;
 
-    return filas.map((f) => ({
+    const todos = filas.map((f) => ({
       incidenteId: Number(f.id),
       tipo: f.tipo as TipoProblema,
       estado: String(f.estado),
@@ -170,6 +183,26 @@ export async function pendientesEnAmbito(
       lon: Number(f.lon),
       enOrden: Boolean(f.en_orden),
     }));
+
+    /**
+     * EL TIPO DE ORDEN MANDA. Antes este filtro no existía y una orden de
+     * bacheo ofrecía exactamente lo mismo que una de imbornales: todo lo
+     * abierto de la zona. Por eso las pérdidas de agua y las tapas de registro
+     * —que son de la SAT— aparecían listas para mandárselas a una contratista
+     * que no puede resolverlas.
+     */
+    const pendientes = todos.filter((p) => entraEnOrden(tipoOrden, p.tipo));
+    const cuenta = new Map<TipoProblema, number>();
+    for (const p of todos) {
+      if (entraEnOrden(tipoOrden, p.tipo)) continue;
+      cuenta.set(p.tipo, (cuenta.get(p.tipo) ?? 0) + 1);
+    }
+    return {
+      pendientes,
+      fueraDeAlcance: [...cuenta.entries()]
+        .map(([tipo, n]) => ({ tipo, n }))
+        .sort((a, b) => b.n - a.n),
+    };
   });
 }
 
