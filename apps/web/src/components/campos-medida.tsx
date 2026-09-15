@@ -5,6 +5,8 @@ import {
   ETIQUETA_MEDICION,
   MEDICIONES,
   type Medicion,
+  formatoToneladas,
+  toneladasDe,
   volumenDe,
 } from "@/lib/medicion";
 
@@ -205,14 +207,20 @@ export function CamposMedida({
         </div>
       )}
 
+      {/* Los m² primero porque son lo que el capataz acaba de medir, la
+          tonelada al lado porque es la unidad con la que se certifica el pago:
+          quien firma el acta no tendría que hacer la cuenta en un papel. */}
       {superficie != null && (
         <p className="num mt-2 text-xl font-extrabold text-celeste">
           = {superficie.toLocaleString("es-AR", { maximumFractionDigits: 2 })} m²
           {volumen != null && (
-            <span className="text-texto-2">
-              {" "}
-              · {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
-            </span>
+            <>
+              <span className="text-texto-2">
+                {" "}
+                · {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
+              </span>
+              <span className="text-amarillo"> · {formatoToneladas(toneladasDe(volumen))}</span>
+            </>
           )}
         </p>
       )}
@@ -220,7 +228,8 @@ export function CamposMedida({
       <p className="mt-1 text-xs leading-relaxed text-texto-3">
         {derivada
           ? "La superficie se calcula con la mezcla y el espesor: es una estimación, y así queda anotada."
-          : "Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero."}
+          : "Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero."}{" "}
+        Las toneladas salen del volumen a 2,4 t/m³: es lo que se certifica.
       </p>
     </div>
   );

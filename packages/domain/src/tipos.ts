@@ -29,6 +29,11 @@ export const TIPOS_PROBLEMA = [
   "cuneta_rota",
   "cuadra_completa",
   "perdida_agua",
+  // La cloaca que desborda no es la misma pérdida que la del agua potable:
+  // otra repartición, otra cuadrilla y otro reclamo. La app de la Dirección de
+  // Bacheo las mezclaba en una sola categoría y el informe a la SAT salía
+  // diciendo "pérdida de agua" sobre un desborde cloacal (pedido del 12/09).
+  "perdida_cloacal",
   "otro",
 ] as const;
 export const tipoProblemaSchema = z.enum(TIPOS_PROBLEMA);
@@ -105,6 +110,13 @@ export const ESTADOS_ITEM_ORDEN = [
   "rechazado",
   // llegaron y el bache ya estaba hecho: evidencia sin sumar m² de la empresa
   "ya_resuelto",
+  /**
+   * El punto existe pero no es un bache que se pueda tapar: una pérdida de
+   * agua, una tapa de cloaca rota, un tramo que pide carpeta. Antes esto salía
+   * por 'no_encontrado' (falso: lo encontraron) o por 'hecho' (peor: inventaba
+   * m² y cerraba en falso un reclamo que sigue abierto en la calle).
+   */
+  "no_ejecutable",
 ] as const;
 export const estadoItemOrdenSchema = z.enum(ESTADOS_ITEM_ORDEN);
 export type EstadoItemOrden = z.infer<typeof estadoItemOrdenSchema>;

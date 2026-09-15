@@ -122,3 +122,35 @@ export function resolverMedicion(d: {
  *  mientras se carga (en la base lo calcula la columna generada). */
 export const volumenDe = (superficieM2: number, espesorCm: number) =>
   Math.round(superficieM2 * (espesorCm / 100) * 100) / 100;
+
+/**
+ * LA UNIDAD CON LA QUE SE PAGA ES LA TONELADA.
+ *
+ * La certificación de obra se hace por toneladas de asfalto, no por m². Todas
+ * las mediciones de arriba —los tres caminos— existen para llegar a este
+ * número. Los m² se siguen mostrando en todos lados porque son lo tangible: el
+ * capataz ve el pozo que tapó, no ve la tonelada. Pero mostrar solo m² deja al
+ * que firma el acta haciendo la cuenta en un papel al costado.
+ *
+ * 2,4 t/m³ es la densidad de la mezcla asfáltica en caliente que usa el
+ * municipio (dato de la Dirección de Bacheo, 12/09/2026). Está duplicada en la
+ * tabla `parametros_certificacion` para las consultas SQL: si el pliego la
+ * cambia, hay que tocar los dos lugares — y el comentario de la migración 0022
+ * lo dice también del otro lado.
+ */
+export const DENSIDAD_ASFALTO_T_M3 = 2.4;
+
+/** Toneladas de asfalto que consume un volumen de mezcla. */
+export const toneladasDe = (volumenM3: number) =>
+  Math.round(volumenM3 * DENSIDAD_ASFALTO_T_M3 * 100) / 100;
+
+/**
+ * Toneladas desde los dos números que guarda la base (superficie y espesor),
+ * que es como llegan en las consultas y los informes.
+ */
+export const toneladasDeSuperficie = (superficieM2: number, espesorCm: number) =>
+  toneladasDe(volumenDe(superficieM2, espesorCm));
+
+/** "12,40 t" — una sola forma de escribirlo en toda la app. */
+export const formatoToneladas = (t: number) =>
+  `${t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;

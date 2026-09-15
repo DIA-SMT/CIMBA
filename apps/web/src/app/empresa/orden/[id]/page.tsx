@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -144,7 +145,14 @@ export default async function PaginaOrdenEmpresa({
               </span>
             )}
           </span>
-          <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
+          {/* Los m² porque son lo tangible, las toneladas porque son la unidad
+              con la que se certifica el pago (2,4 t/m³). */}
+          <span className="num text-texto-2">
+            {numero(orden.m2Reportados)} m²
+            {orden.tnReportadas > 0 && (
+              <span className="text-amarillo"> · {formatoToneladas(orden.tnReportadas)}</span>
+            )}
+          </span>
         </div>
         <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
           <div className="flex h-full">

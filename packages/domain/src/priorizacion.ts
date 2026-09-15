@@ -25,6 +25,9 @@ export interface FactoresPriorizacion {
 const PESO_TIPO: Record<TipoProblema, number> = {
   hundimiento: 1.0,
   perdida_agua: 0.9,
+  // El desborde cloacal pesa igual que la pérdida de agua —socava lo mismo—
+  // pero suma un problema sanitario que la de agua potable no tiene.
+  perdida_cloacal: 0.9,
   bache: 0.85,
   // La bocacalle rota es un bache en el punto de mayor exposición: la cruzan
   // todos los giros y ahí es donde se rompen las cubiertas.

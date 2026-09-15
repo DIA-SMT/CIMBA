@@ -3,6 +3,7 @@ import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, ordenesDeEmpresa, type OrdenResumen } from "@/lib/ordenes";
 import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { Panel } from "@/components/ui";
 import { resolverVistaPortal } from "./vista";
 
@@ -215,7 +216,14 @@ function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspe
               </span>
             )}
           </span>
-          <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
+          {/* Los m² porque son lo tangible, las toneladas porque son la unidad
+              con la que se certifica el pago (2,4 t/m³). */}
+          <span className="num text-texto-2">
+            {numero(orden.m2Reportados)} m²
+            {orden.tnReportadas > 0 && (
+              <span className="text-amarillo"> · {formatoToneladas(orden.tnReportadas)}</span>
+            )}
+          </span>
         </div>
 <div className="h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
           <div className="flex h-full">

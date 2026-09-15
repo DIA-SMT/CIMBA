@@ -9,6 +9,7 @@ import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
 import { camposMedicion, resolverMedicion } from "./medicion";
+import { MOTIVO_POR_VALOR, VALORES_MOTIVO } from "./problemas-calle";
 
 /**
  * Acciones del ciclo de la orden de trabajo. El principio rector: cuando la
@@ -481,7 +482,7 @@ export async function reportarItemHecho(formData: FormData) {
     // ve los suyos, pero se revalida acá para dar errores claros.
     const items = (await tx.execute(sql`
       select oi.id, oi.orden_id, oi.incidente_id, oi.direccion, oi.tipo_trabajo, oi.estado,
-             st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+             st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              ot.estado as orden_estado, ot.numero, ot.empresa_id, e.nombre as empresa_nombre
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
@@ -560,12 +561,18 @@ export async function reportarItemHecho(formData: FormData) {
     const esObra =
       tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
     /**
-     * Tipo de obra del protocolo DOV. Si la empresa no lo declara se infiere
-     * con la única regla objetiva que da el protocolo: pasado los 4 m² el
-     * bacheo es "extendido". El resto (provisorio, sobre adoquín) depende del
-     * criterio de quien ejecuta y no se adivina.
+     * Tipo de obra del protocolo DOV. "Extendido" NO se pregunta más: el
+     * protocolo lo define por encima de 4 m², así que es una consecuencia de la
+     * medida y lo deriva el servidor. Antes se ofrecía como botón y ganaba la
+     * elección explícita: un capataz que tocaba "Planificado" en un bache de 6
+     * m² lo certificaba mal, y el sistema tenía el dato para saberlo.
+     *
+     * Las otras dos modalidades sí son criterio de quien ejecuta —el régimen de
+     * urgencia y el adoquín— y esas se respetan tal cual vienen.
      */
-    const tipoObra = datos.tipoObra ?? (superficie > 4 ? "extendido" : "planificado");
+    const modalidad = datos.tipoObra ?? "planificado";
+    const tipoObra =
+      modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
     const volumen = Math.round(superficie * (datos.espesorCm / 100) * 100) / 100;
     const iv = (await tx.execute(sql`
       insert into intervenciones (
@@ -905,6 +912,8 @@ export async function proponerItem(formData: FormData) {
       lat: z.coerce.number().min(-27.2).max(-26.5),
       lon: z.coerce.number().min(-65.6).max(-64.9),
       observaciones: z.string().max(1000).optional(),
+      capataz: z.string().max(120).optional(),
+      tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
     })
     .parse({
       ordenId: formData.get("ordenId"),
@@ -913,7 +922,34 @@ export async function proponerItem(formData: FormData) {
       lat: formData.get("lat"),
       lon: formData.get("lon"),
       observaciones: formData.get("observaciones") || undefined,
+      capataz: formData.get("capataz") || undefined,
+      tipoObra: formData.get("tipoObra") || undefined,
     });
+
+  /**
+   * "YA LO TAPAMOS": el bache nuevo se propone Y se mide en el mismo paso.
+   *
+   * Antes eran dos viajes obligatorios: proponer el bache desde la calle, y
+   * después —otro día, con la orden ya validada— buscarlo en la lista para
+   * cerrarlo. La cuadrilla ya estaba parada encima con la cinta en la mano.
+   *
+   * Las medidas se guardan EN EL ITEM, que para eso tiene las columnas, pero
+   * el item sigue entrando como 'propuesto': el trabajo no cuenta hasta que
+   * Bacheo lo valide. Ese control es el que impide que una contratista se
+   * agregue m² sola, y sacarlo para ahorrar un clic sería cambiar el sentido
+   * del circuito. Al validar, resolverPropuesto() crea la intervención con
+   * estas medidas y el item pasa derecho a 'hecho'.
+   */
+  const medido = formData.get("espesorCm")
+    ? resolverMedicion(z.object(camposMedicion).parse({
+        medicion: formData.get("medicion") || undefined,
+        anchoM: formData.get("anchoM") || undefined,
+        largoM: formData.get("largoM") || undefined,
+        superficieM2: formData.get("superficieM2") || undefined,
+        volumenM3: formData.get("volumenM3") || undefined,
+        espesorCm: formData.get("espesorCm"),
+      }))
+    : null;
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
@@ -944,43 +980,232 @@ export async function proponerItem(formData: FormData) {
     }
   }
 
-  let rutaFoto: string | null = null;
-  if (foto instanceof File && foto.size > 0) {
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-      process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-    );
-    rutaFoto = `ordenes/propuestos/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
-    const subida = await supabase.storage
-      .from("fotografias")
-      .upload(rutaFoto, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
-    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+  /**
+   * La segunda foto: el DESPUÉS, que solo existe si la cuadrilla ya lo tapó.
+   * Con medidas y sin foto del después no se acepta — es la misma regla que
+   * rige el reporte normal, y sin ella el trabajo no tendría evidencia.
+   */
+  const fotoDespues = formData.get("fotoDespues");
+  if (fotoDespues instanceof File && fotoDespues.size > 0 && !TIPOS[fotoDespues.type]) {
+    throw new ErrorVisible("La foto del después tiene que ser una imagen (JPG, PNG o WEBP)");
+  }
+  if (medido && !(fotoDespues instanceof File && fotoDespues.size > 0)) {
+    throw new ErrorVisible("Si ya lo taparon, falta la foto del trabajo terminado");
   }
 
-  await conRls(claims(sesion), async (tx) => {
-    await tx.execute(sql`
-      insert into orden_items (orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata)
-      values (
-        ${datos.ordenId}, ${datos.direccion},
-        st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-        ${datos.tipoTrabajo}, 'propuesto', ${datos.observaciones ?? null},
-        ${JSON.stringify({
-          propuesto: { por: sesion.nombre, en: new Date().toISOString() },
-          ...(rutaFoto ? { foto_propuesta: rutaFoto } : {}),
-        })}::jsonb
-      )
-    `);
-  });
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const subidas: string[] = [];
+  const subir = async (archivo: File, sufijo: string) => {
+    const ruta = `ordenes/propuestos/${datos.ordenId}-${Date.now()}-${sufijo}.${TIPOS[archivo.type]}`;
+    const r = await supabase.storage
+      .from("fotografias")
+      .upload(ruta, Buffer.from(await archivo.arrayBuffer()), { contentType: archivo.type, upsert: false });
+    if (r.error) throw new ErrorVisible(`No se pudo subir la foto: ${r.error.message}`);
+    subidas.push(ruta);
+    return ruta;
+  };
+
+  let rutaFoto: string | null = null;
+  let rutaDespues: string | null = null;
+  try {
+    if (foto instanceof File && foto.size > 0) rutaFoto = await subir(foto, "antes");
+    if (fotoDespues instanceof File && fotoDespues.size > 0) {
+      rutaDespues = await subir(fotoDespues, "despues");
+    }
+
+    await conRls(claims(sesion), async (tx) => {
+      await tx.execute(sql`
+        insert into orden_items (
+          orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata,
+          ancho_m, largo_m, espesor_cm, superficie_m2, tipo_obra
+        )
+        values (
+          ${datos.ordenId}, ${datos.direccion},
+          st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+          ${datos.tipoTrabajo}, 'propuesto', ${datos.observaciones ?? null},
+          ${JSON.stringify({
+            propuesto: { por: sesion.nombre, en: new Date().toISOString() },
+            ...(rutaFoto ? { foto_propuesta: rutaFoto } : {}),
+            // Lo que hace falta para convertirlo en intervención al validarlo.
+            ...(medido
+              ? {
+                  ya_ejecutado: {
+                    medicion: medido.medicion,
+                    foto_despues: rutaDespues,
+                    capataz: datos.capataz ?? null,
+                    en: new Date().toISOString(),
+                  },
+                }
+              : {}),
+          })}::jsonb,
+          ${medido?.anchoM ?? null}, ${medido?.largoM ?? null},
+          ${medido?.espesorCm ?? null}, ${medido?.superficieM2 ?? null},
+          ${medido ? (datos.tipoObra ?? "planificado") : null}::tipo_obra_bacheo
+        )
+      `);
+    });
+  } catch (e) {
+    if (subidas.length) await supabase.storage.from("fotografias").remove(subidas).catch(() => undefined);
+    throw e;
+  }
 
   const { notificarEvento } = await import("./notificar");
   await notificarEvento("item_propuesto", {
-    titulo: "La cuadrilla propuso un bache nuevo",
-    cuerpo: `${datos.direccion} — espera validación de Bacheo`,
+    titulo: medido ? "La cuadrilla cargó un bache nuevo ya tapado" : "La cuadrilla propuso un bache nuevo",
+    cuerpo: medido
+      ? `${datos.direccion} — ${medido.superficieM2} m², espera validación de Bacheo`
+      : `${datos.direccion} — espera validación de Bacheo`,
     url: `/ordenes/${datos.ordenId}`,
   });
   revalidatePath("/empresa");
   revalidatePath("/ordenes");
+  return { ok: true };
+}
+
+/**
+ * "REPORTAR UN PROBLEMA": lo que la cuadrilla ve en la calle y no es un bache.
+ *
+ * Hermano de proponerItem(), pero termina en otro lado y a propósito. Un bache
+ * propuesto entra como item de la orden porque es trabajo que esa empresa puede
+ * hacer. Una pérdida de agua, una tapa rota o un imbornal tapado NO son trabajo
+ * de nadie todavía: son un PEDIDO nuevo, nacido en la calle, que hay que
+ * derivar. Meterlos como item de una orden de bacheo sería prometer que esa
+ * contratista los va a arreglar.
+ *
+ * Por eso entran como DEMANDA, que es exactamente lo que hace el parser de la
+ * app de la Dirección de Bacheo con sus filas sin superficie (ver
+ * integrations/fuentes/bacheo-empresas.ts): el mismo criterio para el mismo
+ * hecho, venga del formulario viejo o de este.
+ */
+export async function reportarProblemaCalle(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para reportar problemas`);
+  }
+  const datos = z
+    .object({
+      ordenId: z.coerce.number().int().positive(),
+      direccion: z.string().min(4).max(300),
+      motivo: z.enum(VALORES_MOTIVO),
+      lat: z.coerce.number().min(-27.2).max(-26.5),
+      lon: z.coerce.number().min(-65.6).max(-64.9),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({
+      ordenId: formData.get("ordenId"),
+      direccion: formData.get("direccion"),
+      motivo: formData.get("motivo"),
+      lat: formData.get("lat"),
+      lon: formData.get("lon"),
+      observaciones: formData.get("observaciones") || undefined,
+    });
+
+  const definicion = MOTIVO_POR_VALOR.get(datos.motivo);
+  if (!definicion) throw new ErrorVisible("Motivo desconocido");
+
+  const { dentroDeSMT } = await import("@cimba/domain");
+  if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+    throw new ErrorVisible("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+  }
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) {
+    throw new ErrorVisible("La foto es obligatoria: es la prueba para derivar el reclamo");
+  }
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad de la orden desde la que se reporta (traza quién lo vio).
+  const ordenes = await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select ot.id, ot.estado, ot.empresa_id, ot.numero, e.nombre as empresa_nombre
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${datos.ordenId}
+    `)) as unknown as Array<Record<string, unknown>>,
+  );
+  const orden = ordenes[0];
+  if (!orden) throw new ErrorVisible("La orden no existe o no es de tu empresa");
+  if (!["emitida", "en_ejecucion"].includes(String(orden.estado))) {
+    throw new ErrorVisible("La orden no está activa");
+  }
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(orden.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("La orden no pertenece a tu empresa");
+    }
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const ruta = `calle/problemas/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    /**
+     * Por la conexión de servicio: la política de insert de demandas no incluye
+     * al rol empresa, y no puede incluirlo — una demanda nueva no está ligada a
+     * ninguna orden que la acote. La propiedad de la orden ya se validó arriba.
+     */
+    const { getDb } = await import("@cimba/db");
+    const filas = (await getDb().execute(sql`
+      insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
+                            solicitante, metadata)
+      values (
+        'carga_manual',
+        ${definicion.tipoProblema ?? "otro"}::tipo_problema,
+        ${datos.observaciones ?? definicion.etiqueta},
+        ${datos.direccion},
+        st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+        1.0,
+        ${String(orden.empresa_nombre)},
+        ${JSON.stringify({
+          origen: "cuadrilla_en_calle",
+          motivo: datos.motivo,
+          familia: definicion.familia,
+          etiqueta: definicion.etiqueta,
+          orden: orden.numero,
+          contratista: orden.empresa_nombre,
+          reportado_por: sesion.nombre,
+          foto: ruta,
+          // Sin traducción honesta al vocabulario: queda el dato crudo para que
+          // el informe no diga "otro" y ya (paño de hormigón, enripiado).
+          ...(definicion.tipoProblema ? {} : { requiere: datos.motivo }),
+        })}::jsonb
+      ) returning id
+    `)) as unknown as Array<{ id: number }>;
+    const demandaId = filas[0]?.id;
+    if (demandaId) {
+      await getDb().execute(sql`
+        insert into fotografias (demanda_id, momento, storage_path, geom, tomada_en)
+        values (${demandaId}, 'antes', ${ruta},
+                st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), now())
+      `);
+    }
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  const { notificarEvento } = await import("./notificar");
+  await notificarEvento("item_propuesto", {
+    titulo:
+      definicion.familia === "sat" ? "La cuadrilla encontró algo para derivar" : "La cuadrilla reportó un problema",
+    cuerpo: `${definicion.etiqueta} — ${datos.direccion}`,
+    url: "/demandas",
+  });
+  revalidatePath("/empresa");
+  revalidatePath("/demandas");
   return { ok: true };
 }
 
@@ -1000,9 +1225,33 @@ export async function resolverPropuesto(entrada: {
     .parse(entrada);
 
   await conRls(claims(sesion), async (tx) => {
+    /**
+     * Un propuesto puede venir con las medidas ya cargadas: la cuadrilla lo
+     * encontró, lo tapó y lo midió en el mismo viaje (ver proponerItem). En ese
+     * caso validarlo no es "ponelo en la cola", es "dalo por hecho" — y hay que
+     * crear la intervención acá, porque nadie va a volver a reportarlo.
+     */
+    const previas = (await tx.execute(sql`
+      select oi.superficie_m2, oi.espesor_cm, oi.tipo_obra, oi.tipo_trabajo, oi.incidente_id,
+             oi.direccion, oi.metadata, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+             ot.numero, ot.id as orden_id, e.nombre as empresa_nombre
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.id = ${datos.itemId} and oi.estado = 'propuesto'
+    `)) as unknown as Array<Record<string, unknown>>;
+    const previa = previas[0];
+    if (!previa) throw new ErrorVisible("El item no está en estado propuesto");
+
+    const yaEjecutado =
+      datos.decision === "validar" && previa.superficie_m2 != null && previa.espesor_cm != null;
+
     const r = (await tx.execute(sql`
       update orden_items set
-        estado = ${datos.decision === "validar" ? "pendiente" : "rechazado"},
+        estado = ${
+          datos.decision === "rechazar" ? "rechazado" : yaEjecutado ? "hecho" : "pendiente"
+        },
+        ${yaEjecutado ? sql`reportado_en = now(), reportado_por = ${sesion.sub}::uuid,` : sql``}
         metadata = metadata || ${JSON.stringify({
           validacion: {
             decision: datos.decision,
@@ -1016,13 +1265,92 @@ export async function resolverPropuesto(entrada: {
     `)) as unknown as Array<{ orden_id: number }>;
     if (!r[0]) throw new ErrorVisible("El item no está en estado propuesto");
 
+    if (yaEjecutado) {
+      const superficie = Number(previa.superficie_m2);
+      const espesor = Number(previa.espesor_cm);
+      const lat = Number(previa.lat);
+      const lon = Number(previa.lon);
+      const tipoIntervencion = String(previa.tipo_trabajo) === "carpeta" ? "carpeta" : "bacheo";
+      // Misma derivación que el reporte normal: el extendido sale de la medida.
+      const modalidad = (previa.tipo_obra as string) ?? "planificado";
+      const tipoObra = modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
+      const volumen = Math.round(superficie * (espesor / 100) * 100) / 100;
+
+      // El propuesto nace sin incidente: se crea ahora, ya reparado.
+      let incidenteId = previa.incidente_id != null ? Number(previa.incidente_id) : null;
+      if (incidenteId == null) {
+        const { getDb } = await import("@cimba/db");
+        const inc = (await getDb().execute(sql`
+          insert into incidentes (tipo, estado, geom, direccion, superficie_m2, detectado_en, cerrado_en, metadata)
+          values (
+            ${String(previa.tipo_trabajo) === "bache" ? "bache" : "pavimento_deteriorado"},
+            'reparado', st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
+            ${(previa.direccion as string) ?? null}, ${superficie}, now(), now(),
+            ${JSON.stringify({ origen: "orden_trabajo", orden: previa.numero, propuesto_por_cuadrilla: true })}::jsonb
+          ) returning id
+        `)) as unknown as Array<{ id: number }>;
+        if (!inc[0]) throw new ErrorVisible("No se pudo crear el incidente del bache propuesto");
+        incidenteId = Number(inc[0].id);
+        await tx.execute(sql`
+          update orden_items set incidente_id = ${incidenteId} where id = ${datos.itemId}
+        `);
+      }
+
+      const meta = (previa.metadata ?? {}) as Record<string, unknown>;
+      const ejec = (meta.ya_ejecutado ?? {}) as Record<string, unknown>;
+      const iv = (await tx.execute(sql`
+        insert into intervenciones (
+          incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
+          superficie_m2, volumen_m3, tipo_obra, tipo_intervencion, materiales, observaciones, metadata
+        ) values (
+          ${incidenteId}, 'finalizada',
+          st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
+          now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+          '{}'::jsonb, ${(previa.metadata as { observaciones?: string })?.observaciones ?? null},
+          ${JSON.stringify({
+            origen: "orden_trabajo",
+            orden: previa.numero,
+            contratista: previa.empresa_nombre,
+            escala: "bache",
+            medicion: ejec.medicion ?? null,
+            capataz: ejec.capataz ?? null,
+            propuesto_por_cuadrilla: true,
+          })}::jsonb
+        ) returning id
+      `)) as unknown as Array<{ id: number }>;
+      const intervencionId = iv[0]?.id;
+      if (intervencionId) {
+        await tx.execute(sql`
+          update orden_items set intervencion_id = ${intervencionId} where id = ${datos.itemId}
+        `);
+        // Las fotos que la cuadrilla ya había sacado pasan a colgar de la
+        // intervención: sin esto quedaban como rutas sueltas en el metadata.
+        for (const [momento, ruta] of [
+          ["antes", meta.foto_propuesta],
+          ["despues", ejec.foto_despues],
+        ] as const) {
+          if (typeof ruta === "string" && ruta) {
+            await tx.execute(sql`
+              insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en)
+              values (${intervencionId}, ${momento}, ${ruta},
+                      st_setsrid(st_makepoint(${lon}, ${lat}), 4326), now())
+            `);
+          }
+        }
+      }
+      await tx.execute(sql`
+        update incidentes set estado = 'reparado', cerrado_en = now()
+        where id = ${incidenteId} and estado <> 'verificado'
+      `);
+    }
+
     /**
      * Cinturón: si la orden ya estaba cerrada (por ejemplo porque se completó
      * antes de que existiera el arreglo de arriba), validar la reabre. Sin
      * esto el item quedaría pendiente sobre una orden completada y la empresa
      * no podría reportarlo nunca.
      */
-    if (datos.decision === "validar") {
+    if (datos.decision === "validar" && !yaEjecutado) {
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'en_ejecucion', cerrada_en = null
         where id = ${Number(r[0].orden_id)} and estado = 'completada'
@@ -1062,7 +1390,7 @@ export async function marcarYaResuelto(formData: FormData) {
   const previa = (
     await conRls(claims(sesion), async (tx) =>
       (await tx.execute(sql`
-        select oi.estado, oi.incidente_id, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+        select oi.estado, oi.incidente_id, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
                ot.estado as orden_estado, ot.empresa_id, ot.numero, ot.id as orden_id,
                e.nombre as empresa_nombre
         from orden_items oi
@@ -1173,6 +1501,180 @@ export async function marcarYaResuelto(formData: FormData) {
 
   revalidatePath("/empresa");
   revalidatePath("/ordenes");
+  return { ok: true };
+}
+
+/**
+ * "LLEGAMOS Y NO ES UN BACHE": la tercera salida del capataz.
+ *
+ * Antes de esto la cuadrilla que se encontraba con una pérdida de agua tenía
+ * dos botones y los dos mentían: "no lo encontré" (falso, lo encontró) o
+ * "reportar hecho" (peor: inventa m², cobra un bacheo que no existió y cierra
+ * un reclamo que en la calle sigue abierto). Elegía la menos mala y el dato de
+ * lo que REALMENTE pasa en esa esquina se perdía.
+ *
+ * Ahora el item termina en 'no_ejecutable' con el motivo real y una foto, y de
+ * paso el incidente se reclasifica al vocabulario de CIMBA cuando hay una
+ * traducción honesta (ver lib/problemas-calle.ts). Sin superficie y sin
+ * intervención: no se ejecutó nada, así que no hay m² ni toneladas que sumar.
+ *
+ * La foto es obligatoria a propósito: es lo único que convierte "el capataz
+ * dijo que era una pérdida de agua" en el informe que se le manda a la SAT.
+ */
+export async function reportarItemNoEjecutable(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso`);
+  }
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      motivo: z.enum(VALORES_MOTIVO),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({
+      itemId: formData.get("itemId"),
+      motivo: formData.get("motivo"),
+      observaciones: formData.get("observaciones") || undefined,
+    });
+
+  const definicion = MOTIVO_POR_VALOR.get(datos.motivo);
+  if (!definicion) throw new ErrorVisible("Motivo desconocido");
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) {
+    throw new ErrorVisible("La foto es obligatoria: es la prueba de lo que encontraron");
+  }
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad y estado ANTES de tocar Storage (misma regla que el resto).
+  const previa = (
+    await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select oi.estado, oi.incidente_id, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+               ot.estado as orden_estado, ot.empresa_id, ot.numero, ot.id as orden_id,
+               e.nombre as empresa_nombre
+        from orden_items oi
+        join ordenes_trabajo ot on ot.id = oi.orden_id
+        join empresas e on e.id = ot.empresa_id
+        where oi.id = ${datos.itemId}
+      `)) as unknown as Array<Record<string, unknown>>,
+    )
+  )[0];
+  if (!previa) throw new ErrorVisible("El item no existe o no es de tu empresa");
+  if (String(previa.estado) !== "pendiente") throw new ErrorVisible("Este item ya fue reportado");
+  if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
+    throw new ErrorVisible("La orden no está activa");
+  }
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("El item no pertenece a tu empresa");
+    }
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const ruta = `ordenes/${datos.itemId}/no-ejecutable-${Date.now()}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    await conRls(claims(sesion), async (tx) => {
+      const reclamo = (await tx.execute(sql`
+        update orden_items set estado = 'no_ejecutable',
+          reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+          observaciones = ${datos.observaciones ?? null},
+          metadata = metadata || ${JSON.stringify({
+            no_ejecutable: {
+              motivo: datos.motivo,
+              etiqueta: definicion.etiqueta,
+              familia: definicion.familia,
+              foto: ruta,
+              por: sesion.nombre,
+              en: new Date().toISOString(),
+            },
+          })}::jsonb
+        where id = ${datos.itemId} and estado = 'pendiente'
+        returning incidente_id
+      `)) as unknown as Array<{ incidente_id: number | null }>;
+      if (!reclamo[0]) throw new ErrorVisible("Este item ya fue reportado");
+
+      const incidenteId = reclamo[0].incidente_id != null ? Number(reclamo[0].incidente_id) : null;
+      if (incidenteId != null) {
+        /**
+         * El incidente vuelve a estar sin atender —porque no se atendió— pero
+         * ahora dice la verdad sobre qué es. `tipo` solo se pisa cuando hay una
+         * traducción honesta al vocabulario de CIMBA; cuando no la hay (paño de
+         * hormigón, enripiado) el dato queda en metadata y el tipo no se toca.
+         */
+        await tx.execute(sql`
+          update incidentes set
+            estado = 'detectado',
+            ${
+              definicion.tipoProblema
+                ? sql`tipo = ${definicion.tipoProblema}::tipo_problema,`
+                : sql``
+            }
+            metadata = metadata || ${JSON.stringify({
+              no_ejecutable: {
+                motivo: datos.motivo,
+                familia: definicion.familia,
+                orden: previa.numero,
+                contratista: previa.empresa_nombre,
+                en: new Date().toISOString(),
+              },
+              ...(definicion.tipoProblema ? {} : { requiere: datos.motivo }),
+            })}::jsonb
+          where id = ${incidenteId}
+        `);
+
+        /**
+         * La foto queda en el metadata del item y del incidente, no en
+         * `fotografias`: esa tabla cuelga de una intervención o de una demanda,
+         * y acá no hay ninguna de las dos — no se intervino nada, y el pedido
+         * ya existía. Meterla como intervención con superficie nula habría sido
+         * la salida fácil y habría ensuciado el conteo de trabajo hecho.
+         */
+      }
+
+      // La orden avanza igual: este item ya no está pendiente.
+      await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(previa.orden_id)} for update`);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'en_ejecucion'
+        where id = ${Number(previa.orden_id)} and estado = 'emitida'
+      `);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'completada', cerrada_en = now()
+        where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+          and not exists (
+            select 1 from orden_items oi
+            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
+          )
+      `);
+    });
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  const { notificarEvento } = await import("./notificar");
+  await notificarEvento("item_propuesto", {
+    titulo:
+      definicion.familia === "sat" ? "Un punto no le toca a Bacheo" : "Un punto necesita otro tratamiento",
+    cuerpo: `${previa.numero}: ${definicion.etiqueta}`,
+    url: `/ordenes/${Number(previa.orden_id)}`,
+  });
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  revalidatePath("/incidentes");
   return { ok: true };
 }
 

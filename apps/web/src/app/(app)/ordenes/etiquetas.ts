@@ -77,6 +77,7 @@ export const ETIQUETA_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
   propuesto: "Propuesto por la empresa",
   rechazado: "Rechazado",
   ya_resuelto: "Ya estaba resuelto",
+  no_ejecutable: "No se puede ejecutar",
 };
 
 export const COLOR_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
@@ -97,4 +98,10 @@ export const COLOR_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
    * porque la empresa y el Director tienen que ver lo mismo. Se cambian juntos.
    */
   ya_resuelto: "color-mix(in srgb, var(--color-hecho) 65%, var(--color-inactivo))",
+  /**
+   * Amarillo, el mismo que "propuesto": las dos cosas esperan que una persona
+   * decida algo. Gris habría sido mentir por omisión —el punto no se
+   * desestimó, sigue roto en la calle— y verde, mentir del todo.
+   */
+  no_ejecutable: "var(--color-amarillo)",
 };

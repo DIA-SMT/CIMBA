@@ -4,6 +4,7 @@ import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 import { filtroEnum } from "./consultas";
 import { urlFoto } from "./fotos";
+import { toneladasDe, volumenDe } from "./medicion";
 import { parametrosDesdeJson, type ParametrosCapacidad } from "./capacidad";
 
 /**
@@ -281,6 +282,9 @@ export interface OrdenResumen {
   cerrados: number;
   hechos: number;
   m2Reportados: number;
+  /** Toneladas de asfalto: la unidad con la que se certifica el pago. Sale del
+   *  volumen (columna generada) por la densidad de la mezcla, 2,4 t/m³. */
+  tnReportadas: number;
   emitidaEn: string | null;
   venceEn: string | null;
   creadoEn: string;
@@ -301,10 +305,14 @@ export async function listarOrdenes(
              (select count(*) from orden_items oi where oi.orden_id = ot.id
                 and oi.estado not in ('propuesto','rechazado'))::int as en_plan,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
-                and oi.estado in ('hecho','no_encontrado','ya_resuelto'))::int as cerrados,
+                and oi.estado in ('hecho','no_encontrado','ya_resuelto','no_ejecutable'))::int as cerrados,
              (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'hecho')::int as hechos,
              (select round(coalesce(sum(oi.superficie_m2), 0))::int from orden_items oi
-                where oi.orden_id = ot.id and oi.estado = 'hecho') as m2
+                where oi.orden_id = ot.id and oi.estado = 'hecho') as m2,
+             -- Toneladas: volumen × densidad de la mezcla (2,4 t/m³). El
+             -- volumen ya es columna generada, así que esto no duplica dato.
+             (select round(coalesce(sum(oi.volumen_m3), 0) * 2.4, 2) from orden_items oi
+                where oi.orden_id = ot.id and oi.estado = 'hecho') as tn
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
@@ -328,6 +336,7 @@ export async function listarOrdenes(
       cerrados: Number(f.cerrados ?? 0),
       hechos: Number(f.hechos ?? 0),
       m2Reportados: Number(f.m2 ?? 0),
+      tnReportadas: Number(f.tn ?? 0),
       emitidaEn: f.emitida_en != null ? String(f.emitida_en) : null,
       venceEn: f.vence_en != null ? String(f.vence_en) : null,
       creadoEn: String(f.creado_en),
@@ -389,8 +398,25 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
     const o = cab[0];
     if (!o) return null;
 
+    /**
+     * st_centroid() y no `oi.geom` pelado: un item puede ser un TRAMO, y un
+     * tramo se guarda como LINESTRING (migración 0017), no como punto. ST_Y()
+     * sobre una línea no devuelve null — tira `Argument to ST_Y() must have
+     * type POINT` y se lleva puesta la página entera. El Director armaba una
+     * orden con un tramo de avenida, la abría, y veía un error de servidor sin
+     * nada que le dijera qué item lo había causado; la orden quedaba en
+     * borrador para siempre porque nunca llegaba al botón de emitir.
+     *
+     * El centroide de un punto ES el punto, así que para los items puntuales
+     * —que son casi todos— no cambia nada; para un tramo da el medio de la
+     * línea, que es donde corresponde plantar el marcador.
+     *
+     * Ojo: el mismo st_y(oi.geom) estaba en otros cinco lugares (el reporte de
+     * la empresa, el cierre, la exportación). Se arreglaron todos juntos: con
+     * uno solo sin tocar, el tramo se podía ver pero no reportar.
+     */
     const items = (await tx.execute(sql`
-      select oi.*, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+      select oi.*, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              (select v.tipo_intervencion::text from intervenciones v where v.id = oi.intervencion_id) as tipo_intervencion,
         coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos
       from orden_items oi
@@ -448,7 +474,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       (i) => i.estado !== "propuesto" && i.estado !== "rechazado",
     ).length;
     const cerrados = itemsDetalle.filter((i) =>
-      ["hecho", "no_encontrado", "ya_resuelto"].includes(i.estado),
+      ["hecho", "no_encontrado", "ya_resuelto", "no_ejecutable"].includes(i.estado),
     ).length;
     return {
       id: Number(o.id),
@@ -468,6 +494,14 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       cerrados,
       hechos,
       m2Reportados: Math.round(itemsDetalle.reduce((a, i) => a + (i.superficieM2 ?? 0), 0)),
+      // Ídem el listado: toneladas = Σ(superficie × espesor/100) × 2,4. Se suma
+      // item por item y no sobre el total, porque cada bache tiene su espesor.
+      tnReportadas: toneladasDe(
+        itemsDetalle.reduce(
+          (a, i) => a + volumenDe(i.superficieM2 ?? 0, i.espesorCm ?? 0),
+          0,
+        ),
+      ),
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,
       // vence_en es una columna date pura: viene ya como "YYYY-MM-DD" (::text),
       // no como el Date-a-medianoche-UTC que String() corrompería un día.
