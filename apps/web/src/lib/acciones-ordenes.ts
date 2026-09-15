@@ -1209,6 +1209,77 @@ export async function reportarProblemaCalle(formData: FormData) {
   return { ok: true };
 }
 
+/**
+ * SACAR UN ITEM QUE NO CORRESPONDE.
+ *
+ * Pedido de la Dirección de Bacheo (14/09): "un botón de borrar elemento si no
+ * corresponde". Pasa seguido al armar la orden — un punto que entró por un
+ * filtro mal puesto, un bache duplicado, una dirección que no era.
+ *
+ * DOS CANDADOS, y los dos importan:
+ *
+ *  1. Un item YA REPORTADO no se borra. Detrás hay una intervención real, con
+ *     medidas, fotos y m² que alimentan la brecha y la certificación; borrar
+ *     el item dejaría la intervención huérfana y los números mentirían sin que
+ *     nadie se entere. Si lo que se cargó está mal, se corrige — no se
+ *     desaparece.
+ *  2. El incidente vuelve a la cola. Al emitir la orden pasó a 'programado';
+ *     si el item se va y el incidente queda programado, ese bache desaparece
+ *     de la vista de todos sin que nadie lo haya arreglado ni desestimado.
+ *
+ * El borrado en sí queda registrado por el trigger auditar() (AFTER DELETE
+ * sobre orden_items), así que la traza no depende de que nos acordemos acá.
+ */
+export async function eliminarItemOrden(entrada: { itemId: number; motivo: string }) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({ itemId: z.number().int().positive(), motivo: z.string().min(3).max(500) })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.incidente_id, oi.intervencion_id, ot.estado as orden_estado
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+    if (item.intervencion_id != null || String(item.estado) === "hecho") {
+      throw new ErrorVisible(
+        "Este item ya tiene trabajo reportado con fotos y medidas: no se puede borrar. Corregí los datos o anulá la orden.",
+      );
+    }
+    if (String(item.orden_estado) === "anulada") {
+      throw new ErrorVisible("La orden está anulada: no se tocan sus items");
+    }
+
+    /**
+     * El incidente vuelve a 'priorizado' —no a 'detectado'— porque ya había
+     * pasado por priorización cuando se armó la orden: mandarlo al principio
+     * de la cola le borraría ese trabajo.
+     */
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set estado = 'priorizado'
+        where id = ${Number(item.incidente_id)} and estado = 'programado'
+      `);
+    }
+
+    // El motivo va a la auditoría antes del delete: después la fila ya no está.
+    await tx.execute(sql`
+      insert into auditoria (entidad, entidad_id, accion, actor, diff)
+      values ('orden_item', ${datos.itemId}, 'eliminado', ${sesion.sub}::uuid,
+              ${JSON.stringify({ motivo: datos.motivo, por: sesion.nombre })}::jsonb)
+    `);
+    await tx.execute(sql`delete from orden_items where id = ${datos.itemId}`);
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/incidentes");
+  return { ok: true };
+}
+
 /** Bacheo decide sobre un item propuesto: validado entra al circuito normal. */
 export async function resolverPropuesto(entrada: {
   itemId: number;

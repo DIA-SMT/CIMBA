@@ -424,3 +424,44 @@ export async function verificarIncidente(entrada: { incidenteId: number }) {
   return { ok: true };
 }
 
+/**
+ * DESHACER UNA VERIFICACIÓN.
+ *
+ * "Si verifiqué algo que no corresponde, que pueda cancelarlo" — pedido de la
+ * Dirección de Bacheo (12/09). Verificar era un camino de una sola dirección:
+ * un clic de más sobre la fila equivocada dejaba el bache marcado como
+ * controlado en campo para siempre, y 'verificado' es el único estado que el
+ * resto del sistema trata como intocable (finalizarIntervencion y
+ * marcarYaResuelto lo respetan explícitamente).
+ *
+ * Vuelve a 'reparado', que es de donde vino: el trabajo sigue hecho, lo que se
+ * deshace es el control. El motivo queda en metadata y el cambio de estado lo
+ * registra el trigger auditar(), así que "quién lo desverificó y por qué" se
+ * puede contestar.
+ */
+export async function desverificarIncidente(entrada: { incidenteId: number; motivo: string }) {
+  const sesion = await requerirRol("supervision");
+  const datos = z
+    .object({ incidenteId: z.number().int().positive(), motivo: z.string().min(3).max(500) })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const r = (await tx.execute(sql`
+      update incidentes set estado = 'reparado',
+        metadata = metadata || ${JSON.stringify({
+          verificacion_deshecha: {
+            por: sesion.nombre,
+            en: new Date().toISOString(),
+            motivo: datos.motivo,
+          },
+        })}::jsonb
+      where id = ${datos.incidenteId} and estado = 'verificado'
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    if (!r[0]) throw new ErrorVisible("Este incidente no está verificado");
+  });
+  revalidatePath("/incidentes");
+  revalidatePath("/calidad");
+  return { ok: true };
+}
+

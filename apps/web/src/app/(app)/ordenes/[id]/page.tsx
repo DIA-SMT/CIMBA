@@ -11,6 +11,7 @@ import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
 import { ResolverPropuesto } from "./resolver-propuesto";
+import { BorrarItem } from "./borrar-item";
 import { SelectTipoIntervencion } from "./select-tipo-intervencion";
 import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
 import { PanelTabla } from "@/components/tabla-deslizable";
@@ -291,7 +292,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.itemsDetalle
                 .filter((it) => it.estado !== "propuesto")
                 .map((it) => (
-                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} />
+                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} puedePlanificar={puedePlanificar} />
                 ))}
             </tbody>
           </table>
@@ -489,7 +490,15 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   );
 }
 
-function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirTipo: boolean }) {
+function FilaItem({
+  item,
+  puedeCorregirTipo,
+  puedePlanificar,
+}: {
+  item: ItemOrden;
+  puedeCorregirTipo: boolean;
+  puedePlanificar: boolean;
+}) {
   const medidas =
     item.anchoM != null && item.largoM != null && item.espesorCm != null
       ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
@@ -577,6 +586,14 @@ function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirT
           >
             #{item.incidenteId} →
           </Link>
+        )}
+        {/* Sacar un punto que no corresponde. Solo mientras no tenga
+            trabajo reportado: detrás de un item hecho hay una intervención
+            con fotos y m², y borrarlo dejaría los números mintiendo. */}
+        {puedePlanificar && item.estado !== "hecho" && item.intervencionId == null && (
+          <span className="mt-1 flex justify-end">
+            <BorrarItem itemId={item.id} direccion={item.direccion} />
+          </span>
         )}
       </td>
     </tr>
