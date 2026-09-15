@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { conRls, sql, type SQL } from "@cimba/db";
+import { conRls, getDb, sql, type SQL } from "@cimba/db";
 import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba/domain";
 import { requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
@@ -301,39 +301,56 @@ export async function finalizarIntervencion(entrada: {
  * como demanda con fuente 'carga_manual', canal 'presencial' y el
  * área/distrito en metadata.
  */
-export async function crearDemandaCiudadano(entrada: {
-  lat: number;
-  lon: number;
-  tipo: string;
-  descripcion: string;
-  direccion: string;
-  solicitante: string;
-  area: string;
-  distrito?: string;
-  desdeGps?: boolean;
-}) {
+export async function crearDemandaCiudadano(formData: FormData) {
   // atencion_ciudadana incluida: es justamente quien atiende al vecino en
   // mostrador y por teléfono.
   const sesion = await requerirRol("funcionario", "planificacion", "supervision", "atencion_ciudadana");
   const datos = z
     .object({
-      lat: z.number().min(-27.2).max(-26.4),
-      lon: z.number().min(-65.6).max(-64.9),
+      lat: z.coerce.number().min(-27.2).max(-26.4),
+      lon: z.coerce.number().min(-65.6).max(-64.9),
       tipo: tipoProblemaSchema,
       descripcion: z.string().min(5).max(2000),
       direccion: z.string().min(3).max(300),
       solicitante: z.string().min(3).max(200),
       area: z.string().min(2).max(200),
-      distrito: z.string().max(120).optional(),
-      desdeGps: z.boolean().optional(),
+      desdeGps: z.coerce.boolean().optional(),
     })
-    .parse(entrada);
+    .parse({
+      lat: formData.get("lat"),
+      lon: formData.get("lon"),
+      tipo: formData.get("tipo"),
+      descripcion: formData.get("descripcion"),
+      direccion: formData.get("direccion"),
+      solicitante: formData.get("solicitante"),
+      area: formData.get("area"),
+      desdeGps: formData.get("desdeGps") || undefined,
+    });
+
+  /**
+   * LAS FOTOS DEL VECINO. Hasta acá el pedido presencial era solo texto: el
+   * vecino llegaba al mostrador con la foto en el teléfono y no había dónde
+   * ponerla. Dos, porque una sola rara vez alcanza — la del pozo de cerca y la
+   * de la cuadra para ubicarlo.
+   *
+   * Opcionales a propósito: el pedido por teléfono no tiene foto y no por eso
+   * vale menos. Y el tipo lo fija el servidor desde una whitelist, no el
+   * cliente: el bucket es público y un .html con content-type text/html se
+   * serviría como página activa desde el origen de Storage municipal.
+   */
+  const fotos: File[] = [];
+  for (const clave of ["foto1", "foto2"]) {
+    const f = formData.get(clave);
+    if (!(f instanceof File) || f.size === 0) continue;
+    if (f.size > 8 * 1024 * 1024) throw new ErrorVisible("Cada foto tiene que pesar menos de 8 MB");
+    if (!TIPOS_FOTO[f.type]) throw new ErrorVisible("Las fotos tienen que ser imágenes (JPG, PNG o WEBP)");
+    fotos.push(f);
+  }
 
   const metadata = {
     origen: "pedido_ciudadano",
     canal: "presencial",
     area: datos.area,
-    distrito: datos.distrito ?? null,
     desde_gps: datos.desdeGps ?? false,
   };
   const id = await conRls(claims(sesion), async (tx) => {
@@ -347,8 +364,39 @@ export async function crearDemandaCiudadano(entrada: {
     `)) as unknown as Array<{ id: number }>;
     return filas[0]?.id;
   });
+
+  /**
+   * Las fotos van DESPUÉS del insert y fuera de la transacción: necesitan el
+   * id de la demanda para colgarse de ella, y si Storage falla el pedido del
+   * vecino ya quedó registrado igual. Perder la foto es malo; perder el
+   * reclamo entero porque no se pudo subir una imagen es peor.
+   */
+  if (id != null && fotos.length > 0) {
+    try {
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+        process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+      );
+      for (const [i, foto] of fotos.entries()) {
+        const ruta = `ciudadano/${id}/${Date.now()}-${i}.${TIPOS_FOTO[foto.type]}`;
+        const subida = await supabase.storage
+          .from("fotografias")
+          .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+        if (subida.error) continue;
+        await getDb().execute(sql`
+          insert into fotografias (demanda_id, momento, storage_path, geom, tomada_en)
+          values (${id}, 'antes', ${ruta},
+                  st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), now())
+        `);
+      }
+    } catch {
+      // el pedido ya está registrado: la foto se puede volver a subir después
+    }
+  }
+
   revalidatePath("/demandas");
-  return { ok: true, id };
+  return { ok: true, id, fotos: fotos.length };
 }
 
 /**

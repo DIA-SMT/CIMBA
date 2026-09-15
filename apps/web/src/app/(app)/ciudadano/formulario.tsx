@@ -1,11 +1,12 @@
 "use client";
 
-import { FileUp, LocateFixed, Mic, X } from "lucide-react";
+import { Camera, FileUp, LocateFixed, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { TIPOS_PROBLEMA } from "@cimba/domain";
 import { crearDemandaCiudadano } from "@/lib/acciones";
 import { leerArchivoComoCapa, type CapaPuntos } from "@/lib/capa-archivo";
+import { comprimirFoto } from "@/lib/comprimir-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
@@ -13,8 +14,18 @@ import { CargaRapida, type CargaInterpretada } from "@/components/carga-rapida";
 import { Panel } from "@/components/ui";
 import { mensajeDeError } from "@/lib/errores";
 
-/** Distritos operativos de la ciudad (referencia editable; queda en metadata). */
-const DISTRITOS = ["Distrito Norte", "Distrito Sur", "Distrito Este", "Distrito Oeste", "Centro"];
+/**
+ * El selector de "Distrito Norte / Sur / Este / Oeste / Centro" que estaba acá
+ * se fue, y no por simplificar: no existía. Los distritos oficiales son 20 y
+ * están numerados; esa lista de cinco era una división vieja que no coincidía
+ * con ninguno, se guardaba suelta en metadata y no la leía nadie. Al operador
+ * le preguntaba algo que no podía saber —"no sé a qué se refiere", dijo la
+ * Dirección de Bacheo— para grabar un dato que después no servía.
+ *
+ * El distrito real lo resuelve el trigger autocompletar_territorio() desde el
+ * punto, junto con el barrio y el circuito. Ahora se MUESTRA apenas se marca
+ * en el mapa, que era la pregunta de fondo: sí, se completa solo.
+ */
 
 /**
  * Carga del pedido de un vecino que reclama en persona o por teléfono. El que
@@ -38,7 +49,18 @@ export function FormularioCiudadano() {
   const [descripcion, setDescripcion] = useState("");
   const [solicitante, setSolicitante] = useState("");
   const [area, setArea] = useState("");
-  const [distrito, setDistrito] = useState("");
+  /** Distrito/barrio/circuito del punto, resueltos por la base. Solo se muestran. */
+  const [territorio, setTerritorio] = useState<{ distrito: number | null; barrio: string | null; circuito: string | null } | null>(null);
+  /** Nominatim casi nunca trae altura en SMT: si falta, se pide. */
+  const [faltaAltura, setFaltaAltura] = useState(false);
+  /**
+   * Las fotos del vecino. Dos, porque una sola rara vez alcanza: la del pozo
+   * de cerca y la de la cuadra para ubicarlo. Opcionales — el pedido por
+   * teléfono no tiene foto y no por eso vale menos.
+   */
+  const [fotos, setFotos] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const inputFoto = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [creado, setCreado] = useState<number | null>(null);
   const [capa, setCapa] = useState<CapaPuntos | null>(null);
@@ -72,8 +94,15 @@ export function FormularioCiudadano() {
     const pedido = ++georevRef.current;
     try {
       const res = await fetch(`/api/georreversa?lat=${lat}&lon=${lon}`);
-      const data = (await res.json()) as { direccion: string | null };
-      if (pedido === georevRef.current && data.direccion) escribirSiNadieTocoNada(data.direccion);
+      const data = (await res.json()) as {
+        direccion: string | null;
+        altura: boolean;
+        territorio: { distrito: number | null; barrio: string | null; circuito: string | null } | null;
+      };
+      if (pedido !== georevRef.current) return;
+      setTerritorio(data.territorio);
+      setFaltaAltura(data.direccion != null && !data.altura);
+      if (data.direccion) escribirSiNadieTocoNada(data.direccion);
     } catch {
       // sin dirección automática: se escribe (o dicta) a mano
     } finally {
@@ -117,6 +146,30 @@ export function FormularioCiudadano() {
       },
       { enableHighAccuracy: true, timeout: 10000 },
     );
+  };
+
+  /** Se achican en el navegador antes de subir, igual que en el portal de empresas. */
+  const agregarFotos = async (lista: FileList | null) => {
+    if (!lista || lista.length === 0) return;
+    const libres = 2 - fotos.length;
+    if (libres <= 0) return;
+    const nuevas: File[] = [];
+    const nuevosPreviews: string[] = [];
+    for (const archivo of Array.from(lista).slice(0, libres)) {
+      const { archivo: listo } = await comprimirFoto(archivo);
+      nuevas.push(listo);
+      nuevosPreviews.push(URL.createObjectURL(listo));
+    }
+    setFotos((v) => [...v, ...nuevas]);
+    setPreviews((v) => [...v, ...nuevosPreviews]);
+    if (inputFoto.current) inputFoto.current.value = "";
+  };
+
+  const quitarFoto = (i: number) => {
+    const url = previews[i];
+    if (url) URL.revokeObjectURL(url);
+    setFotos((v) => v.filter((_, n) => n !== i));
+    setPreviews((v) => v.filter((_, n) => n !== i));
   };
 
   const cargarArchivo = async (archivo: File | undefined) => {
@@ -171,17 +224,18 @@ export function FormularioCiudadano() {
     setError(null);
     startTransition(async () => {
       try {
-        const r = await crearDemandaCiudadano({
-          lat: punto!.lat,
-          lon: punto!.lon,
-          tipo,
-          descripcion: descripcion.trim(),
-          direccion: direccion.trim(),
-          solicitante: solicitante.trim(),
-          area: area.trim(),
-          distrito: distrito.trim() || undefined,
-          desdeGps,
-        });
+        const fd = new FormData();
+        fd.set("lat", String(punto!.lat));
+        fd.set("lon", String(punto!.lon));
+        fd.set("tipo", tipo);
+        fd.set("descripcion", descripcion.trim());
+        fd.set("direccion", direccion.trim());
+        fd.set("solicitante", solicitante.trim());
+        fd.set("area", area.trim());
+        if (desdeGps) fd.set("desdeGps", "1");
+        if (fotos[0]) fd.set("foto1", fotos[0]);
+        if (fotos[1]) fd.set("foto2", fotos[1]);
+        const r = await crearDemandaCiudadano(fd);
         setCreado(r.id ?? null);
         router.refresh();
       } catch (e) {
@@ -196,11 +250,6 @@ export function FormularioCiudadano() {
         <p className="text-lg font-bold text-resuelto">Pedido registrado ✓</p>
         <p className="mt-1 text-sm text-texto-2">
           Quedó como demanda <span className="num font-bold">#{creado}</span> con fuente Carga manual
-          {distrito && (
-            <>
-              {" "}({distrito})
-            </>
-          )}
           . Atención Ciudadana la verá en la bandeja para vincularla.
         </p>
         <button
@@ -288,6 +337,29 @@ export function FormularioCiudadano() {
             {punto.lat.toFixed(6)}, {punto.lon.toFixed(6)} {desdeGps && <span className="text-resuelto">· GPS</span>}
           </p>
         )}
+        {/* "¿Se completa solo el distrito?" — sí, siempre se completó: lo
+            resuelve el trigger desde el punto. Lo que faltaba era MOSTRARLO,
+            para que el operador no tuviera que adivinarlo ni elegirlo a mano. */}
+        {territorio && (territorio.distrito != null || territorio.barrio || territorio.circuito) && (
+          <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+            {territorio.distrito != null && (
+              <span className="rounded bg-celeste/10 px-2 py-0.5 font-semibold text-celeste">
+                Distrito {territorio.distrito}
+              </span>
+            )}
+            {territorio.barrio && (
+              <span className="rounded bg-panel-3 px-2 py-0.5 font-semibold text-texto-2">
+                {territorio.barrio}
+              </span>
+            )}
+            {territorio.circuito && (
+              <span className="rounded bg-panel-3 px-2 py-0.5 font-semibold text-texto-2">
+                Circuito {territorio.circuito}
+              </span>
+            )}
+            <span className="text-texto-3">· se completan solos con el punto</span>
+          </p>
+        )}
         {superficie === "ripio" && (
           <div className="mt-2 rounded-xl border border-encurso/50 bg-encurso/10 px-3 py-2.5 text-[13px] leading-snug">
             <b className="text-encurso">Ojo: acá no hay asfalto.</b>{" "}
@@ -324,6 +396,16 @@ export function FormularioCiudadano() {
           {dictadoDireccion.error && (
             <p className="mt-1 text-xs text-peligro">{dictadoDireccion.error}</p>
           )}
+          {/* La altura es el dato que más falta y el que más se necesita para
+              llegar a la cuadra. El mapa base no la tiene para casi ninguna
+              calle de la ciudad, así que antes se guardaba "Avenida
+              Independencia" a secas y nadie sabía a qué altura ir. Ahora se
+              avisa en vez de dejarlo pasar en silencio. */}
+          {faltaAltura && (
+            <p className="mt-1 text-xs leading-snug text-amarillo">
+              El mapa no tiene la altura de esta calle: agregala a mano si el vecino la sabe.
+            </p>
+          )}
         </div>
         <div>
           <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Tipo de problema</label>
@@ -350,19 +432,6 @@ export function FormularioCiudadano() {
             placeholder="Ej: Dirección de Bacheo, mesa de entradas"
             className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
           />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Distrito (si se sabe)</label>
-          <select
-            value={distrito}
-            onChange={(e) => setDistrito(e.target.value)}
-            className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm"
-          >
-            <option value="">Sin especificar</option>
-            {DISTRITOS.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
         </div>
       </div>
 
@@ -395,6 +464,49 @@ export function FormularioCiudadano() {
         {dictadoDescripcion.error && (
           <p className="mt-1 text-xs text-peligro">{dictadoDescripcion.error}</p>
         )}
+      </div>
+
+      {/* LAS FOTOS DEL VECINO. Llegaba al mostrador con la foto en el teléfono
+          y no había dónde ponerla: el pedido quedaba siendo solo texto. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
+          Fotos <span className="normal-case">(hasta 2, opcionales)</span>
+        </label>
+        <input
+          ref={inputFoto}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => void agregarFotos(e.target.files)}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          {previews.map((url, i) => (
+            <div key={url} className="relative h-24 w-24 overflow-hidden rounded-lg border border-borde-2">
+              <img src={url} alt={`Foto ${i + 1} del pedido`} className="h-full w-full object-cover" />
+              <button
+                onClick={() => quitarFoto(i)}
+                title="Quitar esta foto"
+                className="absolute top-0.5 right-0.5 rounded bg-black/60 p-0.5 text-white transition hover:bg-peligro"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          {fotos.length < 2 && (
+            <button
+              onClick={() => inputFoto.current?.click()}
+              className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-borde-2 text-[11px] font-semibold text-texto-3 transition hover:border-celeste/60 hover:text-celeste"
+            >
+              <Camera size={20} />
+              Agregar
+            </button>
+          )}
+        </div>
+        <p className="mt-1 text-[11px] text-texto-3">
+          Si el vecino trae la foto en el teléfono, sacale una captura o pedísela: sirve para validar el
+          pedido sin ir hasta el lugar.
+        </p>
       </div>
 
       {error && <p className="text-sm text-peligro">{error}</p>}
