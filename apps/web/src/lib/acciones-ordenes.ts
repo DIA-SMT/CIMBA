@@ -1776,6 +1776,145 @@ export async function reportarItemNoEjecutable(formData: FormData) {
 // ── Corrección del tipo de intervención (Bacheo) ─────────────────────────────
 
 /** "Capaz que empieza como bacheo y al final se hizo cambio de paño": Bacheo lo corrige. */
+/**
+ * CORREGIR UN BACHE YA CERRADO.
+ *
+ * "Que luego de hacer el cierre de un bache se puedan corregir los parámetros.
+ * Todos nos equivocamos, seguro cargan mal" — Dirección de Bacheo, 12/09.
+ *
+ * Tenía razón y el sistema no lo contemplaba: la medida entraba una vez, desde
+ * un teléfono, con guantes, y quedaba fija para siempre. Un 2 que salió 20
+ * inflaba los m² de la empresa y las toneladas del acta, y la única salida era
+ * dejarlo mal.
+ *
+ * Corregir toca CUATRO filas y las cuatro tienen que moverse juntas, o los
+ * números se contradicen entre pantallas:
+ *
+ *   orden_items     la medida que ve la empresa y con la que se arma el acta
+ *                   (volumen_m3 es columna generada: se recalcula sola)
+ *   intervenciones  la que alimenta la brecha y las métricas — acá el volumen
+ *                   NO es generado y hay que escribirlo a mano
+ *   incidentes      la superficie del problema físico
+ *   auditoria       quién cambió qué, por qué y cuándo
+ *
+ * NO se corrige lo que ya está en un acta firmada: eso se certificó y se pagó,
+ * y cambiarlo por atrás rompería la correspondencia entre lo que dice CIMBA y
+ * lo que dice el expediente. Para eso está la desviación del acta siguiente.
+ */
+export async function corregirMedidasItem(formData: FormData) {
+  const sesion = await requerirRol("planificacion", "supervision");
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      ...camposMedicion,
+      tipoObra: z.enum(["provisorio", "planificado", "sobre_adoquin"]).optional(),
+      motivo: z.string().min(3).max(500),
+    })
+    .parse({
+      itemId: formData.get("itemId"),
+      medicion: formData.get("medicion") || undefined,
+      anchoM: formData.get("anchoM") || undefined,
+      largoM: formData.get("largoM") || undefined,
+      superficieM2: formData.get("superficieM2") || undefined,
+      volumenM3: formData.get("volumenM3") || undefined,
+      espesorCm: formData.get("espesorCm"),
+      tipoObra: formData.get("tipoObra") || undefined,
+      motivo: formData.get("motivo"),
+    });
+
+  const medida = resolverMedicion(datos);
+  // Misma derivación que el reporte: el extendido sale de la medida.
+  const modalidad = datos.tipoObra ?? "planificado";
+  const tipoObra = modalidad === "planificado" && medida.superficieM2 > 4 ? "extendido" : modalidad;
+  const volumen = Math.round(medida.superficieM2 * (medida.espesorCm / 100) * 100) / 100;
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.intervencion_id, oi.incidente_id, oi.acta_id,
+             oi.superficie_m2, oi.espesor_cm, oi.tipo_obra
+      from orden_items oi where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+    if (String(item.estado) !== "hecho" || item.intervencion_id == null) {
+      throw new ErrorVisible("Este item no tiene trabajo reportado: no hay medidas que corregir");
+    }
+    if (item.acta_id != null) {
+      throw new ErrorVisible(
+        "Este trabajo ya está en un acta firmada: no se puede corregir. La diferencia se salda en el acta siguiente.",
+      );
+    }
+
+    /**
+     * El ANTES completo a la auditoría, antes de pisarlo. El trigger auditar()
+     * también registra el update, pero sin el motivo: y "por qué se cambió" es
+     * justamente lo que hay que poder contestar cuando una medida cambia
+     * después de que la empresa la firmó.
+     */
+    await tx.execute(sql`
+      insert into auditoria (entidad, entidad_id, accion, actor, diff)
+      values ('orden_item', ${datos.itemId}, 'medidas_corregidas', ${sesion.sub}::uuid,
+              ${JSON.stringify({
+                motivo: datos.motivo,
+                por: sesion.nombre,
+                antes: {
+                  superficie_m2: item.superficie_m2 != null ? Number(item.superficie_m2) : null,
+                  espesor_cm: item.espesor_cm != null ? Number(item.espesor_cm) : null,
+                  tipo_obra: item.tipo_obra ?? null,
+                },
+                despues: {
+                  superficie_m2: medida.superficieM2,
+                  espesor_cm: medida.espesorCm,
+                  tipo_obra: tipoObra,
+                },
+              })}::jsonb)
+    `);
+
+    // volumen_m3 NO se toca: es columna generada sobre superficie y espesor.
+    await tx.execute(sql`
+      update orden_items set
+        ancho_m = ${medida.anchoM}, largo_m = ${medida.largoM},
+        espesor_cm = ${medida.espesorCm}, superficie_m2 = ${medida.superficieM2},
+        tipo_obra = ${tipoObra}::tipo_obra_bacheo,
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          medicion: medida.medicion,
+          correccion: { por: sesion.nombre, en: new Date().toISOString(), motivo: datos.motivo },
+        })}::jsonb
+      where id = ${datos.itemId}
+    `);
+
+    // Acá el volumen SÍ hay que escribirlo: no es generado.
+    await tx.execute(sql`
+      update intervenciones set
+        superficie_m2 = ${medida.superficieM2},
+        volumen_m3 = ${volumen},
+        tipo_obra = ${tipoObra}::tipo_obra_bacheo,
+        materiales = coalesce(materiales, '{}'::jsonb) || ${JSON.stringify({
+          ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
+          espesor_cm: medida.espesorCm,
+          medicion: medida.medicion,
+        })}::jsonb,
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          correccion: { por: sesion.nombre, en: new Date().toISOString(), motivo: datos.motivo },
+        })}::jsonb
+      where id = ${Number(item.intervencion_id)}
+    `);
+
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set superficie_m2 = ${medida.superficieM2}
+        where id = ${Number(item.incidente_id)}
+      `);
+    }
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/incidentes");
+  revalidatePath("/intervenciones");
+  return { ok: true };
+}
+
 export async function corregirTipoIntervencion(entrada: { intervencionId: number; tipo: string }) {
   const sesion = await requerirRol("planificacion", "supervision");
   const datos = z

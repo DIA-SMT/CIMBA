@@ -12,6 +12,7 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { BorrarItem } from "./borrar-item";
+import { CorregirMedidas } from "./corregir-medidas";
 import { SelectTipoIntervencion } from "./select-tipo-intervencion";
 import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
 import { PanelTabla } from "@/components/tabla-deslizable";
@@ -565,7 +566,23 @@ function FilaItem({
           <span className="text-xs text-texto-3">—</span>
         )}
       </td>
-      <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">{medidas ?? "—"}</td>
+      <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">
+        <span className="flex items-center gap-1.5">
+          {medidas ?? "—"}
+          {/* "Todos nos equivocamos, seguro cargan mal": la medida entra desde
+              un teléfono con guantes y hasta ahora quedaba fija para siempre.
+              Solo sobre trabajo ya reportado y todavía sin certificar. */}
+          {puedePlanificar && item.estado === "hecho" && item.intervencionId != null && (
+            <CorregirMedidas
+              itemId={item.id}
+              superficieM2={item.superficieM2}
+              espesorCm={item.espesorCm}
+              tipoObra={item.tipoObra ?? null}
+              enActa={item.actaId != null}
+            />
+          )}
+        </span>
+      </td>
       <td className="num px-3 py-2.5 text-right" style={{ color: item.superficieM2 != null ? "#199e70" : "#5c6b84" }}>
         {item.superficieM2 != null ? numero(item.superficieM2) : "—"}
       </td>

@@ -386,6 +386,10 @@ export interface ItemOrden {
   anchoM: number | null;
   largoM: number | null;
   espesorCm: number | null;
+  /** Ya entró en un acta de medición firmada: certificado, no se corrige. */
+  actaId: number | null;
+  /** Modalidad del protocolo DOV con la que se certifica (planificado, extendido…). */
+  tipoObra: string | null;
   superficieM2: number | null;
   intervencionId: number | null;
   /** Cómo se resolvió (bacheo / pano_hormigon / carpeta / enripiado); null si no se reportó. */
@@ -505,6 +509,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       anchoM: f.ancho_m != null ? Number(f.ancho_m) : null,
       largoM: f.largo_m != null ? Number(f.largo_m) : null,
       espesorCm: f.espesor_cm != null ? Number(f.espesor_cm) : null,
+      actaId: f.acta_id != null ? Number(f.acta_id) : null,
+      tipoObra: (f.tipo_obra as string) ?? null,
       superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
       intervencionId: f.intervencion_id != null ? Number(f.intervencion_id) : null,
       tipoIntervencion: (f.tipo_intervencion as string) ?? null,
@@ -1095,5 +1101,44 @@ export async function contarOrdenesVencidas(sesion: Sesion): Promise<number> {
         and ot.vence_en < (now() at time zone 'America/Argentina/Tucuman')::date
     `)) as unknown as Array<{ n: number }>;
     return Number(filas[0]?.n ?? 0);
+  });
+}
+
+/**
+ * Vive acá y NO en acciones-ordenes.ts porque ese archivo es "use server":
+ * cualquier export suyo es una server action que el cliente puede invocar, y
+ * esta función recibe la sesión como argumento — publicarla habría dejado que
+ * el navegador dijera quién es. Acá adentro es una consulta común, llamada
+ * desde un server component que ya resolvió la sesión.
+ *
+ * El historial de correcciones de un item: quién tocó qué y por qué. Sale de
+ * `auditoria`, que ya venía registrando todo por trigger — no hace falta una
+ * tabla nueva para contestar "esto lo cambió alguien, ¿quién?".
+ */
+export async function historialItem(
+  sesion: Sesion,
+  itemId: number,
+): Promise<Array<{ accion: string; cuando: string; por: string | null; motivo: string | null; antes: unknown; despues: unknown }>> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select a.accion, a.ocurrido_en, a.diff, p.nombre as actor_nombre
+      from auditoria a
+      left join perfiles p on p.id = a.actor
+      where a.entidad in ('orden_item', 'orden_items') and a.entidad_id = ${itemId}
+        and a.accion <> 'insert'
+      order by a.ocurrido_en desc
+      limit 50
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => {
+      const diff = (f.diff ?? {}) as Record<string, unknown>;
+      return {
+        accion: String(f.accion),
+        cuando: String(f.ocurrido_en),
+        por: (diff.por as string) ?? (f.actor_nombre as string) ?? null,
+        motivo: (diff.motivo as string) ?? null,
+        antes: diff.antes ?? null,
+        despues: diff.despues ?? null,
+      };
+    });
   });
 }
