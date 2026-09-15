@@ -204,6 +204,20 @@ export default async function PaginaOrdenEmpresa({
         </p>
       )}
 
+      {/**
+       * ARRIBA, no al final. La cuadrilla no trabaja la orden leyéndola de
+       * principio a fin: hace un barrido norte-sur y este-oeste de la calle y
+       * va cargando los baches que ejecuta, que en su mayoría NO están en el
+       * papel. Agregar un punto nuevo es la acción más frecuente del portal y
+       * estaba debajo de la lista entera — en una orden de treinta items, a
+       * treinta scrolls de distancia. Pedido de la Dirección de Bacheo (12/09).
+       */}
+      {activa && (
+        <div className="mb-4">
+          <ProponerItem ordenId={orden.id} />
+        </div>
+      )}
+
       {/* Lo pendiente, uno por uno y bien grande. La lista es una isla
           cliente porque busca, ordena por cercanía y dibuja el mapa de la
           orden: lo que hace navegable una orden de decenas de baches. */}
@@ -214,13 +228,6 @@ export default async function PaginaOrdenEmpresa({
         <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">
           No queda nada pendiente en esta orden. Buen trabajo.
         </p>
-      )}
-
-      {/* La calle manda: lo que la cuadrilla encuentra y no estaba en el papel */}
-      {activa && (
-        <div className="mt-4">
-          <ProponerItem ordenId={orden.id} />
-        </div>
       )}
 
       {(propuestos.length > 0 || rechazados.length > 0) && (

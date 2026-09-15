@@ -51,6 +51,21 @@ export function parsearBacheoMensualTexto(contenido: string, etiqueta: string): 
         match_geocoder: limpiarTexto(f.name_geocoded),
         calidad_geo: f.calidad_geo ?? null,
         archivo: etiqueta,
+        /**
+         * QUIÉN LO HIZO. Estas planillas son el bacheo por ADMINISTRACIÓN —
+         * las cuadrillas propias del municipio—, y hasta ahora entraban sin
+         * decirlo: 1.314 intervenciones quedaron sin origen y sin empresa,
+         * mientras las de la app de la Dirección (Ingeco, Elías Maza) y las de
+         * SIGOV sí la traían. Agrupar el trabajo por ejecutor dejaba afuera al
+         * ejecutor más grande, y la Dirección lo notó mirando las fotos:
+         * "todos los baches con foto son de Ingeco" — porque el resto no decía
+         * de quién era.
+         *
+         * Mismas claves que usan bacheo-empresas y sigov-mysql: si acá se
+         * llamaran distinto, cada consulta tendría que conocer las tres.
+         */
+        origen: "bacheo_planillas",
+        empresa: "ADMINISTRACIÓN (cuadrillas propias)",
       },
     });
   });
