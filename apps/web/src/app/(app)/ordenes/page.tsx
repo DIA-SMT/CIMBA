@@ -10,6 +10,7 @@ import {
   resumenCircuitos,
 } from "@/lib/ordenes";
 import { estaVencida, fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
@@ -20,6 +21,7 @@ import {
   COLOR_ESTADO_ORDEN,
   fondoTenue,
   COLOR_PRIORIDAD,
+  ETIQUETA_AMBITO,
   ETIQUETA_ESTADO_ORDEN,
   ETIQUETA_PRIORIDAD,
 } from "./etiquetas";
@@ -278,10 +280,18 @@ export default async function PaginaOrdenes({
               <th className="px-4 py-3">Número</th>
               <th className="px-4 py-3">Estado</th>
               <th className="px-4 py-3">Empresa</th>
-              <th className="px-4 py-3">Circuito</th>
+              {/* "Circuito" decía "—" en casi todas: la mayoría de las
+                  órdenes se arman por distrito o por barrio. Ahora la columna
+                  dice cuál es el ámbito y cuál su nombre. */}
+              <th className="px-4 py-3">Ámbito</th>
               <th className="px-4 py-3">Prioridad</th>
               <th className="px-4 py-3">Progreso</th>
               <th className="num px-4 py-3 text-right">m²</th>
+              {/* La unidad con la que se certifica el pago. "No se olviden de
+                  cargar volúmenes, así podemos certificar las TN colocadas"
+                  (15/09): estaba en la ficha y en certificación, pero no en la
+                  pantalla por la que se entra. */}
+              <th className="num px-4 py-3 text-right">Toneladas</th>
               <th className="px-4 py-3">Vence</th>
               <th className="px-4 py-3" />
             </tr>
@@ -315,7 +325,18 @@ export default async function PaginaOrdenes({
                   <td className="max-w-44 truncate px-4 py-2.5" title={o.empresaNombre}>
                     {o.empresaNombre}
                   </td>
-                  <td className="px-4 py-2.5 font-semibold">{o.circuitoCodigo ?? "—"}</td>
+                  <td className="px-4 py-2.5">
+                    {o.ambitoNombre ? (
+                      <>
+                        <span className="text-[11px] text-texto-3">
+                          {ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"}
+                        </span>{" "}
+                        <span className="font-semibold">{o.ambitoNombre}</span>
+                      </>
+                    ) : (
+                      <span className="text-texto-3">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-xs" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
                     {ETIQUETA_PRIORIDAD[o.prioridad]}
                   </td>
@@ -331,6 +352,12 @@ export default async function PaginaOrdenes({
                   </td>
                   <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
                     {o.m2Reportados > 0 ? numero(o.m2Reportados) : "—"}
+                  </td>
+                  <td
+                    className="num px-4 py-2.5 text-right font-semibold"
+                    style={{ color: o.tnReportadas > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}
+                  >
+                    {o.tnReportadas > 0 ? formatoToneladas(o.tnReportadas) : "—"}
                   </td>
                   <td className={`num px-4 py-2.5 ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>
                     {fechaCorta(o.venceEn)}

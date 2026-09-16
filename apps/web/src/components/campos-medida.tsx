@@ -207,6 +207,34 @@ export function CamposMedida({
         </div>
       )}
 
+      {/**
+        * EL ESPESOR EN METROS: el error que vació las toneladas.
+        *
+        * El 15/09, un capataz cargó 16 baches con espesor 0,05 — los metros,
+        * no los centímetros. La columna guarda un decimal, así que quedaron en
+        * 0,1 cm: un milímetro de asfalto. El volumen dio 0,00 m³ y esos 16
+        * trabajos iban a certificar CERO toneladas, que es justo el dato que
+        * la certificación pidió que no falte.
+        *
+        * No se bloquea —el criterio del que está parado sobre el pozo manda—
+        * pero se avisa fuerte y se dice cuál es la conversión, porque el error
+        * es silencioso: nada en la pantalla se veía mal.
+        */}
+      {(() => {
+        const e = aNumero(valor.espesor);
+        if (!(e > 0) || e >= 2.5) return null;
+        return (
+          <p className="mt-2 rounded-lg border border-peligro/50 bg-peligro/10 px-3 py-2 text-[12px] leading-snug">
+            <b className="text-peligro">¿{valor.espesor} cm?</b>{" "}
+            <span className="text-texto-2">
+              Un bacheo va de 4 a 8 cm. Si lo estás midiendo en metros, el espesor en centímetros es{" "}
+              <b className="num text-texto">{Math.round(e * 100)}</b>. Con {valor.espesor} cm el trabajo
+              certifica casi cero toneladas.
+            </span>
+          </p>
+        );
+      })()}
+
       {/* Los m² primero porque son lo que el capataz acaba de medir, la
           tonelada al lado porque es la unidad con la que se certifica el pago:
           quien firma el acta no tendría que hacer la cuenta en un papel. */}

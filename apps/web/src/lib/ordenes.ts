@@ -297,6 +297,15 @@ export interface OrdenResumen {
   empresaId: number;
   empresaNombre: string;
   circuitoCodigo: string | null;
+  /**
+   * POR DÓNDE SE DEFINIÓ. El listado mostraba una columna "Circuito" que para
+   * la mayoría decía "—", porque la mayoría de las órdenes no se arman por
+   * circuito sino por distrito o barrio. Mismo arreglo que ya tenían el
+   * detalle y la hoja impresa: acá faltaba, y es la pantalla por la que se
+   * entra a todo.
+   */
+  ambito: AmbitoOrden;
+  ambitoNombre: string | null;
   /** TODOS los items de la orden, incluido lo que la empresa propuso y
    *  todavía no se validó. Casi nunca es lo que hay que mostrar. */
   items: number;
@@ -323,6 +332,28 @@ export interface OrdenResumen {
   creadoEn: string;
 }
 
+/**
+ * El nombre del ámbito según cuál sea. Una sola función para el listado y el
+ * detalle: si cada uno lo resolviera por su cuenta, la lista y la ficha de la
+ * misma orden podrían terminar diciendo cosas distintas.
+ */
+function nombreDelAmbito(f: Record<string, unknown>): string | null {
+  switch ((f.ambito as AmbitoOrden) ?? "circuito") {
+    case "distrito":
+      return f.distrito_id != null ? String(f.distrito_id) : null;
+    case "barrio":
+      return (f.barrio_nombre as string) ?? null;
+    case "corredor":
+      return (f.corredor_nombre as string) ?? null;
+    case "zona":
+      return (f.zona_nombre as string) ?? null;
+    case "colector":
+      return (f.colector as string) ?? null;
+    default:
+      return (f.circuito_codigo as string) ?? null;
+  }
+}
+
 export async function listarOrdenes(
   sesion: Sesion,
   filtros: { estado?: string; empresaId?: number } = {},
@@ -334,6 +365,8 @@ export async function listarOrdenes(
       select ot.id, ot.numero, ot.estado, ot.prioridad, ot.titulo, ot.empresa_id,
              e.nombre as empresa_nombre, c.codigo as circuito_codigo,
              ot.emitida_en, ot.vence_en::text as vence_en, ot.creado_en,
+             ot.ambito, ot.distrito_id, ot.colector,
+             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
              (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
                 and oi.estado not in ('propuesto','rechazado'))::int as en_plan,
@@ -349,6 +382,9 @@ export async function listarOrdenes(
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
+      left join barrios b on b.id = ot.barrio_id
+      left join corredores co on co.id = ot.corredor_id
+      left join zonas_bacheo z on z.id = ot.zona_id
       where (${estado}::text is null or ot.estado = (${estado})::estado_orden)
         and (${empresaId}::bigint is null or ot.empresa_id = ${empresaId})
       order by ot.creado_en desc
@@ -364,6 +400,8 @@ export async function listarOrdenes(
       empresaId: Number(f.empresa_id),
       empresaNombre: String(f.empresa_nombre),
       circuitoCodigo: (f.circuito_codigo as string) ?? null,
+      ambito: ((f.ambito as AmbitoOrden) ?? "circuito"),
+      ambitoNombre: nombreDelAmbito(f),
       items: Number(f.items ?? 0),
       enPlan: Number(f.en_plan ?? 0),
       cerrados: Number(f.cerrados ?? 0),

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -69,6 +70,28 @@ function datosPropuesto(metadata: Record<string, unknown>): { por: string | null
   return {
     por: typeof p?.por === "string" ? p.por : null,
     en: typeof p?.en === "string" ? p.en : null,
+  };
+}
+
+/**
+ * Lo que la cuadrilla cargó cuando propuso el bache YA TAPADO: la foto del
+ * después, cómo lo midió y quién lo hizo. Sin esto, validar era decidir a
+ * ciegas — "faltaría poder acceder al registro para ver las fotos y los datos
+ * que cargaron, o que aparezca la foto del antes y después ahí para comparar
+ * y validar con más confianza" (15/09).
+ */
+function datosYaEjecutado(metadata: Record<string, unknown>): {
+  fotoDespues: string | null;
+  medicion: string | null;
+  capataz: string | null;
+} {
+  const y = metadata.ya_ejecutado as
+    | { foto_despues?: unknown; medicion?: unknown; capataz?: unknown }
+    | undefined;
+  return {
+    fotoDespues: typeof y?.foto_despues === "string" ? y.foto_despues : null,
+    medicion: typeof y?.medicion === "string" ? y.medicion : null,
+    capataz: typeof y?.capataz === "string" ? y.capataz : null,
   };
 }
 
@@ -218,15 +241,31 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 const prop = datosPropuesto(it.metadata);
                 const ruta = fotoPropuesta(it.metadata);
                 const urlPropuesta = ruta ? urlFoto({ storagePath: ruta, urlExterna: null }) : null;
-                const fotosPropuesto: FotoVisor[] = urlPropuesta
-                  ? [
-                      {
-                        url: urlPropuesta,
-                        alt: "Foto del bache propuesto",
-                        etiqueta: `PROPUESTO · ${it.direccion ?? `Item #${it.id}`}`,
-                      },
-                    ]
-                  : [];
+                const ejec = datosYaEjecutado(it.metadata);
+                const urlDespues = ejec.fotoDespues
+                  ? urlFoto({ storagePath: ejec.fotoDespues, urlExterna: null })
+                  : null;
+                /* ANTES y DESPUÉS juntos, en ese orden: validar es comparar. */
+                const fotosPropuesto: FotoVisor[] = [
+                  ...(urlPropuesta
+                    ? [
+                        {
+                          url: urlPropuesta,
+                          alt: "Foto del bache propuesto",
+                          etiqueta: `ANTES · ${it.direccion ?? `Item #${it.id}`}`,
+                        },
+                      ]
+                    : []),
+                  ...(urlDespues
+                    ? [
+                        {
+                          url: urlDespues,
+                          alt: "Foto del trabajo terminado",
+                          etiqueta: `DESPUÉS · ${it.direccion ?? `Item #${it.id}`}`,
+                        },
+                      ]
+                    : []),
+                ];
                 return (
                   <Panel key={it.id} className="border-amarillo/40 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -244,6 +283,44 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         </p>
                         {it.observaciones && (
                           <p className="mt-1 text-sm text-texto-2">{it.observaciones}</p>
+                        )}
+
+                        {/**
+                          * LO QUE CARGARON, A LA VISTA DE QUIEN VALIDA.
+                          *
+                          * Si la cuadrilla lo propuso YA TAPADO, validar no es
+                          * "¿existe este bache?" sino "¿le creo la medida?" — y
+                          * eso no se puede contestar sin ver la medida. Va con
+                          * las toneladas calculadas, que es lo que se certifica:
+                          * validar esto es habilitar un pago.
+                          */}
+                        {it.superficieM2 != null && it.espesorCm != null && (
+                          <div className="mt-2 rounded-lg border border-amarillo/40 bg-amarillo/5 px-3 py-2 text-[12px] leading-relaxed">
+                            <b className="text-amarillo">Ya lo taparon y lo midieron.</b>{" "}
+                            <span className="num font-semibold">
+                              {numero(it.superficieM2)} m²
+                            </span>{" "}
+                            · espesor <span className="num">{numero(it.espesorCm)} cm</span> ·{" "}
+                            <span className="num font-semibold text-amarillo">
+                              {formatoToneladas(toneladasDe(volumenDe(it.superficieM2, it.espesorCm)))}
+                            </span>
+                            {it.anchoM != null && it.largoM != null && (
+                              <>
+                                {" "}
+                                · <span className="num">{numero(it.anchoM)} × {numero(it.largoM)} m</span>
+                              </>
+                            )}
+                            {ejec.medicion && <> · medido por {ejec.medicion}</>}
+                            {ejec.capataz && (
+                              <>
+                                {" "}
+                                · capataz <b className="text-texto-2">{ejec.capataz}</b>
+                              </>
+                            )}
+                            <span className="mt-0.5 block text-texto-3">
+                              Al validar se crea la intervención con estas medidas y el item pasa a hecho.
+                            </span>
+                          </div>
                         )}
                         {puedeSupervisar && (
                           <div className="mt-3">
