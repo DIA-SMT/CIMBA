@@ -7,6 +7,7 @@ import {
   EMPRESAS_HABILITADAS_AGUA,
   PRIORIDADES_VIALES,
   type FuenteDemanda,
+  type PrecisionGeocod,
   type PrioridadVial,
 } from "@cimba/domain";
 import { crearOrden } from "@/lib/acciones-ordenes";
@@ -124,6 +125,9 @@ interface Tramo {
   alturaHasta?: string;
   resuelta?: string;
   resueltaHasta?: string;
+  /** Si el punto es la puerta o apenas la calle. Ver PrecisionGeocod. */
+  precision?: PrecisionGeocod;
+  precisionHasta?: PrecisionGeocod;
   ubicando?: boolean;
   sinResultado?: boolean;
   /** Recorrido dibujado en el mapa: [[lon, lat], …]. */
@@ -374,10 +378,30 @@ export function FormularioOrden({
   const actualizarTramo = (i: number, cambios: Partial<Tramo>) =>
     setTramos((ts) => ts.map((t, j) => (j === i ? { ...t, ...cambios } : t)));
 
-  const geocodificar = async (q: string) => {
-    const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}`);
+  /**
+   * EL PUNTO DE REFERENCIA. OSM no tiene la altura de la mayoría de las calles
+   * de la ciudad: cuando no la tiene, devuelve los TRAMOS de la calle y hay que
+   * elegir uno. Elegir "el primero" es elegir al azar, y así fue como
+   * "Colombia 4500" y "Colombia 4576" terminaron a 3,2 km.
+   *
+   * Quien arma una orden carga direcciones de UNA zona, así que el tramo que ya
+   * ubicó es la mejor pista disponible. Se manda como referencia y el
+   * geocodificador elige el tramo más cercano a eso.
+   */
+  const referencia = (excepto: number) => {
+    const otro = tramos.find((t, j) => j !== excepto && t.lat != null && t.lon != null);
+    return otro ? `&cerca=${otro.lat},${otro.lon}` : "";
+  };
+
+  const geocodificar = async (q: string, cerca = "") => {
+    const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}${cerca}`);
     const j = (await r.json()) as {
-      resultado: { punto: { lat: number; lon: number }; confianza: number; direccionResuelta: string } | null;
+      resultado: {
+        punto: { lat: number; lon: number };
+        confianza: number;
+        precision: PrecisionGeocod;
+        direccionResuelta: string;
+      } | null;
     };
     return j.resultado;
   };
@@ -395,11 +419,12 @@ export function FormularioOrden({
     const calle = t.direccion.trim();
     const desde = (t.alturaDesde ?? "").trim();
     const hasta = (t.alturaHasta ?? "").trim();
+    const cerca = referencia(i);
     try {
       if (desde && hasta) {
         const [a, b] = await Promise.all([
-          geocodificar(`${calle} ${desde}`),
-          geocodificar(`${calle} ${hasta}`),
+          geocodificar(`${calle} ${desde}`, cerca),
+          geocodificar(`${calle} ${hasta}`, cerca),
         ]);
         if (a && b) {
           actualizarTramo(i, {
@@ -410,13 +435,15 @@ export function FormularioOrden({
             lonHasta: b.punto.lon,
             resuelta: a.direccionResuelta,
             resueltaHasta: b.direccionResuelta,
+            precision: a.precision,
+            precisionHasta: b.precision,
           });
           return;
         }
         actualizarTramo(i, { ubicando: false, sinResultado: true });
         return;
       }
-      const r = await geocodificar(calle);
+      const r = await geocodificar(calle, cerca);
       if (r) {
         actualizarTramo(i, {
           ubicando: false,
@@ -426,9 +453,18 @@ export function FormularioOrden({
           lonHasta: undefined,
           resuelta: r.direccionResuelta,
           resueltaHasta: undefined,
+          precision: r.precision,
+          precisionHasta: undefined,
         });
       } else {
-        actualizarTramo(i, { ubicando: false, lat: undefined, lon: undefined, resuelta: undefined, sinResultado: true });
+        actualizarTramo(i, {
+          ubicando: false,
+          lat: undefined,
+          lon: undefined,
+          resuelta: undefined,
+          precision: undefined,
+          sinResultado: true,
+        });
       }
     } catch {
       actualizarTramo(i, { ubicando: false, sinResultado: true });
@@ -871,12 +907,44 @@ export function FormularioOrden({
                 </button>
                 {t.lat != null && t.lon != null && (
                   <div className="w-full">
-                    <span className="text-[11px]" style={{ color: "#199e70" }}>
-                      ✓ {t.resuelta ?? "ubicado"}
-                      {t.latHasta != null && t.lonHasta != null && (
-                        <> → {t.resueltaHasta ?? "segundo extremo"}</>
-                      )}
-                    </span>
+                    {/**
+                      * EL TILDE VERDE QUE MENTÍA.
+                      *
+                      * Acá salía siempre "✓ <dirección>" en verde, hubiera
+                      * encontrado la puerta o un tramo cualquiera de la calle.
+                      * OSM no tiene la altura de la mayoría de las calles de la
+                      * ciudad: el 65% de las direcciones del caché estaban
+                      * resueltas así, y "Colombia 4500" y "Colombia 4576"
+                      * quedaron a 3,2 km. En la pantalla las dos se veían igual
+                      * de bien.
+                      *
+                      * El punto de calle sirve —la calle es la correcta— pero
+                      * hay que correr el pin antes de mandar a nadie, y eso
+                      * ahora se pide con todas las letras.
+                      */}
+                    {(() => {
+                      const dudoso =
+                        t.precision !== "exacta" ||
+                        (t.latHasta != null && t.precisionHasta !== "exacta");
+                      if (!dudoso) {
+                        return (
+                          <span className="text-[11px]" style={{ color: "#199e70" }}>
+                            ✓ {t.resuelta ?? "ubicado"}
+                            {t.latHasta != null && t.lonHasta != null && (
+                              <> → {t.resueltaHasta ?? "segundo extremo"}</>
+                            )}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="block text-[11px] leading-snug text-amarillo">
+                          <b>Ubicación aproximada</b> — el callejero no tiene esta altura, así que el
+                          punto cayó sobre {t.resuelta ?? "la calle"} pero no en el número.{" "}
+                          <b>Corré el pin hasta el bache</b> antes de emitir: la cuadrilla va a donde
+                          diga el pin.
+                        </span>
+                      );
+                    })()}
                     {/* El geocodificador le pifia media cuadra seguido: el pin se
                         afina a mano y ese lat/lon ajustado es el que viaja en
                         crearOrden (actualizarTramo pisa t.lat/t.lon).
