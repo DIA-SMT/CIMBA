@@ -308,6 +308,9 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
 
         <div>
           <p className="mb-1.5 text-xs font-semibold tracking-wider text-texto-3 uppercase">Fotos</p>
+          {/* Antes a la izquierda y después a la derecha, igual que en el item de
+              una orden: el mismo capataz carga en las dos pantallas y no puede
+              tener que acordarse de que el orden cambia. Ver tarjeta-item.tsx. */}
           <div className="grid grid-cols-2 gap-2">
             <input
               ref={refDespues}
@@ -329,35 +332,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
                 void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)
               }
             />
-            <button
-              type="button"
-              onClick={() => refDespues.current?.click()}
-              disabled={cuadroOcupado.despues}
-              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
-                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
-              }`}
-            >
-              <Achicando visible={cuadroOcupado.despues} />
-              {previewDespues ? (
-                <>
-                  <img
-                    src={previewDespues}
-                    alt="Foto del trabajo terminado"
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
-                    DESPUÉS ✓ — tocá para cambiar
-                  </span>
-                </>
-              ) : (
-                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
-                  <Camera size={22} className="text-resuelto" />
-                  Cómo quedó
-                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
-                </span>
-              )}
-            </button>
             <button
               type="button"
               onClick={() => refAntes.current?.click()}
@@ -384,6 +358,35 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
                   <Camera size={22} className="text-celeste" />
                   Cómo estaba
                   <span className="text-[10px] font-medium text-texto-3">opcional</span>
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
+              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
+                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
+              }`}
+            >
+              <Achicando visible={cuadroOcupado.despues} />
+              {previewDespues ? (
+                <>
+                  <img
+                    src={previewDespues}
+                    alt="Foto del trabajo terminado"
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                    DESPUÉS ✓ — tocá para cambiar
+                  </span>
+                </>
+              ) : (
+                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                  <Camera size={22} className="text-resuelto" />
+                  Cómo quedó
+                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
                 </span>
               )}
             </button>

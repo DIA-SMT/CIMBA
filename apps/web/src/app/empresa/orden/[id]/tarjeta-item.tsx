@@ -889,7 +889,23 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             )}
           </div>
 
-          {/* Fotos: el después manda */}
+          {/**
+            * ANTES A LA IZQUIERDA, DESPUÉS A LA DERECHA — el orden de la calle.
+            *
+            * Estaban al revés: el después primero, porque es la foto
+            * obligatoria. Pero nadie lee dos cuadros de fotos por importancia,
+            * los lee en orden de tiempo, y el capataz ponía el antes en el
+            * cuadro de la izquierda —que era el del después— sin mirar el
+            * cartel. "Aquí veo porque están apareciendo fotos como invertidas
+            * entre el ANTES y el después: en la carga están invertidos"
+            * (Dirección de Bacheo, 16/09).
+            *
+            * La evidencia salía dada vuelta en la orden impresa y en la
+            * validación, que es donde se decide si el trabajo se certifica.
+            * Cuál es obligatoria ya lo dice la etiqueta debajo de cada cuadro;
+            * la posición tiene que decir otra cosa, y lo único que puede decir
+            * es primero y después.
+            */}
           <div className="grid grid-cols-2 gap-2">
             <input
               ref={refDespues}
@@ -910,29 +926,6 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               onChange={(e) => void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)}
             />
             <button
-              onClick={() => refDespues.current?.click()}
-              disabled={cuadroOcupado.despues}
-              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
-                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
-              }`}
-            >
-              <Achicando visible={cuadroOcupado.despues} />
-              {previewDespues ? (
-                <>
-                  <img src={previewDespues} alt="Foto del después" loading="lazy" className="h-full w-full object-cover" />
-                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
-                    DESPUÉS ✓ — tocá para cambiar
-                  </span>
-                </>
-              ) : (
-                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
-                  <Camera size={22} className="text-resuelto" />
-                  Foto del DESPUÉS
-                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
-                </span>
-              )}
-            </button>
-            <button
               onClick={() => refAntes.current?.click()}
               disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
@@ -952,6 +945,29 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                   <Camera size={22} className="text-celeste" />
                   Foto del ANTES
                   <span className="text-[10px] font-medium text-texto-3">opcional</span>
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
+              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
+                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
+              }`}
+            >
+              <Achicando visible={cuadroOcupado.despues} />
+              {previewDespues ? (
+                <>
+                  <img src={previewDespues} alt="Foto del después" loading="lazy" className="h-full w-full object-cover" />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                    DESPUÉS ✓ — tocá para cambiar
+                  </span>
+                </>
+              ) : (
+                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                  <Camera size={22} className="text-resuelto" />
+                  Foto del DESPUÉS
+                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
                 </span>
               )}
             </button>
