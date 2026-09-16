@@ -11,6 +11,20 @@ import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 type FC = FeatureCollection<Geometry, Record<string, unknown>>;
 
 /**
+ * Los recortes de tiempo. "Hoy" y "Esta semana" los pidió la Dirección de
+ * Bacheo (16/09) y son los dos que se usan parados frente al mapa: la pregunta
+ * de la mañana no es "qué se hizo en el trimestre" sino "qué mandamos hoy y
+ * dónde", que es justo lo que evita que dos inspectores generen la misma obra.
+ */
+const RANGOS = [
+  { dias: 1, etiqueta: "Hoy" },
+  { dias: 7, etiqueta: "Esta semana" },
+  { dias: 15, etiqueta: "15 días" },
+  { dias: 30, etiqueta: "30 días" },
+  { dias: 90, etiqueta: "90 días" },
+] as const;
+
+/**
  * DÓNDE SE ESTÁ TRABAJANDO: las órdenes del último mes, cada empresa con su
  * color. Nació de un problema concreto —dos inspectores generaron la misma
  * obra en la misma bocacalle— así que lo que tiene que responder de un vistazo
@@ -69,7 +83,7 @@ export function MapaOrdenes() {
         </button>
         {abierto && (
           <>
-            {[15, 30, 90].map((d) => (
+            {RANGOS.map(({ dias: d, etiqueta }) => (
               <button
                 key={d}
                 onClick={() => setDias(d)}
@@ -77,7 +91,7 @@ export function MapaOrdenes() {
                   dias === d ? "bg-azul text-white" : "border border-borde-2 text-texto-2 hover:text-texto"
                 }`}
               >
-                {d} días
+                {etiqueta}
               </button>
             ))}
             {cargando && <span className="text-xs text-texto-3">cargando…</span>}
@@ -134,7 +148,9 @@ export function MapaOrdenes() {
           )}
           {datos && datos.features.length === 0 && (
             <p className="px-4 py-6 text-center text-sm text-texto-3">
-              No hay órdenes emitidas en los últimos {dias} días.
+              {dias === 1
+                ? "No se emitieron órdenes hoy."
+                : `No hay órdenes emitidas en ${dias === 7 ? "la última semana" : `los últimos ${dias} días`}.`}
             </p>
           )}
         </div>

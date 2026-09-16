@@ -118,6 +118,32 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   const itemsPapel = o.itemsDetalle.filter((i) => i.estado !== "propuesto" && i.estado !== "rechazado");
   // o.enPlan es itemsPapel.length calculado en la consulta: se usa el del
   // servidor para que el listado y el detalle no puedan divergir nunca.
+  /**
+   * LOS TOTALES DE LA ORDEN. Solo suman los items que TIENEN medidas: un
+   * pendiente sin cargar no aporta cero metros, aporta "todavía no se sabe", y
+   * mezclarlos haría que el total baje de sentido a medida que se emiten
+   * órdenes nuevas. Las toneladas salen del volumen a 2,4 t/m³, la misma
+   * constante con la que se certifica (ver lib/medicion.ts).
+   *
+   * Dos totales y no uno: la pantalla muestra también lo rechazado y lo no
+   * encontrado, y el papel es el plan que se firma. Si compartieran el número,
+   * uno de los dos estaría mal.
+   */
+  const sumar = (items: typeof o.itemsDetalle) =>
+    items.reduce(
+      (acc, it) => {
+        if (it.superficieM2 == null || it.espesorCm == null) return acc;
+        return {
+          items: acc.items + 1,
+          m2: acc.m2 + it.superficieM2,
+          toneladas: acc.toneladas + toneladasDe(volumenDe(it.superficieM2, it.espesorCm)),
+        };
+      },
+      { items: 0, m2: 0, toneladas: 0 },
+    );
+  const totales = sumar(o.itemsDetalle.filter((i) => i.estado !== "propuesto"));
+  const totalesPapel = sumar(itemsPapel);
+
   const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
 
@@ -359,6 +385,9 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 </th>
                 <th className="px-3 py-3" title="Ancho × largo × espesor reportados">Medidas</th>
                 <th className="num px-3 py-3 text-right">m²</th>
+                <th className="num px-3 py-3 text-right text-amarillo" title="Del volumen a 2,4 t/m³: es la unidad con la que se certifica">
+                  Toneladas
+                </th>
                 <th className="px-3 py-3">Reportado</th>
                 <th className="px-3 py-3">Fotos</th>
                 <th className="px-3 py-3" />
@@ -372,6 +401,32 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 .map((it) => (
                   <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} puedePlanificar={puedePlanificar} />
                 ))}
+              {/**
+                * LA SUMA, AL PIE DE LA COLUMNA QUE SUMA.
+                *
+                * "En los reportes debe aparecer las toneladas de cada bache y
+                * en el cuadro una sumatoria de los m² y las toneladas"
+                * (Dirección de Bacheo, 16/09). Quien certifica sacaba el total
+                * con una calculadora al lado de la pantalla, que es justo
+                * donde se cuela un error de tipeo en un número que es un pago.
+                */}
+              {totales.items > 0 && (
+                <tr className="border-t-2 border-borde bg-panel-2 text-sm font-bold">
+                  <td className="px-3 py-3" colSpan={6}>
+                    Total reportado{" "}
+                    <span className="font-normal text-texto-3">
+                      — {numero(totales.items)} {totales.items === 1 ? "trabajo" : "trabajos"} con medidas
+                    </span>
+                  </td>
+                  <td className="num px-3 py-3 text-right" style={{ color: "#199e70" }}>
+                    {numero(totales.m2)}
+                  </td>
+                  <td className="num px-3 py-3 text-right text-amarillo">
+                    {formatoToneladas(totales.toneladas)}
+                  </td>
+                  <td className="px-3 py-3" colSpan={3} />
+                </tr>
+              )}
             </tbody>
           </table>
         </PanelTabla>
@@ -454,6 +509,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <th style={{ width: 62 }}>Largo (m)</th>
               <th style={{ width: 66 }}>Espesor (cm)</th>
               <th style={{ width: 50 }}>m²</th>
+              <th style={{ width: 58 }}>Toneladas</th>
             </tr>
           </thead>
           <tbody>
@@ -481,8 +537,23 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 <td style={{ textAlign: "right" }}>{it.largoM ?? " "}</td>
                 <td style={{ textAlign: "right" }}>{it.espesorCm ?? " "}</td>
                 <td style={{ textAlign: "right" }}>{it.superficieM2 != null ? numero(it.superficieM2) : " "}</td>
+                {/* Las toneladas del bache, al lado de sus m²: es lo que se
+                    certifica, y quien firma el acta no tendría que hacer la
+                    cuenta en el margen de la hoja. */}
+                <td style={{ textAlign: "right" }}>
+                  {it.superficieM2 != null && it.espesorCm != null
+                    ? formatoToneladas(toneladasDe(volumenDe(it.superficieM2, it.espesorCm)))
+                    : " "}
+                </td>
               </tr>
             ))}
+            {totalesPapel.items > 0 && (
+              <tr style={{ fontWeight: 800, borderTop: "2px solid #555" }}>
+                <td colSpan={8} style={{ textAlign: "right" }}>TOTAL</td>
+                <td style={{ textAlign: "right" }}>{numero(totalesPapel.m2)}</td>
+                <td style={{ textAlign: "right" }}>{formatoToneladas(totalesPapel.toneladas)}</td>
+              </tr>
+            )}
           </tbody>
         </table>
 

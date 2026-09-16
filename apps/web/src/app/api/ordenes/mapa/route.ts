@@ -22,7 +22,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "sin permiso" }, { status: 403 });
   }
 
-  const dias = Math.min(180, Math.max(7, Number(req.nextUrl.searchParams.get("dias") ?? 30)));
+  /**
+   * El piso era 7 días, así que "hoy" era imposible de pedir: el parámetro se
+   * subía solo a una semana sin decirlo. La Dirección de Bacheo pidió el
+   * recorte de HOY y el de ESTA SEMANA (16/09) — que es la pregunta de la
+   * mañana: qué se mandó a hacer y dónde, para no pisarse entre inspectores.
+   */
+  const dias = Math.min(180, Math.max(1, Number(req.nextUrl.searchParams.get("dias") ?? 30)));
 
   const filas = await conRls(
     { sub: sesion.sub, rol_cimba: sesion.rol_cimba, id_persona: sesion.id_persona, id_empresa: sesion.id_empresa },
@@ -37,7 +43,19 @@ export async function GET(req: NextRequest) {
         join empresas e on e.id = ot.empresa_id
         where oi.geom is not null
           and ot.estado in ('emitida', 'en_ejecucion', 'completada')
-          and coalesce(ot.emitida_en, ot.creado_en) > now() - (${dias} || ' days')::interval
+          and coalesce(ot.emitida_en, ot.creado_en) >= ${
+            /**
+             * "Hoy" es desde la medianoche de Tucumán, no "las últimas 24
+             * horas": a las 9 de la mañana, un día corrido se lleva puesta
+             * media tarde de ayer y el botón estaría mintiendo. Los demás
+             * recortes sí son ventanas corridas, que es lo que se espera de
+             * "últimos 30 días".
+             */
+            dias === 1
+              ? sql`date_trunc('day', now() at time zone 'America/Argentina/Tucuman')
+                    at time zone 'America/Argentina/Tucuman'`
+              : sql`now() - (${dias} || ' days')::interval`
+          }
         order by fecha desc
         limit 4000
       `)) as unknown as Array<Record<string, unknown>>,
