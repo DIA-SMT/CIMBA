@@ -262,6 +262,24 @@ export function parsearBacheoJunioJulioTexto(contenido: string): IntervencionNor
 
     i++;
     const fecha = fechaJunJul(f[0], mesSeccion);
+
+    /**
+     * ESTE ARCHIVO TERMINA EN JULIO, AUNQUE EL ARCHIVO NO LO SEPA.
+     *
+     * La planilla de junio-julio se pasa tres días para agosto (3, 4 y 5), y
+     * esas mismas 20 filas vienen otra vez en la planilla de agosto, que
+     * arranca justo el 03/08. Las dos ingestas las dieron por trabajos
+     * distintos —el deduplicador compara por (sistema, idRemoto) y el idRemoto
+     * lleva el nombre del archivo— así que agosto quedó diciendo 315 cuando son
+     * 295. Se limpiaron a mano el 17/09; el corte es para que no vuelvan.
+     *
+     * El `i++` queda ARRIBA del corte a propósito: el idRemoto de este archivo
+     * es posicional (junjul-2026-N), así que dejar de contar una fila le
+     * correría el número a todas las que siguen y el próximo ingest las vería
+     * como nuevas. Se cuenta igual; solo no se emite.
+     */
+    if (fecha && fecha >= new Date("2026-08-01T00:00:00-03:00")) continue;
+
     resultado.push(
       intervencionNormalizadaSchema.parse({
         sistema: "bacheo_planillas",
