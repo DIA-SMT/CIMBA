@@ -5435,11 +5435,31 @@ function MapaInterno({
           `absolute`, el 100% resuelve contra el contenedor del mapa, que es el
           ancho real disponible; las 4.75rem son la columna derecha de controles
           de MapLibre más aire. Al panel de Capas no lo achica (w-72 manda). */}
+      {/**
+        * EL RECTÁNGULO INVISIBLE QUE COMÍA LOS CLICS.
+        *
+        * Esta columna mide `100% - 4.75rem` de ancho: casi todo el mapa. Los
+        * hijos son angostos —`items-start` los encoge al contenido— pero la
+        * CAJA del contenedor sigue midiendo todo ese ancho, y un div sin fondo
+        * igual se come el puntero. Resultado: a la derecha del panel de Capas
+        * había una franja transparente, del alto del panel, donde el mapa no
+        * respondía ni al arrastre ni al clic sobre un punto.
+        *
+        * "El plano queda un poco cargado de cosas. La referencia que marco en
+        * rojo, al extenderse sobre la pantalla, hace que donde encerré el
+        * círculo verde no funcione el pad ni las funciones" — Dirección de
+        * Bacheo, 17/09, con el círculo justo al lado del panel de Capas.
+        *
+        * El ancho tiene que quedarse (lo explica el comentario de arriba: es lo
+        * que evita que la leyenda se meta bajo los controles de MapLibre), así
+        * que lo que se saca es la captura del puntero. La columna deja pasar
+        * todo y cada hijo que SÍ es un control se la vuelve a prender.
+        */}
       <div
-        className={`absolute bottom-[4.5rem] left-3 z-10 flex max-w-[calc(100%-4.75rem)] flex-col items-start gap-2 ${despejado ? "hidden" : ""}`}
+        className={`pointer-events-none absolute bottom-[4.5rem] left-3 z-10 flex max-w-[calc(100%-4.75rem)] flex-col items-start gap-2 ${despejado ? "hidden" : ""}`}
         style={arrCapas.estilo}
       >
-      <div data-tour="capas" className={comparar ? "hidden" : ""}>
+      <div data-tour="capas" className={`pointer-events-auto ${comparar ? "hidden" : ""}`}>
         {panelCapas ? (
           <div className="panel-vidrio max-h-[calc(100vh-20rem)] w-72 overflow-y-auto rounded-xl p-4">
             <div
