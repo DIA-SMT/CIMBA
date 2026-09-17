@@ -1,6 +1,7 @@
 import type { DemandaNormalizada, IntervencionNormalizada } from "@cimba/domain";
 import { parsearAtencionAbiertosBuffer } from "./atencion-abiertos";
 import {
+  parsearBacheoDiarioTexto,
   parsearBacheoJunioJulioTexto,
   parsearBacheoMarzoTexto,
   parsearBacheoMensualTexto,
@@ -111,6 +112,20 @@ export async function detectarYParsear(
       sistema: "bacheo_planillas",
       demandas: [],
       intervenciones: parsearBacheoJunioJulioTexto(texto),
+    };
+  }
+  /**
+   * Este SÍ se puede subir desde la app, al revés que la planilla mensual: su
+   * identidad sale del contenido (día + dirección) y no de una etiqueta que
+   * alguien tipea, así que reenviar el mismo archivo no duplica nada.
+   */
+  if (linea1.startsWith("dia;direccion") && linea1.includes("geo_confianza")) {
+    return {
+      formato: "bacheo_diario_csv",
+      descripcion: "Planilla de bacheo con fecha por fila (csv ;)",
+      sistema: "bacheo_planillas",
+      demandas: [],
+      intervenciones: parsearBacheoDiarioTexto(texto),
     };
   }
   if (linea1.includes(";lat;lon;geo_confianza")) {

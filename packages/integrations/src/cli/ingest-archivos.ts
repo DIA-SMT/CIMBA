@@ -11,7 +11,12 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parsearAtencionAbiertos } from "../archivos/atencion-abiertos";
-import { parsearBacheoJunioJulio, parsearBacheoMarzo, parsearBacheoMensual } from "../archivos/bacheo";
+import {
+  parsearBacheoDiario,
+  parsearBacheoJunioJulio,
+  parsearBacheoMarzo,
+  parsearBacheoMensual,
+} from "../archivos/bacheo";
 import { parsearConsolidado } from "../archivos/consolidado";
 import { parsearObrasSigov } from "../archivos/obras-sigov";
 import { parsearSat } from "../archivos/sat";
@@ -104,6 +109,14 @@ async function main() {
   if (junjul)
     await correr("Bacheo junio-julio", async () => {
       const r = await ingestarIntervenciones("bacheo_planillas", parsearBacheoJunioJulio(junjul));
+      await registrarSyncRun(r, null);
+      return r;
+    });
+
+  const diario = buscar(carpeta, /BACHEO_AGOSTO.*\.csv$/i);
+  if (diario)
+    await correr("Bacheo agosto-septiembre (diario)", async () => {
+      const r = await ingestarIntervenciones("bacheo_planillas", parsearBacheoDiario(diario));
       await registrarSyncRun(r, null);
       return r;
     });
