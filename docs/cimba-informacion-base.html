@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CIMBA · Información base</title>
+<style>
+  /* ── Misma hoja de estilo que manual-cimba.html: los dos documentos se
+       entregan juntos y tienen que parecer de la misma casa. ── */
+  @page { size: A4; margin: 15mm 14mm 17mm 14mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 10pt; line-height: 1.5; color: #1a1d23;
+  }
+  h1, h2, h3, .sans { font-family: "Segoe UI", Arial, sans-serif; }
+  h1 { font-size: 21pt; margin: 0 0 2mm; letter-spacing: -0.3px; }
+  h2 {
+    font-size: 13pt; margin: 7mm 0 2.5mm; padding-bottom: 1.2mm;
+    border-bottom: 2px solid #0066FF; color: #0b2c66; break-after: avoid;
+  }
+  h3 { font-size: 10.5pt; margin: 4mm 0 1.5mm; color: #16325c; break-after: avoid; }
+  p { margin: 0 0 2mm; text-align: justify; }
+  ul, ol { margin: 0 0 2.5mm; padding-left: 5.5mm; }
+  li { margin-bottom: 1mm; }
+  b { color: #10131a; }
+  .no-cortar { break-inside: avoid; }
+
+  .portada {
+    height: 250mm; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; text-align: center; break-after: page;
+  }
+  .portada img { height: 32mm; margin-bottom: 8mm; }
+  .portada .titulo { font-family: "Segoe UI", Arial, sans-serif; font-size: 30pt; font-weight: 800; }
+  .portada .titulo b { color: #0066FF; }
+  .portada .sub { font-family: "Segoe UI", Arial, sans-serif; font-size: 11.5pt; color: #444; margin-top: 2mm; }
+  .portada .baja { margin-top: 12mm; max-width: 122mm; font-size: 11pt; color: #333; }
+  .portada .pie { margin-top: 16mm; font-family: "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #777; }
+
+  .caja {
+    border: 1px solid #d8dde6; border-left: 4px solid #0066FF; border-radius: 2mm;
+    padding: 2.6mm 3.6mm; margin: 2.6mm 0; background: #f6f9ff; break-inside: avoid;
+  }
+  .caja.regla { border-left-color: #b45309; background: #fdf6ec; }
+  .caja.paso { border-left-color: #15803d; background: #f2f9f4; }
+
+  /* Lo que se copia y se pega en la nota: se marca para que se vea de un
+     vistazo dónde empieza y dónde termina el texto citable. */
+  .pegar {
+    border: 1px solid #c9d4e6; border-left: 4px solid #0b2c66; border-radius: 2mm;
+    padding: 3mm 4mm; margin: 2.6mm 0; background: #fbfcfe; break-inside: avoid;
+  }
+  .pegar .rotulo {
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: 0.6px; color: #0b2c66; font-weight: 700; display: block; margin-bottom: 1.4mm;
+  }
+  .pegar p { text-align: justify; margin: 0 0 1.5mm; }
+  .pegar p:last-child { margin-bottom: 0; }
+  .sustento {
+    font-size: 8.5pt; color: #57606e; font-style: italic; margin: 1.4mm 0 0; text-align: left;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 2.2mm 0 3.2mm; font-size: 9pt; break-inside: avoid; }
+  th {
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 8pt; text-transform: uppercase;
+    letter-spacing: 0.5px; text-align: left; color: #57606e;
+    border-bottom: 1.5px solid #b9c2cf; padding: 1.4mm 1.8mm;
+  }
+  td { border-bottom: 0.5px solid #dde2ea; padding: 1.6mm 1.8mm; vertical-align: top; color: #23262e; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .cadena {
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; line-height: 1.65;
+    background: #f6f9ff; border: 1px solid #d8dde6; border-radius: 2mm;
+    padding: 3mm 4mm; margin: 2.6mm 0; break-inside: avoid; white-space: pre;
+  }
+  .cifras { display: flex; gap: 3mm; margin: 2.6mm 0; break-inside: avoid; }
+  .cifra {
+    flex: 1; border: 1px solid #d8dde6; border-radius: 2mm; padding: 2.6mm 3mm; text-align: center;
+  }
+  .cifra .n {
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 15pt; font-weight: 800; color: #0b2c66;
+    display: block; font-variant-numeric: tabular-nums;
+  }
+  .cifra .et { font-family: "Segoe UI", Arial, sans-serif; font-size: 7.5pt; color: #57606e; text-transform: uppercase; letter-spacing: 0.4px; }
+  .corte { font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; color: #57606e; }
+</style>
+</head>
+<body>
+
+<!-- ══ PORTADA ══ -->
+<div class="portada">
+  <img src="../apps/web/public/marca/isotipo-smt.png" alt="Municipalidad de San Miguel de Tucumán">
+  <div class="titulo">CIMBA<b>.</b></div>
+  <div class="sub">Centro Inteligente de Monitoreo de Baches y Asfalto</div>
+  <div class="baja">
+    <b>Información base.</b> Qué es el sistema, qué problema resuelve y qué contiene hoy
+    —con los números medidos—, más los <b>párrafos ya redactados</b> para citar en notas,
+    expedientes y pedidos formales.
+  </div>
+  <div class="pie">
+    Municipalidad de San Miguel de Tucumán · Secretaría de Obras Públicas — Dirección de Bacheo<br>
+    Septiembre de 2026 · datos al 18/09/2026 · Dirección de Inteligencia Artificial
+  </div>
+</div>
+
+<h1>Información base de CIMBA</h1>
+<p class="corte">
+  Este documento da <b>texto institucional listo para citar</b>. No es el manual de uso:
+  ese es <i>Manual CIMBA</i>, que explica cómo se opera cada pantalla. Todos los números
+  están medidos sobre la base en producción, con <b>fecha de corte 18 de septiembre de 2026</b>.
+  Si la nota sale más de un mes después, conviene pedirlos actualizados antes de firmar.
+</p>
+
+<h2>1 · Qué es</h2>
+
+<div class="pegar">
+  <span class="rotulo">Párrafo largo — para la primera nota o una presentación</span>
+  <p>CIMBA (Centro Inteligente de Monitoreo de Baches y Asfalto) es el sistema de gestión de
+  bacheo y reparación de pavimento de la Municipalidad de San Miguel de Tucumán, desarrollado
+  por la Dirección de Inteligencia Artificial para la Dirección de Bacheo. Reúne en un solo
+  lugar los reclamos de la ciudadanía y de las instituciones, el relevamiento del estado de la
+  calzada, la planificación y emisión de las órdenes de trabajo, la carga de lo ejecutado por
+  las empresas contratistas y por las cuadrillas municipales, y la certificación de lo
+  realizado.</p>
+</div>
+
+<div class="pegar">
+  <span class="rotulo">Párrafo corto — para cuando la nota ya viene larga</span>
+  <p>CIMBA es el sistema municipal de gestión de bacheo: registra los reclamos, los convierte
+  en problemas de calzada priorizados, emite las órdenes de trabajo a las empresas y certifica
+  lo ejecutado con evidencia fotográfica y medidas.</p>
+</div>
+
+<h2>2 · Qué problema resuelve</h2>
+<p>
+  Antes de CIMBA, el mismo bache podía llegar por cinco canales distintos —el vecino al 147, el
+  concejal por nota, la red social, la Secretaría, la S.A.T.— y cada canal se trabajaba por
+  separado. No había forma de saber si un pedido ya estaba resuelto, ni de responderle a quien
+  lo pidió, ni de medir cuánto se reparó realmente.
+</p>
+<p>CIMBA ordena eso en una sola cadena:</p>
+
+<div class="cadena">PEDIDO         lo que alguien reclama (vecino, Concejo, S.A.T., Secretaría, red)
+   ↓           varios pedidos del mismo lugar se agrupan en un solo problema
+PROBLEMA       el bache real en la calle, priorizado con un puntaje explicable
+   ↓           el problema entra en una orden de trabajo, con empresa y plazo
+TRABAJO        lo ejecutado: medidas, fotos antes y después, GPS y fecha
+   ↓
+CERTIFICACIÓN  superficie y toneladas, que es lo que se paga</div>
+
+<p>
+  La consecuencia práctica: se puede contestar <b>quién pidió qué, cuándo se reparó y con qué
+  evidencia</b>, que es exactamente lo que hace falta para responder una nota del Concejo
+  Deliberante o una intimación de la S.A.T.
+</p>
+
+<h2>3 · Qué contiene hoy</h2>
+
+<div class="cifras">
+  <div class="cifra"><span class="n">3.275</span><span class="et">Pedidos registrados</span></div>
+  <div class="cifra"><span class="n">3.480</span><span class="et">Problemas de calzada</span></div>
+  <div class="cifra"><span class="n">3.393</span><span class="et">Trabajos ejecutados</span></div>
+  <div class="cifra"><span class="n">99.858</span><span class="et">m² intervenidos</span></div>
+</div>
+
+<h3>Los pedidos, por canal</h3>
+<table>
+  <thead><tr><th>Canal</th><th class="num">Pedidos</th></tr></thead>
+  <tbody>
+    <tr><td>S.A.T. (Aguas)</td><td class="num">794</td></tr>
+    <tr><td>Concejo Deliberante</td><td class="num">758</td></tr>
+    <tr><td>Atención Ciudadana (147)</td><td class="num">745</td></tr>
+    <tr><td>Secretarías</td><td class="num">603</td></tr>
+    <tr><td>Redes sociales / D.I.E.</td><td class="num">274</td></tr>
+    <tr><td>Cuadrillas municipales</td><td class="num">101</td></tr>
+  </tbody>
+</table>
+<p>3.184 de esos pedidos —el 97%— tienen ubicación geográfica.</p>
+
+<h3>El trabajo</h3>
+<p>
+  De los 3.480 problemas de calzada identificados, <b>3.264 figuran reparados o verificados</b>
+  y 216 están abiertos en alguna etapa. Los 3.393 trabajos ejecutados y registrados suman
+  <b>99.858 m² de calzada intervenida</b>, con <b>4.869 fotografías</b> de respaldo. Los
+  ejecutores son 15 entre empresas contratistas y cuadrillas propias; hay 13 empresas dadas de
+  alta en el sistema. Se emitieron 21 órdenes de trabajo, de las cuales 12 están activas.
+</p>
+<p>
+  La certificación usa la densidad de asfalto de <b>2,4 t/m³</b> para convertir la superficie y
+  el espesor declarados en toneladas.
+</p>
+
+<h3>Cobertura territorial</h3>
+<p>
+  Los <b>20 distritos</b>, <b>327 barrios</b>, <b>47 circuitos</b>, <b>149 corredores viales</b>
+  y las <b>4 zonas</b> del contrato de bacheo integral.
+</p>
+
+<h2>4 · Quiénes lo usan</h2>
+<table>
+  <thead><tr><th style="width:38%">Quién</th><th>Para qué</th></tr></thead>
+  <tbody>
+    <tr><td>Dirección de Bacheo</td><td>Planifica, emite las órdenes y valida lo cargado.</td></tr>
+    <tr><td>Inspectores (supervisión)</td><td>Verifican en calle y validan lo que las empresas declaran.</td></tr>
+    <tr><td>Empresas contratistas</td><td>Acceso propio: ven solo sus órdenes y cargan cada bache con medidas y fotos desde el celular, en la calle.</td></tr>
+    <tr><td>Cuadrillas municipales</td><td>Cargan por el mismo circuito que las empresas.</td></tr>
+    <tr><td>Atención Ciudadana</td><td>Consulta el estado de un reclamo para responderle al vecino.</td></tr>
+    <tr><td>Conducción</td><td>Tablero de brecha, productividad por empresa y reportes por canal.</td></tr>
+  </tbody>
+</table>
+
+<h2>5 · Párrafos armados para notas de pedido</h2>
+
+<h3>5.1 · Pedido de conexión con Atención Ciudadana</h3>
+<div class="pegar">
+  <span class="rotulo">Texto de la nota</span>
+  <p>A los fines de completar la trazabilidad entre el reclamo del vecino y su resolución
+  efectiva, se solicita se disponga la provisión del servicio de consulta (API) del sistema de
+  Atención Ciudadana, que permita a CIMBA la lectura periódica y automática de los reclamos
+  vinculados a calzada. En la actualidad los reclamos se incorporan mediante carga manual de
+  archivos, lo que impide informar al vecino el estado de su pedido en tiempo real.</p>
+</div>
+<p class="sustento">Sustento: de los 3.275 pedidos registrados, 2.750 todavía no están
+vinculados a un problema concreto de calzada, en buena medida porque la incorporación es manual
+y por lotes.</p>
+
+<h3>5.2 · Pedido de datos de ejecución a las empresas o a Administración</h3>
+<div class="pegar">
+  <span class="rotulo">Texto de la nota</span>
+  <p>Se solicita que las planillas de obra ejecutada incorporen, para cada intervención, la
+  <b>superficie efectivamente reparada</b> (o el ancho y el largo) y el <b>espesor colocado</b>.
+  Ambos datos son indispensables para la conversión a toneladas y, por lo tanto, para la
+  certificación de lo ejecutado. Las planillas actuales informan la ubicación y la fecha, pero
+  no la magnitud del trabajo.</p>
+</div>
+<p class="sustento">Sustento: las cuadrillas de Administración registran 1.779 trabajos y solo
+38 tienen superficie cargada. Sin ese dato, esos trabajos certifican cero toneladas.</p>
+
+<h3>5.3 · Pedido de acceso o de alta de usuarios</h3>
+<div class="pegar">
+  <span class="rotulo">Texto de la nota</span>
+  <p>Se solicita se otorgue acceso al sistema CIMBA al agente [NOMBRE], D.N.I. [NÚMERO], en
+  carácter de [inspector de obra / planificación / consulta], a los efectos de [verificar y
+  validar los trabajos ejecutados / planificar y emitir órdenes de trabajo / consultar el estado
+  de los reclamos].</p>
+</div>
+
+<h3>5.4 · Respuesta a una nota del Concejo o a una intimación</h3>
+<div class="pegar">
+  <span class="rotulo">Texto de la nota</span>
+  <p>En relación con lo solicitado, se informa que el problema de calzada sito en [DIRECCIÓN] se
+  encuentra registrado en el sistema CIMBA bajo el identificador [N.º], habiendo sido [reparado
+  el DD/MM/AAAA por la empresa X, con una superficie de N m² y evidencia fotográfica de antes y
+  después / incorporado a la orden de trabajo N.º X con fecha prevista de ejecución].</p>
+</div>
+
+<h3>5.5 · Presentación del sistema ante otra área u organismo</h3>
+<div class="pegar">
+  <span class="rotulo">Texto de la nota</span>
+  <p>La Municipalidad de San Miguel de Tucumán cuenta con CIMBA, sistema propio de gestión de
+  bacheo desarrollado por su Dirección de Inteligencia Artificial, que integra los reclamos de
+  los distintos canales de atención, la planificación de las cuadrillas y contratistas, y la
+  certificación de lo ejecutado con evidencia georreferenciada. A la fecha registra 3.275
+  pedidos ciudadanos e institucionales y 3.393 trabajos ejecutados sobre 99.858 m² de calzada.</p>
+</div>
+
+<h2>6 · Lo que conviene no afirmar</h2>
+<p>Para que las notas no queden expuestas:</p>
+<div class="caja regla">
+  <ul>
+    <li><b>No afirmar que CIMBA recibe los reclamos automáticamente.</b> Hoy la incorporación
+    desde Atención Ciudadana es manual, por archivo.</li>
+    <li><b>No informar toneladas de las cuadrillas de Administración.</b> No tienen superficie
+    cargada: darían cero.</li>
+    <li><b>No presentar los m² como «reparados este año».</b> Los 99.858 m² incluyen obras de
+    pavimento de distinta escala y de todo el período cargado.</li>
+    <li><b>No citar el detalle diario de abril y mayo de 2026.</b> Esas planillas traían solo el
+    mes, y todos los trabajos quedaron fechados el día 15. Los totales mensuales sí son
+    correctos.</li>
+  </ul>
+</div>
+
+<div class="caja">
+  <p style="margin:0"><b>Mantenimiento.</b> Los números de la sección 3 salen de una consulta
+  directa a la base de producción. Pedirlos actualizados a la Dirección de Inteligencia
+  Artificial antes de usar este texto en una presentación formal.</p>
+</div>
+
+</body>
+</html>
