@@ -3,7 +3,17 @@
  * desde las islas cliente, así que acá no entra nada de servidor: solo datos.
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes" | "pulso_diario";
+export type EventoAviso =
+  | "orden_emitida"
+  | "orden_vencida"
+  | "item_propuesto"
+  | "aviso_general"
+  | "cierres_pendientes"
+  | "pulso_diario"
+  | "item_validado"
+  | "item_rechazado"
+  | "orden_reasignada"
+  | "orden_cerrada";
 
 export interface Destinatario {
   id: number;
@@ -25,7 +35,15 @@ export const ROLES_PUSH = [
   "funcionario",
 ] as const;
 
+/**
+ * Los destinos elegibles para push: los roles internos MÁS "empresa", que no
+ * es un rol sino un lugar: los teléfonos de la contratista dueña de la orden
+ * que dispara el evento. Se resuelve en notificarEvento con el empresaId.
+ */
+export const DESTINOS_PUSH = [...ROLES_PUSH, "empresa"] as const;
+
 export const ETIQUETA_ROL: Record<string, string> = {
+  empresa: "La empresa de la orden",
   admin: "Administración",
   planificacion: "Planificación",
   supervision: "Supervisión",
@@ -63,6 +81,27 @@ export const EVENTOS: Array<{ evento: EventoAviso; titulo: string; dispara: stri
     titulo: "El pulso de las 7:00",
     dispara:
       "Todas las mañanas: el parte del día anterior — qué entró, qué se reparó, dónde se concentró la deuda, qué vence hoy y la anomalía del día. El email lleva el parte completo; el push, el resumen con link.",
+  },
+  {
+    evento: "item_validado",
+    titulo: "Bache propuesto validado",
+    dispara:
+      "Se dispara cuando Bacheo valida un bache que la cuadrilla propuso desde la calle. A la empresa le dice que ya puede reportarlo (o que ya quedó hecho, si lo cargó tapado).",
+  },
+  {
+    evento: "item_rechazado",
+    titulo: "Bache propuesto rechazado",
+    dispara: "Se dispara cuando Bacheo rechaza un bache propuesto, con el motivo escrito.",
+  },
+  {
+    evento: "orden_reasignada",
+    titulo: "Orden pasada a otra empresa",
+    dispara: "Se dispara cuando la Dirección le pasa una orden a otra contratista: la nueva se entera de que tiene trabajo.",
+  },
+  {
+    evento: "orden_cerrada",
+    titulo: "Orden cerrada",
+    dispara: "Se dispara cuando una orden se cierra —sola, al terminar, o a mano por la Dirección.",
   },
   {
     evento: "aviso_general",

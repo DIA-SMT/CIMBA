@@ -2,7 +2,7 @@
 
 import { Camera, LocateFixed, Mic, Plus, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT } from "@cimba/domain";
 import { proponerItem, reportarProblemaCalle } from "@/lib/acciones-ordenes";
 import { comprimirFoto } from "@/lib/comprimir-foto";
@@ -62,10 +62,22 @@ interface Ubicacion {
  */
 type Modo = "bache" | "problema";
 
-export function ProponerItem({ ordenId }: { ordenId: number }) {
+export function ProponerItem({
+  ordenId,
+  abrirAlEntrar = false,
+}: {
+  ordenId: number;
+  /** Se llega desde "Cargar un bache → esta orden": el panel arranca abierto
+   *  y a la vista, sin un toque más. */
+  abrirAlEntrar?: boolean;
+}) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
-  const [abierto, setAbierto] = useState(false);
+  const [abierto, setAbierto] = useState(abrirAlEntrar);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (abrirAlEntrar) panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [abrirAlEntrar]);
   const [modo, setModo] = useState<Modo>("bache");
   const [error, setError] = useState<string | null>(null);
 
@@ -330,6 +342,7 @@ export function ProponerItem({ ordenId }: { ordenId: number }) {
 
   return (
     <div
+      ref={panelRef}
       className={`space-y-4 rounded-xl border bg-panel p-4 ${
         esProblema ? "border-amarillo/40" : "border-celeste/40"
       }`}

@@ -4,7 +4,7 @@ import { Bell, Mail, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { agregarDestinatario, alternarDestinatario, quitarDestinatario } from "@/lib/acciones-avisos";
-import { ETIQUETA_ROL, ROLES_PUSH, type Destinatario, type EventoAviso } from "./constantes";
+import { DESTINOS_PUSH, ETIQUETA_ROL, ROLES_PUSH, type Destinatario, type EventoAviso } from "./constantes";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -96,7 +96,9 @@ function FilaDestinatario({
           </p>
           <p className="truncate text-[10px] text-texto-3">
             {d.canal === "push"
-              ? `push a todo el personal con rol ${d.destino}`
+              ? d.destino === "empresa"
+                ? "push a los teléfonos de la contratista dueña de la orden"
+                : `push a todo el personal con rol ${d.destino}`
               : (d.etiqueta ?? "email") + (!emailActivo ? " — canal apagado: hoy se saltea" : "")}
           </p>
         </div>
@@ -239,7 +241,7 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
             aria-label="Rol que recibe el push"
             className="min-w-0 flex-1 rounded-lg border border-borde-2 bg-panel-2 px-2.5 py-1.5 text-xs"
           >
-            {ROLES_PUSH.map((r) => (
+            {DESTINOS_PUSH.map((r) => (
               <option key={r} value={r}>
                 {ETIQUETA_ROL[r]}
               </option>

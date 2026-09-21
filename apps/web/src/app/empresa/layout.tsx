@@ -3,6 +3,7 @@ import { LogOut } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
 import { BotonTema } from "@/components/boton-tema";
+import { BotonPush } from "@/components/boton-push";
 
 /**
  * Layout del portal de empresas contratistas. Vive FUERA del route group
@@ -26,6 +27,10 @@ export default async function LayoutEmpresa({ children }: { children: React.Reac
             {sesion.nombre}
           </span>
           <BotonTema />
+          {/* La campana de push, que vivía solo en el encabezado del personal:
+              la empresa no tenía desde dónde suscribirse y por eso no había ni
+              una suscripción de contratistas en toda la base. */}
+          <BotonPush />
           <a
             href="/api/auth/logout"
             title="Cerrar sesión"

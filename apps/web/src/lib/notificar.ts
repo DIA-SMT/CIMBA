@@ -2,7 +2,7 @@ import "server-only";
 import { getDb, sql } from "@cimba/db";
 import type { RolUsuario } from "@cimba/domain";
 import { ROLES_USUARIO } from "@cimba/domain";
-import { notificarRoles, type CargaPush } from "./push";
+import { notificarEmpresa, notificarRoles, type CargaPush } from "./push";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -17,7 +17,19 @@ import { mensajeDeError } from "@/lib/errores";
  * el evento (emitir una orden vale más que su aviso).
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes" | "pulso_diario";
+export type EventoAviso =
+  | "orden_emitida"
+  | "orden_vencida"
+  | "item_propuesto"
+  | "aviso_general"
+  | "cierres_pendientes"
+  | "pulso_diario"
+  /* Los que le hablan a la EMPRESA de la orden: lo que ella necesita saber
+     para trabajar, en su teléfono. */
+  | "item_validado"
+  | "item_rechazado"
+  | "orden_reasignada"
+  | "orden_cerrada";
 
 export interface ResultadoAviso {
   push: number;
@@ -73,6 +85,13 @@ const escapar = (s: string) =>
 export async function notificarEvento(
   evento: EventoAviso,
   carga: CargaPush & { cuerpoEmail?: string },
+  /**
+   * La empresa a la que le concierne el evento. Con esto, un destinatario
+   * configurado como `empresa` en /ordenes/avisos se resuelve a LOS TELÉFONOS
+   * DE ESA CONTRATISTA y no al rol entero. La URL que le llega a la empresa es
+   * la de su portal, que es la única que puede abrir.
+   */
+  opciones: { empresaId?: number; urlEmpresa?: string } = {},
 ): Promise<ResultadoAviso> {
   const resultado: ResultadoAviso = { push: 0, emails: 0, saltados: [] };
   try {
@@ -84,7 +103,9 @@ export async function notificarEvento(
     const rolesPush = destinos
       .filter((d) => d.canal === "push")
       .map((d) => d.destino)
-      .filter((d): d is RolUsuario => (ROLES_USUARIO as readonly string[]).includes(d));
+      // "empresa" como rol NO entra acá: sería avisarle a las trece
+      // contratistas de la orden de una. Se resuelve aparte, abajo.
+      .filter((d): d is RolUsuario => d !== "empresa" && (ROLES_USUARIO as readonly string[]).includes(d));
     if (rolesPush.length > 0) {
       // Se informa lo ENTREGADO, no lo configurado: sin VAPID o sin nadie
       // suscripto, el número honesto es 0.
@@ -92,6 +113,20 @@ export async function notificarEvento(
       resultado.push = envio.enviadas;
       if (envio.enviadas === 0) {
         resultado.saltados.push(`push a ${rolesPush.join(", ")}: nadie suscripto (o VAPID sin configurar)`);
+      }
+    }
+
+    const quiereEmpresa = destinos.some((d) => d.canal === "push" && d.destino === "empresa");
+    if (quiereEmpresa && opciones.empresaId != null) {
+      const envio = await notificarEmpresa(opciones.empresaId, {
+        titulo: carga.titulo,
+        cuerpo: carga.cuerpo,
+        url: opciones.urlEmpresa ?? "/empresa",
+        tag: carga.tag,
+      });
+      resultado.push += envio.enviadas;
+      if (envio.enviadas === 0) {
+        resultado.saltados.push(`push a la empresa #${opciones.empresaId}: ningún teléfono suscripto`);
       }
     }
 

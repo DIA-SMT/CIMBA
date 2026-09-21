@@ -6,7 +6,7 @@ import { cambiarMiClave } from "@/lib/acciones-clave";
 import { Panel } from "@/components/ui";
 import { mensajeDeError } from "@/lib/errores";
 
-export function FormularioClave({ nombre }: { nombre: string }) {
+export function FormularioClave({ nombre, destino = "/mapa" }: { nombre: string; destino?: string }) {
   const router = useRouter();
   const [actual, setActual] = useState("");
   const [nueva, setNueva] = useState("");
@@ -26,7 +26,7 @@ export function FormularioClave({ nombre }: { nombre: string }) {
       try {
         await cambiarMiClave({ actual, nueva });
         setListo(true);
-        setTimeout(() => router.push("/mapa"), 1200);
+        setTimeout(() => router.push(destino), 1200);
       } catch (err) {
         setError(mensajeDeError(err, "No se pudo cambiar la clave"));
       }
@@ -39,7 +39,9 @@ export function FormularioClave({ nombre }: { nombre: string }) {
         <p className="text-lg font-bold" style={{ color: "var(--color-ok)" }}>
           Clave cambiada ✓
         </p>
-        <p className="mt-1 text-sm text-texto-2">Listo, {nombre}. Te llevo al mapa…</p>
+        <p className="mt-1 text-sm text-texto-2">
+          Listo, {nombre}. {destino === "/empresa" ? "Te llevo a tus órdenes…" : "Te llevo al mapa…"}
+        </p>
       </Panel>
     );
   }

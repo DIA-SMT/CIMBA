@@ -47,6 +47,10 @@ const QUE_AVISA: Record<string, string> = {
   item_propuesto: "Una empresa cargó un bache que no estaba en la orden y espera validación",
   cierres_pendientes: "Hay trabajos terminados esperando que se le responda al vecino",
   pulso_diario: "El parte de las 7:00 con lo que pasó ayer",
+  item_validado: "Bacheo validó un bache que la empresa propuso desde la calle",
+  item_rechazado: "Bacheo rechazó un bache propuesto, con el motivo",
+  orden_reasignada: "Una orden pasó a otra empresa",
+  orden_cerrada: "Una orden se cerró, sola o a mano",
 };
 
 export default async function PaginaConfiguracion() {

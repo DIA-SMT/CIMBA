@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const db = getDb();
   const ordenes = (await db.execute(sql`
-    select ot.id, ot.numero, ot.vence_en::text as vence, e.nombre as empresa,
+    select ot.id, ot.numero, ot.vence_en::text as vence, e.nombre as empresa, ot.empresa_id,
       (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')::int as pendientes
     from ordenes_trabajo ot
     join empresas e on e.id = ot.empresa_id
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       and ot.vence_en is not null
       and ot.vence_en <= current_date
       and coalesce(ot.metadata->>'aviso_vencimiento', '') <> current_date::text
-  `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; pendientes: number }>;
+  `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; empresa_id: number; pendientes: number }>;
 
   // ── Cierres pendientes: el empujón diario ──────────────────────────────
   // Reclamos abiertos vinculados a un incidente YA reparado: el trabajo está,
@@ -69,11 +69,19 @@ export async function GET(req: NextRequest) {
   for (const o of ordenes) {
     const vencida = o.vence < new Date().toISOString().slice(0, 10);
     // A quién le llega lo decide el Director en /ordenes/avisos.
-    await notificarEvento("orden_vencida", {
-      titulo: vencida ? `⚠ ${o.numero} VENCIDA` : `${o.numero} vence HOY`,
-      cuerpo: `${o.empresa} · ${o.pendientes} item(s) sin reportar · vencía el ${o.vence}`,
-      url: `/ordenes/${o.id}`,
-    });
+    /* A la Dirección por rol y a la EMPRESA por su id: es ella la que tiene
+       que salir a terminar lo que falta, y hasta acá era la única que no se
+       enteraba. */
+    await notificarEvento(
+      "orden_vencida",
+      {
+        titulo: vencida ? `⚠ ${o.numero} VENCIDA` : `${o.numero} vence HOY`,
+        cuerpo: `${o.empresa} · ${o.pendientes} item(s) sin reportar · vencía el ${o.vence}`,
+        url: `/ordenes/${o.id}`,
+        tag: `vence-${o.id}`,
+      },
+      { empresaId: Number(o.empresa_id), urlEmpresa: `/empresa/orden/${o.id}` },
+    );
     await db.execute(sql`
       update ordenes_trabajo set metadata = metadata || jsonb_build_object('aviso_vencimiento', current_date::text)
       where id = ${o.id}

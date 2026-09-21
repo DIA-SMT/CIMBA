@@ -45,14 +45,17 @@ export default async function PaginaOrdenEmpresa({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ empresa?: string }>;
+  searchParams: Promise<{ empresa?: string; proponer?: string }>;
 }) {
   const { id } = await params;
   const idOrden = Number(id);
   if (!Number.isInteger(idOrden) || idOrden <= 0) notFound();
 
   const sesion = (await leerSesion())!;
-  const resuelta = await resolverVistaPortal(sesion, await searchParams);
+  const sp = await searchParams;
+  const resuelta = await resolverVistaPortal(sesion, sp);
+  /* Viene de "Cargar un bache → esta orden": el panel de proponer abre solo. */
+  const abrirProponer = sp.proponer === "1";
   // obtenerOrden filtra por empresa cuando el rol es 'empresa' (y excluye
   // borradores): si el id es de otra empresa, vuelve null y esto es un 404, no
   // una fuga. El filtro vive en la consulta porque la RLS hoy no se aplica.
@@ -252,7 +255,7 @@ export default async function PaginaOrdenEmpresa({
        */}
       {activa && (
         <div className="mb-4">
-          <ProponerItem ordenId={orden.id} />
+          <ProponerItem ordenId={orden.id} abrirAlEntrar={abrirProponer} />
         </div>
       )}
 

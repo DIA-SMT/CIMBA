@@ -56,11 +56,23 @@ const aNumero = (s: string) => Number(s.trim().replace(",", "."));
  *  (no la de una orden) porque acá no hay orden: ver memoria-carga.ts. */
 const CLAVE_MEMORIA = "cimba:carga-libre";
 
-export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
+export function FormularioLibre({
+  empresaId,
+  exigirMotivo = false,
+}: {
+  empresaId: number | null;
+  /**
+   * Con órdenes activas, cargar por fuera de todas es la excepción y tiene
+   * que costar una frase: por qué este trabajo no es de ninguna. Sin órdenes
+   * activas no hay nada que explicar.
+   */
+  exigirMotivo?: boolean;
+}) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [hecho, setHecho] = useState<number | null>(null);
+  const [motivoSinOrden, setMotivoSinOrden] = useState("");
 
   const [direccionTexto, setDireccionTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<UbicacionElegida | null>(null);
@@ -144,6 +156,10 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
 
   const enviar = () => {
     setError(null);
+    if (exigirMotivo && motivoSinOrden.trim().length < 5) {
+      setError("Contá en una frase por qué este trabajo no es de ninguna de tus órdenes.");
+      return;
+    }
     if (direccionTexto.trim().length < 4) {
       setError("Cargá la dirección del trabajo (podés dictarla).");
       return;
@@ -171,6 +187,7 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     if (capataz.trim()) fd.set("capataz", capataz.trim());
+    if (motivoSinOrden.trim()) fd.set("motivoSinOrden", motivoSinOrden.trim());
     if (empresaId != null) fd.set("empresaId", String(empresaId));
     fd.set("foto", fotoDespues);
     if (fotoAntes) fd.set("fotoAntes", fotoAntes);
@@ -392,6 +409,20 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
             </button>
           </div>
         </div>
+
+        {exigirMotivo && (
+          <label className="block rounded-xl border border-amarillo/40 bg-amarillo/5 p-3">
+            <span className="mb-1 block text-xs font-bold text-amarillo">
+              ¿Por qué no es de ninguna orden?
+            </span>
+            <input
+              value={motivoSinOrden}
+              onChange={(e) => setMotivoSinOrden(e.target.value)}
+              placeholder="Ej.: urgencia por pedido del inspector Pérez"
+              className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+            />
+          </label>
+        )}
 
         <div className="grid grid-cols-1 gap-2">
           <label className="block">

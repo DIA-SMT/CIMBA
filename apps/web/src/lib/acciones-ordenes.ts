@@ -296,18 +296,26 @@ export async function emitirOrden(entrada: { ordenId: number }) {
   try {
     const datosOt = (await conRls(claims(sesion), async (tx) =>
       (await tx.execute(sql`
-        select ot.numero, e.nombre as empresa,
+        select ot.numero, ot.empresa_id, e.nombre as empresa, ot.vence_en::text as vence,
           (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items
         from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id where ot.id = ${ordenId}
-      `)) as unknown as Array<{ numero: string; empresa: string; items: number }>,
+      `)) as unknown as Array<{ numero: string; empresa_id: number; empresa: string; vence: string | null; items: number }>,
     ))[0];
     if (datosOt) {
       const { notificarEvento } = await import("./notificar");
-      await notificarEvento("orden_emitida", {
-        titulo: `${datosOt.numero} emitida a ${datosOt.empresa}`,
-        cuerpo: `${datosOt.items} item(s) para trabajar`,
-        url: `/ordenes/${ordenId}`,
-      });
+      /* El mismo evento le llega a la Dirección (por rol) y a la EMPRESA (por
+         su empresa_id), cada uno con la URL que puede abrir: la contratista no
+         entra a /ordenes, entra a su portal. */
+      await notificarEvento(
+        "orden_emitida",
+        {
+          titulo: `${datosOt.numero} emitida a ${datosOt.empresa}`,
+          cuerpo: `${datosOt.items} item(s) para trabajar${datosOt.vence ? ` · vence el ${datosOt.vence}` : ""}`,
+          url: `/ordenes/${ordenId}`,
+          tag: `orden-${ordenId}`,
+        },
+        { empresaId: Number(datosOt.empresa_id), urlEmpresa: `/empresa/orden/${ordenId}` },
+      );
     }
   } catch {
     // sin aviso, pero emitida: el tablero de avisos muestra el estado real
@@ -441,8 +449,38 @@ export async function cerrarOrden(entrada: {
         and oi.estado in ('pendiente','propuesto') and incidentes.estado = 'programado'
     `);
 
-    return { pendientes };
+    const cab = (await tx.execute(sql`
+      select numero, empresa_id from ordenes_trabajo where id = ${datos.ordenId}
+    `)) as unknown as Array<{ numero: string; empresa_id: number }>;
+    return {
+      pendientes,
+      numero: cab[0]?.numero ?? "",
+      empresaId: cab[0] ? Number(cab[0].empresa_id) : null,
+    };
   });
+
+  // La empresa se entera de que la orden se cerró: lo pendiente ya no se
+  // puede cargar ahí, y lo hecho queda firme para el acta.
+  if (resultado.empresaId != null) {
+    try {
+      const { notificarEvento } = await import("./notificar");
+      await notificarEvento(
+        "orden_cerrada",
+        {
+          titulo: `${resultado.numero} cerrada`,
+          cuerpo:
+            resultado.pendientes > 0
+              ? `Cerrada con fecha ${fecha}. ${resultado.pendientes} item(s) quedaron sin hacer y vuelven a la cola de la ciudad.`
+              : `Cerrada con fecha ${fecha}. Lo cargado queda firme para la certificación.`,
+          url: `/ordenes/${datos.ordenId}`,
+          tag: `orden-${datos.ordenId}`,
+        },
+        { empresaId: resultado.empresaId, urlEmpresa: `/empresa/orden/${datos.ordenId}` },
+      );
+    } catch {
+      /* sin aviso, pero cerrada */
+    }
+  }
 
   revalidatePath("/ordenes");
   revalidatePath(`/ordenes/${datos.ordenId}`);
@@ -534,8 +572,34 @@ export async function reasignarOrden(entrada: {
       where id = ${datos.ordenId}
     `);
 
-    return { de: o.empresa_nombre, a: n.nombre, pendientes: Number(p[0]?.n ?? 0) };
+    const cab = (await tx.execute(sql`
+      select numero from ordenes_trabajo where id = ${datos.ordenId}
+    `)) as unknown as Array<{ numero: string }>;
+    return {
+      de: o.empresa_nombre,
+      a: n.nombre,
+      pendientes: Number(p[0]?.n ?? 0),
+      numero: cab[0]?.numero ?? "",
+    };
   });
+
+  // La empresa NUEVA se entera de que tiene trabajo: después del commit y sin
+  // poder romper la reasignación.
+  try {
+    const { notificarEvento } = await import("./notificar");
+    await notificarEvento(
+      "orden_reasignada",
+      {
+        titulo: `${resultado.numero} pasó a ${resultado.a}`,
+        cuerpo: `Venía de ${resultado.de} · ${resultado.pendientes} item(s) pendientes${datos.motivo ? ` · ${datos.motivo}` : ""}`,
+        url: `/ordenes/${datos.ordenId}`,
+        tag: `orden-${datos.ordenId}`,
+      },
+      { empresaId: datos.empresaId, urlEmpresa: `/empresa/orden/${datos.ordenId}` },
+    );
+  } catch {
+    /* sin aviso, pero reasignada */
+  }
 
   revalidatePath("/ordenes");
   revalidatePath(`/ordenes/${datos.ordenId}`);
@@ -1735,6 +1799,49 @@ export async function resolverPropuesto(entrada: {
       `);
     }
   });
+
+  /**
+   * LA EMPRESA SE ENTERA EN EL TELÉFONO. Proponer un bache era mandarlo a un
+   * silencio: la cuadrilla no sabía si lo habían validado —y podía
+   * reportarlo— o rechazado —y había que dejarlo—, salvo entrando a mirar. El
+   * aviso viaja después del commit y jamás rompe la decisión.
+   */
+  try {
+    const ctx = (await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select oi.direccion, oi.estado::text as estado, ot.id as orden_id, ot.numero, ot.empresa_id
+        from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+        where oi.id = ${datos.itemId}
+      `)) as unknown as Array<{ direccion: string | null; estado: string; orden_id: number; numero: string; empresa_id: number }>,
+    ))[0];
+    if (ctx) {
+      const { notificarEvento } = await import("./notificar");
+      const donde = ctx.direccion ?? "el bache propuesto";
+      await notificarEvento(
+        datos.decision === "validar" ? "item_validado" : "item_rechazado",
+        datos.decision === "validar"
+          ? {
+              titulo: `✓ ${ctx.numero}: validaron ${donde}`,
+              cuerpo:
+                ctx.estado === "hecho"
+                  ? "Quedó como hecho con las medidas que cargaron: ya cuenta para la certificación."
+                  : "Ya está en la lista de pendientes de la orden: pueden reportarlo cuando lo tapen.",
+              url: `/ordenes/${ctx.orden_id}`,
+              tag: `item-${datos.itemId}`,
+            }
+          : {
+              titulo: `✗ ${ctx.numero}: rechazaron ${donde}`,
+              cuerpo: datos.motivo ? `Motivo: ${datos.motivo}` : "Bacheo no lo incluyó en la orden.",
+              url: `/ordenes/${ctx.orden_id}`,
+              tag: `item-${datos.itemId}`,
+            },
+        { empresaId: Number(ctx.empresa_id), urlEmpresa: `/empresa/orden/${ctx.orden_id}` },
+      );
+    }
+  } catch {
+    /* sin aviso, pero decidido: el portal muestra el estado real */
+  }
+
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
   return { ok: true };

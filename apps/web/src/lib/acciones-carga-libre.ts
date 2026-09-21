@@ -62,6 +62,14 @@ export async function reportarTrabajoLibre(formData: FormData) {
       ticket147: z.string().max(40).optional(),
       /** Solo lo usa el staff en vista espejo; el ejecutor carga como él mismo. */
       empresaId: z.coerce.number().int().positive().optional(),
+      /**
+       * Por qué este trabajo no entra en ninguna orden. Calleri cargó 90
+       * baches como sueltos mientras trabajaba una orden; cuando la empresa
+       * tiene órdenes activas, el portal exige esta frase antes de aceptar
+       * una carga por fuera. Queda en el metadata para que la Dirección sepa
+       * qué le están declarando.
+       */
+      motivoSinOrden: z.string().max(300).optional(),
     })
     .parse({
       direccion: formData.get("direccion"),
@@ -80,6 +88,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
       capataz: formData.get("capataz") || undefined,
       ticket147: formData.get("ticket147") || undefined,
       empresaId: formData.get("empresaId") || undefined,
+      motivoSinOrden: formData.get("motivoSinOrden") || undefined,
     });
 
   const { dentroDeSMT } = await import("@cimba/domain");
@@ -189,7 +198,13 @@ export async function reportarTrabajoLibre(formData: FormData) {
           ${datos.tipoTrabajo === "bache" ? "bache" : "pavimento_deteriorado"},
           'reparado', st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
           ${datos.direccion}, ${superficie}, now(), now(),
-          ${JSON.stringify({ origen: "empresa_libre", sin_orden: true, empresa: empresa.nombre })}::jsonb
+          ${JSON.stringify({
+            origen: "empresa_libre",
+            sin_orden: true,
+            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
+            empresa: empresa.nombre,
+            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
+          })}::jsonb
         ) returning id
       `)) as unknown as Array<{ id: number }>;
       const id = Number(inc[0]?.id);
@@ -212,6 +227,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
           ${JSON.stringify({
             origen: "empresa_libre",
             sin_orden: true,
+            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
             // `contratista` es la clave que leen las métricas (misma que usa
             // SIGOV); `empresa` queda como alias por si algo la busca así.
             contratista: empresa.nombre,

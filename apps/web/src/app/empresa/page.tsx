@@ -6,6 +6,7 @@ import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
 import { formatoToneladas } from "@/lib/medicion";
 import { Panel } from "@/components/ui";
 import { resolverVistaPortal } from "./vista";
+import { TarjetaAvisos } from "./tarjeta-avisos";
 
 export const dynamic = "force-dynamic";
 
@@ -85,57 +86,26 @@ export default async function PaginaEmpresa({
     <div className="mx-auto max-w-xl p-4 pb-10">
       {vista.esVistaEspejo && <BannerEspejo nombreEmpresa={nombreEmpresa!} />}
 
+      {/* Solo a la empresa de verdad: en vista espejo es el teléfono del
+          Director, y suscribirlo acá lo dejaría recibiendo los avisos de esa
+          contratista. */}
+      {!vista.esVistaEspejo && <TarjetaAvisos />}
+
       <h1 className="mb-1 text-2xl font-bold tracking-tight">Mis órdenes</h1>
-      <p className="mb-3 text-sm text-texto-2">Tocá una orden para cargar los baches hechos.</p>
+      <p className="mb-3 text-sm text-texto-2">
+        {activas.length > 0
+          ? "Tocá la orden en la que estás trabajando y cargá ahí cada bache que tapes."
+          : "Cuando el Director te emita una orden, aparece acá."}
+      </p>
 
-      {/* Las dos puertas que faltaban. La de cargar sin orden es la
-          importante: una empresa que tapó un bache por urgencia no tenía
-          dónde registrarlo y terminaba en la planilla de siempre. */}
-      <div className="mb-5 grid grid-cols-2 gap-2">
-        <Link
-          href={`/empresa/cargar${sufijoEspejo}`}
-          className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-azul px-3 text-center text-sm leading-snug font-bold text-white transition active:scale-[0.99]"
-        >
-          <Plus size={18} className="shrink-0" />
-          Cargar sin orden
-        </Link>
-        <Link
-          href={`/empresa/certificacion${sufijoEspejo}`}
-          className="flex min-h-14 items-center justify-center gap-2 rounded-xl border border-borde-2 px-3 text-center text-sm leading-snug font-bold text-texto-2 transition hover:border-celeste/60 hover:text-celeste active:scale-[0.99]"
-        >
-          <FileCheck size={18} className="shrink-0" />
-          Mi certificación
-        </Link>
-      </div>
-
-      {/* Lo suyo, bajable. La empresa carga bache por bache desde el teléfono
-          y hasta acá dependía de que el municipio le exportara su propio
-          trabajo para armar el remito o discutir una certificación. */}
-      {ordenes.length > 0 && (
-        <div className="mb-5 flex flex-wrap gap-2">
-          <a
-            href={`/api/empresa/exportar?que=trabajos${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
-            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
-          >
-            <Download size={15} className="shrink-0" />
-            Bajar lo que cargamos
-          </a>
-          <a
-            href={`/api/empresa/exportar?que=ordenes${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
-            className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
-          >
-            <Download size={15} className="shrink-0" />
-            Bajar mis órdenes
-          </a>
-        </div>
-      )}
-
-      {ordenes.length === 0 && (
-        <p className="rounded-xl border border-borde bg-panel px-4 py-12 text-center text-base text-texto-2">
-          Cuando el Director te emita una orden, aparece acá.
-        </p>
-      )}
-
+      {/**
+       * LAS ÓRDENES SON LA PANTALLA. Antes arriba de todo había un botón
+       * grande y azul que decía "Cargar sin orden", y las órdenes venían
+       * después: Calleri cargó 90 baches como sueltos —fuera de su orden y de
+       * su certificación— porque la portada le pedía exactamente eso. Ahora
+       * lo primero que se ve es el trabajo encargado, y el botón de cargar
+       * pregunta a qué orden pertenece antes de dejar cargar nada.
+       */}
       {activas.length > 0 && (
         <div className="space-y-4">
           {activas.map((o) => (
@@ -143,6 +113,47 @@ export default async function PaginaEmpresa({
           ))}
         </div>
       )}
+
+      <Link
+        href={`/empresa/cargar${sufijoEspejo}`}
+        className="mt-4 flex min-h-14 items-center justify-center gap-2 rounded-xl bg-azul px-4 text-center text-base font-bold text-white transition active:scale-[0.99]"
+      >
+        <Plus size={20} className="shrink-0" />
+        Cargar un bache
+      </Link>
+      <p className="mt-1.5 text-center text-[12px] text-texto-3">
+        Te pregunta de qué orden es. Si no es de ninguna, también se puede.
+      </p>
+
+      {/* Lo secundario, después del trabajo: la certificación para saber qué
+          se cobra, y bajar lo propio para el remito. */}
+      <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <Link
+          href={`/empresa/certificacion${sufijoEspejo}`}
+          className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste active:scale-[0.99]"
+        >
+          <FileCheck size={16} className="shrink-0" />
+          Mi certificación
+        </Link>
+        {ordenes.length > 0 && (
+          <>
+            <a
+              href={`/api/empresa/exportar?que=trabajos${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
+              className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+            >
+              <Download size={15} className="shrink-0" />
+              Bajar lo cargado
+            </a>
+            <a
+              href={`/api/empresa/exportar?que=ordenes${vista.esVistaEspejo ? `&empresa=${vista.empresaId}` : ""}`}
+              className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-borde-2 px-3 text-center text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+            >
+              <Download size={15} className="shrink-0" />
+              Bajar mis órdenes
+            </a>
+          </>
+        )}
+      </div>
 
       {cerradas.length > 0 && (
         <>

@@ -17,7 +17,17 @@ export async function POST(req: NextRequest) {
   }
   const codigoRequerido = process.env.DEV_SSO_CODIGO ?? "";
   const cuerpo = z
-    .object({ rol: rolUsuarioSchema, codigo: z.string().optional() })
+    .object({
+      rol: rolUsuarioSchema,
+      codigo: z.string().optional(),
+      /**
+       * Para entrar como UNA empresa concreta en desarrollo. El rol empresa sin
+       * id_empresa no ve nada (empresaDelEjecutor devuelve null), así que
+       * probar el portal de contratistas obligaba a tipear la clave real de
+       * una. Solo existe detrás de DEV_FAKE_SSO, como todo este archivo.
+       */
+      empresaId: z.number().int().positive().optional(),
+    })
     .safeParse(await req.json());
   if (!cuerpo.success) return NextResponse.json({ error: "rol inválido" }, { status: 400 });
   if (codigoRequerido && cuerpo.data.codigo !== codigoRequerido) {
@@ -46,6 +56,7 @@ export async function POST(req: NextRequest) {
     rol_cimba: rol,
     id_persona: perfil.id_persona,
     nombre: perfil.nombre,
+    ...(rol === "empresa" && cuerpo.data.empresaId ? { id_empresa: cuerpo.data.empresaId } : {}),
   });
   await escribirCookieSesion(jwt);
   return NextResponse.json({ ok: true });
