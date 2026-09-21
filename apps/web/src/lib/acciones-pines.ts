@@ -147,12 +147,9 @@ export async function aplicarCorreccionPines(entrada: {
           geom = st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326),
           geocod_confianza = ${a.confianza},
           direccion_normalizada = ${a.direccion},
-          distrito_id = (select di.id from distritos di
-            where st_contains(di.geom, st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)) limit 1),
-          circuito_id = (select ci.id from circuitos ci
-            where st_contains(ci.geom, st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)) limit 1),
-          barrio_id = (select b.id from barrios b
-            where st_contains(b.geom, st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)) limit 1),
+          distrito_id = distrito_de(st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)),
+          circuito_id = circuito_de(st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)),
+          barrio_id = barrio_de(st_setsrid(st_makepoint(${a.lon}, ${a.lat}), 4326)),
           metadata = metadata || ${JSON.stringify({
             pin_corregido: { por: sesion.nombre, en: new Date().toISOString(), via: "lote_ia" },
           })}::jsonb

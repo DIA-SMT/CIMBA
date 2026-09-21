@@ -327,11 +327,11 @@ export async function ingestarIntervenciones(
             /* El trigger de territorio solo completa lo que está en NULL, así
                que al mover el punto hay que recalcular a mano: si no, el
                incidente se muda de lugar pero sigue sumando en el distrito y
-               el cuadrante viejos. */
-            distrito_id = (select d.id from distritos d
-              where st_contains(d.geom, ${punto}) limit 1),
-            cuadrante_id = (select c.id from cuadrantes c
-              where st_contains(c.geom, ${punto}) limit 1),
+               el cuadrante viejos. distrito_de/cuadrante_de (migración 0031)
+               toleran el borde: st_contains deja sin territorio al punto que
+               cae justo sobre el límite. */
+            distrito_id = distrito_de(${punto}),
+            cuadrante_id = cuadrante_de(${punto}),
             cerrado_en = case
               when estado = 'verificado' then cerrado_en
               else ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz end

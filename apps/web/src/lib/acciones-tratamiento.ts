@@ -226,16 +226,33 @@ export async function generarNotaSat(entrada: {
  * a Ingeniería, con la traza de quién lo confirmó. Uno a uno: la señal la
  * calcula el sistema, la decisión la firma una persona.
  */
-export async function derivarAIngenieria(entrada: { demandaId: number }) {
+export async function derivarAIngenieria(entrada: { demandaId: number; motivo?: string }) {
   const sesion = await requerirRol("planificacion", "atencion_ciudadana");
-  const { demandaId } = z.object({ demandaId: z.number().int().positive() }).parse(entrada);
+  const { demandaId, motivo } = z
+    .object({
+      demandaId: z.number().int().positive(),
+      /**
+       * POR QUÉ va a Ingeniería, que no siempre es lo mismo. "Es calle de
+       * ripio, no hay pavimento que parchar" y "el vecino pide que se
+       * pavimente" terminan en la misma área pero son dos pedidos distintos:
+       * uno es pasado de máquina y el otro es obra nueva con presupuesto. Sin
+       * distinguirlos, Ingeniería recibe una bolsa y no sabe qué le mandaron.
+       */
+      motivo: z.enum(["ripio", "pedido_pavimentacion"]).optional(),
+    })
+    .parse(entrada);
 
   await conRls(claims(sesion), async (tx) => {
     const r = (await tx.execute(sql`
       update demandas set
         estado = 'fuera_de_alcance',
         metadata = metadata || ${JSON.stringify({
-          derivada: { a: "ingenieria", por: sesion.nombre, en: new Date().toISOString() },
+          derivada: {
+            a: "ingenieria",
+            motivo: motivo ?? "ripio",
+            por: sesion.nombre,
+            en: new Date().toISOString(),
+          },
         })}::jsonb
       where id = ${demandaId} and estado in ('recibida', 'en_validacion')
       returning id

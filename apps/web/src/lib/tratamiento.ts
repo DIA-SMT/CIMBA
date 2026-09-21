@@ -17,7 +17,39 @@ import type { Sesion } from "./auth";
  *  - derivar_sat:  pérdidas de agua, tapas y sumideros → expediente a la SAT.
  */
 
-export type SenalTratamiento = "no_es_bache" | "duplicada" | "ya_resuelta" | "derivar_sat";
+export type SenalTratamiento =
+  | "no_es_bache"
+  | "duplicada"
+  | "ya_resuelta"
+  | "derivar_sat"
+  | "pide_pavimento";
+
+/**
+ * LO QUE EL VECINO PIDIÓ, QUE NO SIEMPRE ES LO QUE DICE LA TIPIFICACIÓN.
+ *
+ * El reclamo llega clasificado por quien lo tomó —bache, pozo, enripiado— y
+ * esa clasificación se hace muchas veces con el título nada más. Pero adentro,
+ * en la descripción o en la observación, está lo que el vecino realmente
+ * escribió: "Los vecinos del barrio abajo firmantes solicitamos pavimentación
+ * de calle Malabia entre 300 y 500". Eso no es un bache —no hay pavimento que
+ * parchar— ni es enripiado —no quieren ripio, quieren asfalto—: es un pedido
+ * de OBRA NUEVA, que sigue otro camino y otro presupuesto.
+ *
+ * Tratados como bacheo o como ripio quedaban en una cola que nunca los iba a
+ * resolver, y el barrio que juntó firmas no recibía ni una respuesta que
+ * dijera a dónde fue su pedido.
+ *
+ * Las palabras se buscan sin tildes y sin distinguir mayúsculas, y también en
+ * las variantes mal escritas que aparecen de verdad en los reclamos
+ * ("pavimentacion", "asfaltado", "repavimentar").
+ */
+const TEXTO_DEL_RECLAMO = sql`(
+  coalesce(a.descripcion, '') || ' ' ||
+  coalesce(a.metadata->>'asunto', '') || ' ' ||
+  coalesce(a.metadata->>'descripcion_lugar', '') || ' ' ||
+  coalesce(a.metadata->>'movimiento', '')
+)`;
+const PIDE_PAVIMENTO = sql`unaccent(${TEXTO_DEL_RECLAMO}) ~* '(pavimenta|repavimenta|asfalta|asfaltado|enripiado y pavim)'`;
 
 export interface DiagnosticoResumen {
   abiertas: number;
@@ -26,6 +58,8 @@ export interface DiagnosticoResumen {
   yaResueltas: number;
   derivarSat: number;
   satConFoto: number;
+  /** Piden pavimentación, no bacheo ni enripiado: es obra nueva. */
+  pidePavimento: number;
   /** Las que no saltó ninguna señal: la cola limpia de bacheo. */
   limpias: number;
 }
@@ -51,6 +85,10 @@ const COND: Record<SenalTratamiento, ReturnType<typeof sql>> = {
                and i.tipo in ('bache','pavimento_deteriorado','hundimiento','fisura')))
   )`,
   derivar_sat: sql`a.destino = 'sat'`,
+  /* La pérdida de agua es de la SAT y se deriva por su propio camino: que un
+     reclamo de caño roto mencione la calle sin pavimentar no lo convierte en
+     un pedido de obra. */
+  pide_pavimento: sql`${PIDE_PAVIMENTO} and a.destino is distinct from 'sat'`,
 };
 
 export async function diagnosticoDemandas(sesion: Sesion): Promise<DiagnosticoResumen> {
@@ -68,6 +106,7 @@ export async function diagnosticoDemandas(sesion: Sesion): Promise<DiagnosticoRe
         (select count(*) from a where ${COND.derivar_sat})::int as derivar_sat,
         (select count(distinct a.id) from a join fotografias f on f.demanda_id = a.id
            where ${COND.derivar_sat})::int as sat_con_foto,
+        (select count(*) from a where ${COND.pide_pavimento})::int as pide_pavimento,
         (select count(*) from a where (${COND.no_es_bache}) is not true and (${COND.duplicada}) is not true
            and (${COND.ya_resuelta}) is not true and (${COND.derivar_sat}) is not true)::int as limpias
     `)) as unknown as Array<Record<string, unknown>>;
@@ -79,6 +118,7 @@ export async function diagnosticoDemandas(sesion: Sesion): Promise<DiagnosticoRe
       yaResueltas: Number(f.ya_resueltas ?? 0),
       derivarSat: Number(f.derivar_sat ?? 0),
       satConFoto: Number(f.sat_con_foto ?? 0),
+      pidePavimento: Number(f.pide_pavimento ?? 0),
       limpias: Number(f.limpias ?? 0),
     };
   });
@@ -145,6 +185,12 @@ export async function demandasPorSenal(
       (select 'Ticket AC ' || er.id_remoto from external_ref er
        where er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda' and er.id_local = a.id
        order by er.sincronizado_en desc limit 1) as detalle,
+      null::bigint as referencia_id`,
+    /* El detalle ES el texto del vecino: es lo único que importa mirar acá, y
+       recortado a lo que entra en una fila de tabla. Sin él habría que abrir
+       cada reclamo para ver por qué saltó. */
+    pide_pavimento: sql`
+      nullif(trim(left(regexp_replace(${TEXTO_DEL_RECLAMO}, '\s+', ' ', 'g'), 160)), '') as detalle,
       null::bigint as referencia_id`,
   };
 

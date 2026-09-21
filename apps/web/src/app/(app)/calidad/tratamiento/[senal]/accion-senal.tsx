@@ -15,6 +15,13 @@ const ROTULO: Record<Exclude<SenalTratamiento, "derivar_sat">, { boton: string; 
   no_es_bache: { boton: "→ Ingeniería", confirmar: () => "¿Derivar a Ingeniería (pasado de máquina)?" },
   duplicada: { boton: "Duplicada", confirmar: (ref) => `¿Descartar como duplicada del reclamo #${ref}?` },
   ya_resuelta: { boton: "Ya resuelta", confirmar: (ref) => `¿Vincular al incidente #${ref} ya reparado?` },
+  /* Va al mismo lugar que "no es bache" —Ingeniería— pero por otro motivo, y
+     el rótulo lo dice: no es que el punto esté mal, es que el vecino está
+     pidiendo otra cosa. */
+  pide_pavimento: {
+    boton: "→ Obra nueva",
+    confirmar: () => "¿Derivar a Ingeniería como pedido de pavimentación?",
+  },
 };
 
 export function AccionSenal({
@@ -31,15 +38,25 @@ export function AccionSenal({
   const [error, setError] = useState<string | null>(null);
   const [pendiente, iniciar] = useTransition();
 
-  // Duplicada y ya-resuelta necesitan la referencia; sin ella no hay acción
-  // válida (la señal existe pero el detalle no cargó — caso rarísimo).
-  if (senal !== "no_es_bache" && referenciaId == null) return null;
+  /* Duplicada y ya-resuelta necesitan la referencia; sin ella no hay acción
+     válida (la señal existe pero el detalle no cargó — caso rarísimo). Las
+     otras dos derivan a Ingeniería y no dependen de ninguna referencia. */
+  const necesitaReferencia = senal === "duplicada" || senal === "ya_resuelta";
+  if (necesitaReferencia && referenciaId == null) return null;
 
   const ejecutar = () => {
     setError(null);
     iniciar(async () => {
       try {
-        if (senal === "no_es_bache") await derivarAIngenieria({ demandaId });
+        if (senal === "no_es_bache" || senal === "pide_pavimento") {
+          /* Los dos van a Ingeniería, por motivos distintos: uno porque ahí no
+             hay pavimento que parchar, el otro porque el vecino está pidiendo
+             que lo haya. El motivo queda escrito en la derivación. */
+          await derivarAIngenieria({
+            demandaId,
+            motivo: senal === "pide_pavimento" ? "pedido_pavimentacion" : undefined,
+          });
+        }
         else if (senal === "duplicada") await marcarDuplicada({ demandaId, duplicadaDe: referenciaId! });
         else await marcarYaResuelta({ demandaId, incidenteId: referenciaId! });
         router.refresh();

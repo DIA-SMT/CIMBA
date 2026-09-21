@@ -44,6 +44,12 @@ const SENALES: Record<
       "Estos no se tocan de a uno: se derivan TODOS juntos con la nota administrativa numerada al Director de la S.A.T. — así siempre queda el expediente registrado. La nota incluye además los reclamos de agua sin ubicación (acá se listan solo los georreferenciados).",
     accionMasiva: { href: "/expedientes/sat", texto: "Previsualizar y registrar la nota a la S.A.T. →" },
   },
+  pide_pavimento: {
+    titulo: "Piden pavimentación",
+    sub: "Reclamos que en su descripción u observación piden PAVIMENTAR la calle, sin importar cómo hayan sido tipificados al tomarlos.",
+    regla:
+      "No es bacheo —no hay pavimento que parchar— ni enripiado —no quieren ripio, quieren asfalto—: es un pedido de obra nueva, con otro camino y otro presupuesto. La clasificación de origen se hace muchas veces con el título nada más; la verdad está en el texto que escribió el vecino, y es el que se muestra en cada fila. Confirmá los que realmente pidan pavimentación para derivarlos a Ingeniería como obra.",
+  },
 };
 
 export default async function PaginaSenal({ params }: { params: Promise<{ senal: string }> }) {
@@ -57,7 +63,13 @@ export default async function PaginaSenal({ params }: { params: Promise<{ senal:
   const sesion = (await leerSesion())!;
   const [filas, diag] = await Promise.all([demandasPorSenal(sesion, s), diagnosticoDemandas(sesion)]);
   // El título dice el total REAL de la señal; el listado se corta en 300.
-  const total = { no_es_bache: diag.noEsBache, duplicada: diag.duplicadas, ya_resuelta: diag.yaResueltas, derivar_sat: diag.derivarSat }[s];
+  const total = {
+    no_es_bache: diag.noEsBache,
+    duplicada: diag.duplicadas,
+    ya_resuelta: diag.yaResueltas,
+    derivar_sat: diag.derivarSat,
+    pide_pavimento: diag.pidePavimento,
+  }[s];
   const puedeActuar = ["admin", "planificacion", "atencion_ciudadana"].includes(sesion.rol_cimba);
 
   return (

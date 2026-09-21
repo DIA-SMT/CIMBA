@@ -2185,10 +2185,10 @@ export async function corregirUbicacionItem(entrada: {
         update incidentes set
           geom = ${punto},
           direccion = coalesce(${datos.direccion?.trim() || null}, direccion),
-          distrito_id = (select d.id from distritos d where st_contains(d.geom, ${punto}) limit 1),
-          cuadrante_id = (select c.id from cuadrantes c where st_contains(c.geom, ${punto}) limit 1),
-          circuito_id = (select c.id from circuitos c where st_contains(c.geom, ${punto}) limit 1),
-          barrio_id = (select b.id from barrios b where st_contains(b.geom, ${punto}) limit 1)
+          distrito_id = distrito_de(${punto}),
+          cuadrante_id = cuadrante_de(${punto}),
+          circuito_id = circuito_de(${punto}),
+          barrio_id = barrio_de(${punto})
         where id = ${Number(item.incidente_id)}
       `);
     }

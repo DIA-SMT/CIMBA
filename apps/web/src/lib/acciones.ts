@@ -527,15 +527,15 @@ export async function corregirUbicacionDemanda(entrada: {
          * distrito: el reclamo se movía de lugar pero seguía contando en el
          * barrio y el circuito viejos, así que la deuda por territorio, la
          * asignación de circuito y el parte diario lo sumaban donde ya no
-         * estaba. Se calculan acá con st_contains y no dejándolas en NULL para
-         * el trigger: el resultado no depende del orden en que corran.
+         * estaba. Se calculan acá y no dejándolas en NULL para el trigger: el
+         * resultado no depende del orden en que corran. Y se usan las funciones
+         * distrito_de/circuito_de/barrio_de (migración 0031) en vez de
+         * st_contains, que rechaza el punto que cae justo sobre el límite —
+         * el bache de la avenida que separa dos distritos quedaba sin ninguno.
          */
-        distrito_id = (select di.id from distritos di
-          where st_contains(di.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
-        circuito_id = (select ci.id from circuitos ci
-          where st_contains(ci.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
-        barrio_id = (select b.id from barrios b
-          where st_contains(b.geom, st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)) limit 1),
+        distrito_id = distrito_de(st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)),
+        circuito_id = circuito_de(st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)),
+        barrio_id = barrio_de(st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)),
         metadata = metadata || ${marca}::jsonb
       where id = ${datos.demandaId}
       returning id
