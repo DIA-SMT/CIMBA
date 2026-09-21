@@ -10,6 +10,7 @@ import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
+import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
 
@@ -225,9 +226,24 @@ export default async function PaginaOrdenEmpresa({
         <ListaPendientes pendientes={pendientes} hechos={hechos} ordenId={orden.id} />
       )}
       {pendientes.length === 0 && activa && (
-        <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">
-          No queda nada pendiente en esta orden. Buen trabajo.
-        </p>
+        /**
+         * Una ORDEN ABIERTA no tiene lista: se sale a barrer la zona y se carga
+         * lo que se encuentra. Decirle "no queda nada pendiente, buen trabajo"
+         * a una cuadrilla que recién arranca sería mandarla de vuelta al
+         * camión.
+         */
+        orden.abierta ? (
+          <p className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-4 py-5 text-center text-sm leading-relaxed text-texto-2">
+            <b className="block text-base text-amarillo">Orden abierta</b>
+            Esta orden no trae una lista de baches: recorré{" "}
+            <b className="text-texto">{orden.ambitoNombre ?? "la zona asignada"}</b> y cargá con el
+            botón de arriba cada bache que tapes.
+          </p>
+        ) : (
+          <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">
+            No queda nada pendiente en esta orden. Buen trabajo.
+          </p>
+        )
       )}
 
       {(propuestos.length > 0 || rechazados.length > 0) && (
@@ -248,6 +264,21 @@ export default async function PaginaOrdenEmpresa({
                   {ETIQUETA_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo} · Bacheo lo está revisando: si
                   lo valida, aparece en los pendientes.
                 </p>
+                {/* Esperando validación era el único estado sin salida: ni la
+                    empresa podía arreglar un pin mal puesto ni el Director
+                    podía tocarlo antes de decidir. Se rechazaba y se cargaba
+                    todo de nuevo. */}
+                {activa && (
+                  <div className="mt-1.5">
+                    <CorregirUbicacionItem
+                      itemId={item.id}
+                      lat={item.lat}
+                      lon={item.lon}
+                      direccion={item.direccion}
+                      compacto
+                    />
+                  </div>
+                )}
               </Panel>
             ))}
             {rechazados.map((item) => {

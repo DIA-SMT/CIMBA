@@ -11,6 +11,7 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
+import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { BorrarItem } from "./borrar-item";
 import { CorregirMedidas } from "./corregir-medidas";
@@ -364,6 +365,18 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         {puedeSupervisar && (
                           <div className="mt-3">
                             <ResolverPropuesto itemId={it.id} />
+                            {/* Corregir ANTES de decidir. Un propuesto con el
+                                pin media cuadra corrido no se podía arreglar:
+                                había que rechazarlo y pedir que lo cargaran de
+                                nuevo, con foto y medidas otra vez. */}
+                            <div className="mt-2">
+                              <CorregirUbicacionItem
+                                itemId={it.id}
+                                lat={it.lat}
+                                lon={it.lon}
+                                direccion={it.direccion}
+                              />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -605,6 +618,17 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         · <b>{numero(item.superficieM2)} m²</b>
                       </>
                     )}
+                    {/* Las toneladas al lado de la descripción: es la unidad
+                        con la que se certifica el pago, y quien mira la
+                        evidencia para firmar no tendría que ir a buscarla a la
+                        tabla de arriba ni hacer la cuenta al margen. */}
+                    {item.superficieM2 != null && item.espesorCm != null && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <b>{formatoToneladas(toneladasDe(volumenDe(item.superficieM2, item.espesorCm)))}</b>
+                      </>
+                    )}
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4mm" }}>
                     {fotos.map((f, j) => (
@@ -620,7 +644,23 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                              archivos ya se pidieron para los thumbnails, así
                              que en la práctica es caché, no doble descarga. */
                           loading="eager"
-                          style={{ width: "8cm", maxWidth: "100%", height: "6cm", objectFit: "cover", border: "1px solid #555" }}
+                          /**
+                           * NUNCA recortada. Estaba fijada en 8×6 cm con
+                           * object-fit:cover, y el capataz saca las fotos con
+                           * el teléfono en vertical: el recorte a caja
+                           * apaisada se comía la mitad del bache, que es lo
+                           * único que la foto tiene que probar. Ahora la foto
+                           * entra entera —se achica hasta caber, nunca se
+                           * corta— y la caja se adapta a lo que hay.
+                           */
+                          style={{
+                            width: "8cm",
+                            maxWidth: "100%",
+                            height: "auto",
+                            maxHeight: "9cm",
+                            objectFit: "contain",
+                            border: "1px solid #555",
+                          }}
                         />
                         <figcaption style={{ fontSize: 9, marginTop: 2 }}>
                           {(ETIQUETA_MOMENTO[f.momento] ?? f.momento).toUpperCase()} — {o.numero} · item {pos} ·{" "}

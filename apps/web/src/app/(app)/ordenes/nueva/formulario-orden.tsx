@@ -490,6 +490,19 @@ export function FormularioOrden({
       : null;
   const m2Seleccionados = seleccionados.reduce((a, p) => a + (p.superficieM2 ?? 0), 0);
   const totalItems = seleccion.size + tramosValidos.length;
+  /**
+   * LA ORDEN ABIERTA: una zona y ningún punto.
+   *
+   * Media ciudad se trabaja así — la cuadrilla barre el barrio y los baches
+   * los encuentra ahí, no en la planilla—, y hasta ahora había que inventar un
+   * tramo falso para poder emitir el papel. Lo único que se exige es que la
+   * orden diga DÓNDE: sin zona no es una orden, es un papel en blanco.
+   */
+  const hayAmbito = ambito === "colector" ? colector.trim().length > 0 : circuitoId != null && circuitoId > 0;
+  /** Cómo se llama lo que se eligió, para poder nombrarlo en el aviso. */
+  const nombreAmbitoElegido =
+    opciones.find((o) => o.ref === (ambito === "colector" ? colector : circuitoId))?.etiqueta ?? null;
+  const ordenAbierta = totalItems === 0 && hayAmbito;
 
   const crear = () => {
     setError(null);
@@ -1154,12 +1167,23 @@ export function FormularioOrden({
         </Panel>
 
         {error && <p className="text-sm text-peligro">{error}</p>}
+        {ordenAbierta && (
+          <p className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-3 py-2.5 text-xs leading-relaxed text-texto-2">
+            <b className="text-amarillo">Orden abierta.</b> No tiene puntos: la empresa va a{" "}
+            {nombreAmbitoElegido ? <b className="text-texto">{nombreAmbitoElegido}</b> : "la zona elegida"} y
+            carga los baches que encuentra. No se cierra sola — la cerrás vos cuando termine el trabajo.
+          </p>
+        )}
         <button
           onClick={crear}
-          disabled={creando || !empresaId || totalItems === 0}
+          disabled={creando || !empresaId || (totalItems === 0 && !ordenAbierta)}
           className="w-full rounded-xl bg-azul px-4 py-3.5 font-semibold text-white transition hover:brightness-110 active:scale-[0.99] disabled:opacity-40"
         >
-          {creando ? "Creando…" : `Crear la orden (${numero(totalItems)} items)`}
+          {creando
+            ? "Creando…"
+            : ordenAbierta
+              ? "Crear la orden abierta (sin puntos)"
+              : `Crear la orden (${numero(totalItems)} items)`}
         </button>
         <p className="text-center text-[11px] text-texto-3">
           Se crea en borrador: la empresa no la ve hasta que la emitas.

@@ -84,8 +84,25 @@ export async function crearOrden(entrada: {
     })
     .parse(entrada);
 
-  if (datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0) {
-    throw new ErrorVisible("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
+  /**
+   * LA ORDEN ABIERTA: una zona, sin lista de puntos.
+   *
+   * "Que pueda generar una orden para Villa Tuquito aunque no tenga ningún
+   * reclamo pendiente, para que carguen los baches nuevos que encuentren."
+   * Es cómo se trabaja de verdad media ciudad: la cuadrilla barre la zona y
+   * lo que hay lo encuentra ahí, no en la planilla. Antes había que inventar
+   * un tramo falso para poder emitir el papel.
+   *
+   * La condición es que la orden diga DÓNDE: una orden sin puntos y sin zona
+   * no es una orden, es un papel en blanco. Con el ámbito, la empresa sabe
+   * qué barrer y la certificación sabe a qué zona imputar lo cargado.
+   */
+  const sinPuntos =
+    datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0;
+  if (sinPuntos && datos.ambitoRef == null && datos.circuitoId == null) {
+    throw new ErrorVisible(
+      "Una orden sin puntos tiene que decir dónde se trabaja: elegí el distrito, barrio, corredor, circuito o zona",
+    );
   }
 
   /**
@@ -123,7 +140,7 @@ export async function crearOrden(entrada: {
     const creada = (await tx.execute(sql`
       insert into ordenes_trabajo (
         numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, zona_id, colector,
-        prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por
+        prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por, metadata
       )
       values (
         /* El número sale de siguiente_numero_orden() (migración 0018) y no de
@@ -140,7 +157,11 @@ export async function crearOrden(entrada: {
         ${datos.ambito === "colector" && typeof ref === "string" ? ref : null},
         ${datos.prioridad},
         ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},
-        ${sesion.sub}::uuid
+        ${sesion.sub}::uuid,
+        /* La orden abierta se marca acá: sin la marca, el primer bache que
+           cargue la empresa la cerraría sola —no quedarían pendientes— y la
+           cuadrilla se encontraría la orden cerrada a mitad de la cuadra. */
+        ${JSON.stringify(sinPuntos ? { orden_abierta: true } : {})}::jsonb
       ) returning id
     `)) as unknown as Array<{ id: number }>;
     const orden = creada[0];
@@ -912,9 +933,16 @@ export async function reportarItemHecho(formData: FormData) {
       update ordenes_trabajo set estado = 'en_ejecucion'
       where id = ${Number(item.orden_id)} and estado = 'emitida'
     `);
+    /**
+     * Una ORDEN ABIERTA no se cierra sola. El cierre automático dispara cuando
+     * no quedan items pendientes ni propuestos; en una orden abierta —sin
+     * lista de puntos, la empresa carga lo que encuentra— eso pasa apenas se
+     * reporta el PRIMER bache, y la cuadrilla se encontraría la orden cerrada
+     * a mitad de la cuadra. Esas las cierra una persona, con su fecha.
+     */
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
+      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
         and not exists (
           select 1 from orden_items oi
           where oi.orden_id = ${Number(item.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -986,7 +1014,7 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
     if (!fila) throw new ErrorVisible("El item no está pendiente o la orden no está activa");
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
+      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
         and not exists (
           select 1 from orden_items oi
           where oi.orden_id = ${Number(fila.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -1815,7 +1843,7 @@ export async function marcarYaResuelto(formData: FormData) {
       `);
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-        where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
           and not exists (
             select 1 from orden_items oi
             where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -1981,7 +2009,7 @@ export async function reportarItemNoEjecutable(formData: FormData) {
       `);
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-        where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
           and not exists (
             select 1 from orden_items oi
             where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -2034,6 +2062,127 @@ export async function reportarItemNoEjecutable(formData: FormData) {
  * y cambiarlo por atrás rompería la correspondencia entre lo que dice CIMBA y
  * lo que dice el expediente. Para eso está la desviación del acta siguiente.
  */
+/**
+ * MOVER EL PUNTO DE UN ITEM DE LA ORDEN.
+ *
+ * El pin llega mal muy seguido —el geocodificador pifia media cuadra, el GPS
+ * del teléfono pifia veinte metros bajo los árboles, la dirección del reclamo
+ * estaba mal escrita desde el origen— y hasta ahora, una vez cargado, no había
+ * forma de corregirlo. Lo peor era el item PROPUESTO: la empresa lo mandaba,
+ * quedaba esperando validación, y ni la empresa podía arreglarlo ni el
+ * Director podía tocarlo antes de decidir. La única salida era rechazarlo y
+ * pedir que lo cargaran de nuevo, con la foto y las medidas otra vez.
+ *
+ * Ahora lo pueden mover los dos: la empresa lo suyo, el municipio cualquiera.
+ * El punto viaja a todo lo que cuelga del item —el incidente que alimenta el
+ * mapa y la brecha, y la intervención si ya se reportó—, porque un item
+ * corregido y un incidente en el lugar viejo es peor que no haberlo corregido.
+ */
+export async function corregirUbicacionItem(entrada: {
+  itemId: number;
+  lat: number;
+  lon: number;
+  direccion?: string;
+}) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion", "supervision"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para corregir ubicaciones`);
+  }
+  const datos = z
+    .object({
+      itemId: z.number().int().positive(),
+      lat: z.number().min(-27.2).max(-26.5),
+      lon: z.number().min(-65.6).max(-64.9),
+      direccion: z.string().max(300).optional(),
+    })
+    .parse(entrada);
+
+  // La caja del zod es un margen laxo; la frontera operativa es la ciudad.
+  const { dentroDeSMT } = await import("@cimba/domain");
+  if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+    throw new ErrorVisible("Ese punto cae fuera de San Miguel de Tucumán: revisá el pin");
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.incidente_id, oi.intervencion_id, oi.acta_id,
+             ot.estado as orden_estado, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    const esEjecutor = empresaEjecutora != null;
+    if (esEjecutor && Number(item.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("El item no pertenece a tu empresa");
+    }
+    if (item.acta_id != null) {
+      throw new ErrorVisible(
+        "Este trabajo ya está en un acta firmada: la ubicación no se puede mover. Avisá a la Dirección.",
+      );
+    }
+    /**
+     * La empresa mueve lo que todavía está en juego —lo pendiente y lo que
+     * propuso y espera validación—, no lo ya reportado: ahí el punto es parte
+     * de la evidencia que se certifica, y lo corrige el municipio.
+     */
+    const editables = esEjecutor
+      ? ["pendiente", "propuesto"]
+      : ["pendiente", "propuesto", "hecho", "no_encontrado", "no_ejecutable"];
+    if (!editables.includes(String(item.estado))) {
+      throw new ErrorVisible(
+        esEjecutor
+          ? "Este trabajo ya está reportado: pedile a la Dirección que corrija la ubicación"
+          : "Este item no admite corrección de ubicación en su estado actual",
+      );
+    }
+    if (esEjecutor && !["emitida", "en_ejecucion"].includes(String(item.orden_estado))) {
+      throw new ErrorVisible("La orden no está activa");
+    }
+
+    const punto = sql`st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)`;
+    await tx.execute(sql`
+      update orden_items set
+        geom = ${punto},
+        direccion = coalesce(${datos.direccion?.trim() || null}, direccion),
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          ubicacion_corregida: { por: sesion.nombre, en: new Date().toISOString() },
+        })}::jsonb
+      where id = ${datos.itemId}
+    `);
+
+    /* El incidente sigue al item: es el que dibuja el mapa, el que cuenta en
+       la brecha y el que se cruza con los reclamos por cercanía. Las tres
+       pertenencias territoriales se recalculan — el trigger solo completa lo
+       que está en NULL, así que mover el punto sin esto dejaba el bache
+       sumando en el distrito viejo. */
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set
+          geom = ${punto},
+          direccion = coalesce(${datos.direccion?.trim() || null}, direccion),
+          distrito_id = (select d.id from distritos d where st_contains(d.geom, ${punto}) limit 1),
+          cuadrante_id = (select c.id from cuadrantes c where st_contains(c.geom, ${punto}) limit 1),
+          circuito_id = (select c.id from circuitos c where st_contains(c.geom, ${punto}) limit 1),
+          barrio_id = (select b.id from barrios b where st_contains(b.geom, ${punto}) limit 1)
+        where id = ${Number(item.incidente_id)}
+      `);
+    }
+    if (item.intervencion_id != null) {
+      await tx.execute(sql`
+        update intervenciones set geom_ejecucion = ${punto} where id = ${Number(item.intervencion_id)}
+      `);
+    }
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/mapa");
+  return { ok: true };
+}
+
 export async function corregirMedidasItem(formData: FormData) {
   const sesion = await requerirRol("planificacion", "supervision");
   const datos = z

@@ -330,6 +330,12 @@ export interface OrdenResumen {
   emitidaEn: string | null;
   venceEn: string | null;
   creadoEn: string;
+  /**
+   * ORDEN ABIERTA: se emitió sin lista de puntos. La empresa barre la zona y
+   * carga los baches que encuentra. No se cierra sola —si no, el primer bache
+   * reportado la cerraría— y por eso hay que poder distinguirla en pantalla.
+   */
+  abierta: boolean;
 }
 
 /**
@@ -365,7 +371,7 @@ export async function listarOrdenes(
       select ot.id, ot.numero, ot.estado, ot.prioridad, ot.titulo, ot.empresa_id,
              e.nombre as empresa_nombre, c.codigo as circuito_codigo,
              ot.emitida_en, ot.vence_en::text as vence_en, ot.creado_en,
-             ot.ambito, ot.distrito_id, ot.colector,
+             ot.ambito, ot.distrito_id, ot.colector, ot.metadata,
              b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
              (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
@@ -411,8 +417,14 @@ export async function listarOrdenes(
       emitidaEn: f.emitida_en != null ? String(f.emitida_en) : null,
       venceEn: f.vence_en != null ? String(f.vence_en) : null,
       creadoEn: String(f.creado_en),
+      abierta: esAbierta(f.metadata),
     }));
   });
+}
+
+/** La marca que deja crearOrden cuando la orden nace sin puntos. */
+function esAbierta(metadata: unknown): boolean {
+  return (metadata as { orden_abierta?: unknown } | null)?.orden_abierta === true;
 }
 
 export interface ItemOrden {
@@ -620,6 +632,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
           0,
         ),
       ),
+      abierta: esAbierta(o.metadata),
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,
       // vence_en es una columna date pura: viene ya como "YYYY-MM-DD" (::text),
       // no como el Date-a-medianoche-UTC que String() corrompería un día.
