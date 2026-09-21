@@ -11,6 +11,7 @@ import {
   HardHat,
   Inbox,
   Map as MapIcon,
+  Radar,
   Settings,
   ShieldCheck,
   Smartphone,
@@ -58,6 +59,15 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
     etiqueta: "El trabajo",
     items: [
       { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
+      /* La pregunta de la mañana, que es diaria y no mensual: qué se está
+         haciendo hoy y de quién es cada cuadra. Vivía dentro de Órdenes,
+         detrás de un botón y con "últimos 30 días" por defecto. */
+      {
+        href: "/trabajando",
+        etiqueta: "Trabajando",
+        icono: Radar,
+        roles: ["admin", "planificacion", "supervision"],
+      },
       { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
       { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
       { href: "/campo", etiqueta: "Campo", icono: Smartphone },

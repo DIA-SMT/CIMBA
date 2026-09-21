@@ -33,10 +33,19 @@ const RANGOS = [
  * Se carga recién al abrirlo: en Órdenes casi nadie lo necesita en cada visita
  * y son hasta 4.000 puntos.
  */
-export function MapaOrdenes() {
+export function MapaOrdenes({
+  /** En su propia pantalla abre solo; en Órdenes sigue siendo un panel. */
+  siempreAbierto = false,
+  diasInicial = 30,
+  alto = 380,
+}: {
+  siempreAbierto?: boolean;
+  diasInicial?: number;
+  alto?: number;
+} = {}) {
   const tema = usarTemaMapa();
-  const [abierto, setAbierto] = useState(false);
-  const [dias, setDias] = useState(30);
+  const [abierto, setAbierto] = useState(siempreAbierto);
+  const [dias, setDias] = useState(diasInicial);
   const [datos, setDatos] = useState<FC | null>(null);
   const [cargando, setCargando] = useState(false);
 
@@ -75,12 +84,14 @@ export function MapaOrdenes() {
   return (
     <div className="mb-6">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => setAbierto((v) => !v)}
-          className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
-        >
-          {abierto ? "Ocultar el mapa de órdenes" : "Ver dónde se está trabajando"}
-        </button>
+        {!siempreAbierto && (
+          <button
+            onClick={() => setAbierto((v) => !v)}
+            className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
+          >
+            {abierto ? "Ocultar el mapa de órdenes" : "Ver dónde se está trabajando"}
+          </button>
+        )}
         {abierto && (
           <>
             {RANGOS.map(({ dias: d, etiqueta }) => (
@@ -101,7 +112,7 @@ export function MapaOrdenes() {
 
       {abierto && (
         <div className="mt-3 overflow-hidden rounded-xl border border-borde">
-          <div style={{ height: 380 }}>
+          <div style={{ height: alto }}>
             <MapaGL
               initialViewState={{ longitude: -65.216, latitude: -26.824, zoom: 12 }}
               mapStyle={estiloMapa(tema)}
@@ -117,6 +128,12 @@ export function MapaOrdenes() {
                     filter={["==", ["geometry-type"], "LineString"]}
                     paint={{ "line-color": ["get", "color"], "line-width": 4, "line-opacity": 0.85 }}
                   />
+                  {/* El borde blanco distingue lo MANDADO por una orden de
+                      CIMBA de lo que la empresa informó por planilla o por su
+                      app: el color sigue siendo el de la empresa —la pregunta
+                      principal es de quién es la cuadra— pero no es lo mismo
+                      "esto está encargado" que "esto lo hicieron y lo
+                      contaron". */}
                   <Layer
                     id="ordenes-punto"
                     type="circle"
@@ -124,9 +141,9 @@ export function MapaOrdenes() {
                     paint={{
                       "circle-color": ["get", "color"],
                       "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3, 16, 7],
-                      "circle-stroke-width": 0.6,
+                      "circle-stroke-width": ["case", ["==", ["get", "fuente"], "orden"], 1.6, 0.4],
                       "circle-stroke-color": tema === "oscuro" ? "#0B0F16" : "#ffffff",
-                      "circle-opacity": 0.9,
+                      "circle-opacity": ["case", ["==", ["get", "fuente"], "orden"], 0.95, 0.6],
                     }}
                   />
                 </Source>
@@ -144,13 +161,18 @@ export function MapaOrdenes() {
                   {empresa} <span className="num text-texto-3">{numero(n)}</span>
                 </span>
               ))}
+              <span className="ml-auto text-texto-3">
+                borde marcado = mandado por orden · sin borde = informado por planilla o por la app
+              </span>
             </div>
           )}
           {datos && datos.features.length === 0 && (
             <p className="px-4 py-6 text-center text-sm text-texto-3">
               {dias === 1
-                ? "No se emitieron órdenes hoy."
-                : `No hay órdenes emitidas en ${dias === 7 ? "la última semana" : `los últimos ${dias} días`}.`}
+                ? "Hoy no se mandó ni se informó ningún trabajo todavía."
+                : `Sin trabajo mandado ni informado en ${
+                    dias === 7 ? "la última semana" : `los últimos ${dias} días`
+                  }.`}
             </p>
           )}
         </div>
