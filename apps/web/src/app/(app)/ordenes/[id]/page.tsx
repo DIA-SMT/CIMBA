@@ -778,6 +778,9 @@ function FilaItem({
               itemId={item.id}
               superficieM2={item.superficieM2}
               espesorCm={item.espesorCm}
+              anchoM={item.anchoM}
+              largoM={item.largoM}
+              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
               tipoObra={item.tipoObra ?? null}
               enActa={item.actaId != null}
             />

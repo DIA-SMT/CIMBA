@@ -110,3 +110,162 @@ export async function regenerarClaveUsuario(entrada: z.infer<typeof resetSchema>
   revalidatePath("/actividad");
   return { usuario: fila.usuario, clave };
 }
+
+// ── Configuración: ver y modificar el padrón ────────────────────────────────
+
+export interface UsuarioAdmin {
+  id: string;
+  idPersona: number;
+  nombre: string;
+  usuario: string | null;
+  email: string | null;
+  rol: string;
+  area: string | null;
+  activo: boolean;
+  claveTemporal: boolean;
+  /** Entra con usuario y clave propios. Los del SSO municipal no. */
+  tieneClave: boolean;
+  empresaNombre: string | null;
+  ultimoIngreso: string | null;
+}
+
+/**
+ * El padrón completo, para la pantalla de Configuración. Incluye a los
+ * perfiles sin clave propia (los que entran por el SSO municipal) porque
+ * también hay que poder cambiarles el rol o darlos de baja.
+ */
+export async function listarUsuarios(): Promise<UsuarioAdmin[]> {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select p.id, p.id_persona, p.nombre, p.usuario, p.email, p.rol::text as rol, p.area,
+             p.activo, p.clave_temporal, (p.clave_hash is not null) as tiene_clave,
+             e.nombre as empresa_nombre, p.ultimo_ingreso
+      from perfiles p
+      left join empresas e on e.id = p.empresa_id
+      order by p.activo desc, p.rol, p.nombre
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: String(f.id),
+      idPersona: Number(f.id_persona),
+      nombre: String(f.nombre),
+      usuario: (f.usuario as string) ?? null,
+      email: (f.email as string) ?? null,
+      rol: String(f.rol),
+      area: (f.area as string) ?? null,
+      activo: Boolean(f.activo),
+      claveTemporal: Boolean(f.clave_temporal),
+      tieneClave: Boolean(f.tiene_clave),
+      empresaNombre: (f.empresa_nombre as string) ?? null,
+      ultimoIngreso: f.ultimo_ingreso != null ? String(f.ultimo_ingreso) : null,
+    }));
+  });
+}
+
+const modificarSchema = z.object({
+  perfilId: z.string().uuid(),
+  nombre: z.string().trim().min(2).max(120).optional(),
+  rol: z.enum(ROLES_ASIGNABLES).optional(),
+  area: z.string().trim().max(120).nullable().optional(),
+  activo: z.boolean().optional(),
+});
+
+/**
+ * Cambiar nombre, rol, área o si el acceso sigue vivo.
+ *
+ * Dos frenos, y los dos por la misma razón práctica: si el último admin se
+ * saca el rol o se desactiva, nadie puede volver a crear usuarios y la única
+ * salida es entrar a la base a mano. Uno protege contra hacérselo a uno mismo
+ * (el caso frecuente: "me equivoqué de fila") y el otro contra dejar el
+ * sistema sin ningún administrador activo.
+ */
+export async function modificarUsuario(entrada: z.infer<typeof modificarSchema>) {
+  const sesion = await exigirSuperadmin();
+  const datos = modificarSchema.parse(entrada);
+  const pierdeElMando = datos.activo === false || (datos.rol != null && datos.rol !== "admin");
+
+  if (datos.perfilId === sesion.sub && pierdeElMando) {
+    throw new ErrorVisible("No podés quitarte a vos mismo el acceso de administrador");
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    if (pierdeElMando) {
+      const actual = (await tx.execute(sql`
+        select rol::text as rol, activo from perfiles where id = ${datos.perfilId}::uuid
+      `)) as unknown as Array<{ rol: string; activo: boolean }>;
+      if (!actual[0]) throw new ErrorVisible("El usuario no existe");
+      if (actual[0].rol === "admin" && actual[0].activo) {
+        const otros = (await tx.execute(sql`
+          select count(*)::int as n from perfiles
+          where rol = 'admin' and activo and id <> ${datos.perfilId}::uuid
+        `)) as unknown as Array<{ n: number }>;
+        if (Number(otros[0]?.n ?? 0) === 0) {
+          throw new ErrorVisible(
+            "Es el último administrador activo: nombrá a otro antes de sacarle el rol",
+          );
+        }
+      }
+    }
+    const r = (await tx.execute(sql`
+      update perfiles set
+        nombre = coalesce(${datos.nombre ?? null}, nombre),
+        rol = coalesce(${datos.rol ?? null}::rol_usuario, rol),
+        area = case when ${datos.area !== undefined} then ${datos.area ?? null} else area end,
+        activo = coalesce(${datos.activo ?? null}, activo)
+      where id = ${datos.perfilId}::uuid
+      returning id
+    `)) as unknown as Array<{ id: string }>;
+    if (!r[0]) throw new ErrorVisible("El usuario no existe");
+  });
+
+  revalidatePath("/configuracion");
+  revalidatePath("/actividad");
+  return { ok: true };
+}
+
+// ── Configuración: qué avisos manda el sistema ──────────────────────────────
+
+export interface AvisoConfig {
+  id: number;
+  evento: string;
+  canal: string;
+  destino: string;
+  etiqueta: string | null;
+  activo: boolean;
+}
+
+export async function listarAvisosConfig(): Promise<AvisoConfig[]> {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select id, evento, canal, destino, etiqueta, activo
+      from avisos_destinatarios order by evento, canal, destino
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: Number(f.id),
+      evento: String(f.evento),
+      canal: String(f.canal),
+      destino: String(f.destino),
+      etiqueta: (f.etiqueta as string) ?? null,
+      activo: Boolean(f.activo),
+    }));
+  });
+}
+
+/**
+ * Prender o apagar un aviso puntual. No se borra la fila: apagar tiene que ser
+ * reversible con un clic, y quien apagó "orden vencida a Supervisión" el mes
+ * pasado tiene derecho a encontrarlo ahí para volver a prenderlo.
+ */
+export async function cambiarAvisoConfig(entrada: { id: number; activo: boolean }) {
+  const sesion = await exigirSuperadmin();
+  const datos = z.object({ id: z.number().int().positive(), activo: z.boolean() }).parse(entrada);
+  await conRls(claims(sesion), async (tx) => {
+    await tx.execute(sql`
+      update avisos_destinatarios set activo = ${datos.activo} where id = ${datos.id}
+    `);
+  });
+  revalidatePath("/configuracion");
+  revalidatePath("/ordenes/avisos");
+  return { ok: true };
+}

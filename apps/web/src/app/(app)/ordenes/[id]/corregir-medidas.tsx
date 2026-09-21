@@ -39,12 +39,20 @@ export function CorregirMedidas({
   itemId,
   superficieM2,
   espesorCm,
+  anchoM,
+  largoM,
+  medicion,
   tipoObra,
   enActa,
 }: {
   itemId: number;
   superficieM2: number | null;
   espesorCm: number | null;
+  /** Los lados con los que se cargó, si se cargó así. */
+  anchoM?: number | null;
+  largoM?: number | null;
+  /** Cómo se midió en la calle: el formulario abre igual. */
+  medicion?: string | null;
   tipoObra: string | null;
   /** Ya certificado: no se toca (lo rechaza también el servidor). */
   enActa: boolean;
@@ -54,8 +62,25 @@ export function CorregirMedidas({
   const [abierto, setAbierto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [motivo, setMotivo] = useState("");
+  /**
+   * ABRE COMO SE CARGÓ, con todo adentro.
+   *
+   * Abría siempre en modo "superficie" y con los lados en blanco: quien había
+   * medido con la cinta y solo quería corregir el espesor tenía que volver a
+   * tipear el ancho y el largo, dos números que el sistema ya tenía guardados.
+   * Ahora arranca en el modo real del item y con los cuatro valores puestos:
+   * se cambia el que está mal y listo.
+   */
   const [medida, setMedida] = useState<ValorMedida>(() => ({
-    ...medidaVacia("superficie"),
+    ...medidaVacia(
+      medicion === "lados" || medicion === "volumen" || medicion === "superficie"
+        ? medicion
+        : anchoM != null && largoM != null
+          ? "lados"
+          : "superficie",
+    ),
+    ancho: anchoM != null ? String(anchoM) : "",
+    largo: largoM != null ? String(largoM) : "",
     superficie: superficieM2 != null ? String(superficieM2) : "",
     espesor: espesorCm != null ? String(espesorCm) : "",
   }));

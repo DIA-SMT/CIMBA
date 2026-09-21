@@ -11,6 +11,7 @@ import {
   HardHat,
   Inbox,
   Map as MapIcon,
+  Settings,
   ShieldCheck,
   Smartphone,
   Upload,
@@ -77,6 +78,11 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
       { href: "/cargar", etiqueta: "Cargar", icono: Upload },
       // Trazabilidad de uso: solo la conducción (admin y el Director).
       { href: "/actividad", etiqueta: "Actividad", icono: ActivityIcon, roles: ["admin", "planificacion"] },
+      /* Usuarios y avisos. Solo admin: quien entra acá puede crear otro
+         administrador y resetearle la clave a cualquiera. El link escondido
+         no es el control —la página tiene su propia guarda— pero tampoco
+         tiene sentido ofrecerle a nadie más una puerta que no abre. */
+      { href: "/configuracion", etiqueta: "Configuración", icono: Settings, roles: ["admin"] },
     ],
   },
 ];

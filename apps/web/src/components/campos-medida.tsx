@@ -156,25 +156,48 @@ export function CamposMedida({
         {extra}
       </div>
 
-      {/* Cómo se puede medir ESTE bache. Targets grandes: se elige con guantes. */}
-      <div className="mb-2 grid grid-cols-3 gap-2">
-        {MEDICIONES.map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => set({ medicion: m })}
-            title={AYUDA_MEDICION[m]}
-            className={`min-h-11 rounded-xl border-2 px-2 py-2 text-[12px] leading-tight font-bold transition active:scale-[0.99] ${
-              valor.medicion === m
-                ? "border-azul bg-azul/15 text-celeste"
-                : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
-            }`}
-          >
-            {ETIQUETA_MEDICION[m]}
-          </button>
-        ))}
+      {/**
+       * Las tres formas de medir, UNA DEBAJO DE OTRA y no en tres columnas.
+       *
+       * En tres columnas los rótulos no miden lo mismo —"Superficie" entra en
+       * una línea y "Volumen de mezcla" en tres— así que los botones salían de
+       * alturas distintas, con el texto apretado y cortado en el teléfono, que
+       * es donde se usa. Apilados entran enteros, se tocan con guantes, y cada
+       * uno puede llevar al lado su explicación en vez de esconderla en un
+       * title que en el celular no existe.
+       */}
+      <div className="mb-2 flex flex-col gap-1.5">
+        {MEDICIONES.map((m) => {
+          const elegido = valor.medicion === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => set({ medicion: m })}
+              aria-pressed={elegido}
+              className={`flex min-h-11 items-center gap-2.5 rounded-xl border-2 px-3 py-2 text-left transition active:scale-[0.99] ${
+                elegido
+                  ? "border-azul bg-azul/15"
+                  : "border-borde-2 bg-panel-2 hover:border-celeste/60"
+              }`}
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
+                  elegido ? "border-azul" : "border-borde-2"
+                }`}
+              >
+                {elegido && <span className="h-2 w-2 rounded-full bg-azul" />}
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-[13px] font-bold ${elegido ? "text-celeste" : "text-texto"}`}>
+                  {ETIQUETA_MEDICION[m]}
+                </span>
+                <span className="block text-[11px] leading-snug text-texto-3">{AYUDA_MEDICION[m]}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <p className="mb-2 text-[11px] leading-snug text-texto-3">{AYUDA_MEDICION[valor.medicion]}</p>
 
       {valor.medicion === "lados" && (
         <div className="grid grid-cols-3 gap-2">
