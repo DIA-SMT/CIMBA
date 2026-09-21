@@ -4,6 +4,7 @@ import { leerSesion } from "@/lib/auth";
 import { LogoCimba } from "@/components/marca";
 import { BotonTema } from "@/components/boton-tema";
 import { BotonPush } from "@/components/boton-push";
+import { ColaPendiente } from "./cola-pendiente";
 
 /**
  * Layout del portal de empresas contratistas. Vive FUERA del route group
@@ -23,7 +24,7 @@ export default async function LayoutEmpresa({ children }: { children: React.Reac
       <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-borde bg-panel px-4">
         <LogoCimba conSmt={false} />
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-sm font-semibold" title={sesion.nombre}>
+          <span className="hidden min-w-0 truncate text-sm font-semibold sm:inline" title={sesion.nombre}>
             {sesion.nombre}
           </span>
           <BotonTema />
@@ -36,10 +37,13 @@ export default async function LayoutEmpresa({ children }: { children: React.Reac
             title="Cerrar sesión"
             className="flex h-12 shrink-0 items-center gap-1.5 rounded-lg border border-borde-2 px-3 text-sm font-medium text-texto-2 transition hover:border-peligro/50 hover:text-peligro"
           >
-            <LogOut size={16} /> Salir
+            <LogOut size={16} /> <span className="hidden sm:inline">Salir</span>
           </a>
         </div>
       </header>
+      {/* Lo que espera señal: cuántos trabajos hay guardados en el teléfono y
+          el botón para mandarlos. Es del teléfono, no de una orden: va acá. */}
+      <ColaPendiente />
       {children}
     </div>
   );

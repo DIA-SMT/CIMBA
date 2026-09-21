@@ -78,10 +78,9 @@ export function ElegirOrden({
               <span className="num block text-lg font-extrabold">{o.numero}</span>
               <span className="block truncate text-sm text-texto-2">
                 {o.titulo ?? o.ambitoNombre ?? "Sin título"}
-                {" · "}
-                <span className="num">
-                  {numero(o.hechos)} de {numero(o.enPlan)} hechos
-                </span>
+              </span>
+              <span className="num block text-xs text-texto-3">
+                {numero(o.hechos)} de {numero(o.enPlan)} hechos
               </span>
             </span>
             <ChevronRight size={20} className="shrink-0 text-texto-3" />

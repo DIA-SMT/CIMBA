@@ -24,6 +24,8 @@ import {
   type ValorMedida,
 } from "@/components/campos-medida";
 import { mensajeDeError } from "@/lib/errores";
+import { enviarOEncolar } from "@/lib/cola-envios";
+import { describirPrecision, mejorPosicion } from "@/lib/gps";
 import { hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
   borradorTieneAlgo,
@@ -167,6 +169,9 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   // Quién carga: ver el bloque del formulario (el ticket 147 se sacó — lo
   // emite Atención Ciudadana, no el capataz).
   const [capataz, setCapataz] = useState("");
+  /** El reporte quedó en el teléfono (sin señal), no en el servidor. El item
+   *  sigue pendiente en la orden hasta que la cola lo mande: se dice así. */
+  const [guardadoLocal, setGuardadoLocal] = useState(false);
   /** El día real del trabajo. Arranca en hoy: la carga al día no cambia. */
   const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   // Cómo se resolvió: arranca en lo que pedía la orden (carpeta → carpeta,
@@ -327,36 +332,28 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     );
   });
 
-  const usarGps = () => {
-    if (!navigator.geolocation) {
-      setErrorGeo("Este teléfono no expone el GPS al navegador.");
-      return;
-    }
+  const usarGps = async () => {
     setBuscandoGps(true);
     setErrorGeo(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setBuscandoGps(false);
-        const { latitude, longitude, accuracy } = pos.coords;
-        if (!dentroDeSmt(latitude, longitude)) {
-          setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
-          return;
-        }
-        // No se acepta directo: queda como candidato en el mini-mapa para
-        // que el capataz lo afine (el GPS urbano suele pifiar unos metros).
-        setCandidato({
-          lat: latitude,
-          lon: longitude,
-          origen: "gps",
-          precisionM: Math.round(accuracy),
-        });
-      },
-      () => {
-        setBuscandoGps(false);
-        setErrorGeo("No se pudo leer el GPS: activá la ubicación del teléfono y dale permiso al navegador.");
-      },
-      { enableHighAccuracy: true, timeout: 12000 },
-    );
+    try {
+      /* El MEJOR fix de unos segundos, no el primero: el primero bajo los
+         árboles viene con 30-80 m de error y ponía el pin en la vereda de
+         enfrente. Ver lib/gps.ts. */
+      const fix = await mejorPosicion();
+      if (!dentroDeSmt(fix.lat, fix.lon)) {
+        setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
+        return;
+      }
+      // No se acepta directo: queda como candidato en el mini-mapa para
+      // que el capataz lo afine.
+      setCandidato({ lat: fix.lat, lon: fix.lon, origen: "gps", precisionM: Math.round(fix.precisionM) });
+      const p = describirPrecision(fix.precisionM);
+      if (!p.buena) setErrorGeo(`GPS ${p.texto}.`);
+    } catch (e) {
+      setErrorGeo(e instanceof Error ? e.message : "No se pudo leer el GPS.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   /**
@@ -445,10 +442,19 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
     startTransition(async () => {
       try {
-        await reportarItemHecho(fd);
-        // Recién acá, con el reporte aceptado por el servidor: se tira el
-        // borrador (ya no hay nada que rescatar) y se recuerda lo que se
-        // repite para el bache siguiente de la misma orden.
+        /* Sin señal, o si el envío se corta, el reporte entero —fotos
+           incluidas— queda guardado en el teléfono y se manda solo después.
+           Ver lib/cola-envios.ts. */
+        const { encolado } = await enviarOEncolar(
+          "reportarItemHecho",
+          fd,
+          { ordenId, itemId: item.id, direccion: item.direccion },
+          (f) => reportarItemHecho(f),
+        );
+        // Recién acá, con el reporte aceptado por el servidor (o guardado en
+        // el teléfono, que es igual de firme): se tira el borrador y se
+        // recuerda lo que se repite para el bache siguiente de la orden.
+        if (encolado) setGuardadoLocal(true);
         borrarBorrador(item.id);
         guardarMemoria(ordenId, {
           espesor: medida.espesor,
@@ -813,7 +819,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               />
               <button
                 onClick={enviarYaResuelto}
-                disabled={pendiente || preparandoFotos > 0}
+                disabled={pendiente || preparandoFotos > 0 || guardadoLocal}
                 className="w-full rounded-xl bg-celeste px-4 py-3.5 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
               >
                 {preparandoFotos > 0
@@ -1216,6 +1222,11 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                 ? "Subiendo foto…"
                 : "CONFIRMAR TRABAJO HECHO"}
           </button>
+          {guardadoLocal && (
+            <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-center text-sm font-semibold text-resuelto">
+              Guardado en el teléfono. Se manda solo cuando haya señal — mirá la barra de arriba.
+            </p>
+          )}
           {ahorroFoto && (
             <p className="num text-center text-[11px] text-texto-3">
               Foto achicada para que suba rápido: {ahorroFoto}

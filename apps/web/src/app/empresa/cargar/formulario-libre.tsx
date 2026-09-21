@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
+import { enviarOEncolar } from "@/lib/cola-envios";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import {
@@ -72,6 +73,8 @@ export function FormularioLibre({
   const [pendiente, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [hecho, setHecho] = useState<number | null>(null);
+  /** Quedó guardado en el teléfono, no enviado: se dice con esas palabras. */
+  const [guardadoLocal, setGuardadoLocal] = useState(false);
   const [motivoSinOrden, setMotivoSinOrden] = useState("");
 
   const [direccionTexto, setDireccionTexto] = useState("");
@@ -194,7 +197,12 @@ export function FormularioLibre({
 
     startTransition(async () => {
       try {
-        const r = await reportarTrabajoLibre(fd);
+        const { encolado } = await enviarOEncolar(
+          "reportarTrabajoLibre",
+          fd,
+          { direccion: direccionTexto.trim() },
+          (f) => reportarTrabajoLibre(f),
+        );
         try {
           localStorage.setItem(
             CLAVE_MEMORIA,
@@ -210,7 +218,8 @@ export function FormularioLibre({
         }
         // Reset de lo que cambia entre baches; lo repetido queda puesto para
         // el siguiente, que es el caso normal: se cargan varios seguidos.
-        setHecho(r.incidenteId);
+        setGuardadoLocal(encolado);
+        setHecho(encolado ? -1 : 1);
         setDireccionTexto("");
         setUbicacion(null);
         setMedida((v) => ({ ...medidaVacia(v.medicion), espesor: v.espesor }));
@@ -230,7 +239,9 @@ export function FormularioLibre({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3">
           <Check size={18} className="shrink-0 text-resuelto" />
           <p className="min-w-0 flex-1 text-sm font-semibold text-resuelto">
-            Cargado. Ya está en el mapa y cuenta como trabajo hecho.
+            {guardadoLocal
+              ? "Guardado en el teléfono. Se manda solo cuando haya señal."
+              : "Cargado. Ya está en el mapa y cuenta como trabajo hecho."}
           </p>
           <Link href={`/empresa`} className="shrink-0 text-sm font-semibold text-celeste hover:underline">
             volver a mis órdenes

@@ -11,6 +11,7 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { CorregirMedidas } from "@/app/(app)/ordenes/[id]/corregir-medidas";
 import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
@@ -446,6 +447,36 @@ function ItemHecho({ item }: { item: ItemOrden }) {
           <p className="mt-0.5 text-xs text-texto-3">Reportado el {fechaCorta(item.reportadoEn)}</p>
         )}
         {item.observaciones && <p className="mt-1 text-xs text-texto-2">{item.observaciones}</p>}
+        {/**
+         * CORREGIR LO PROPIO. Un 0,5 tipeado en vez de 5 certifica la décima
+         * parte de lo colocado, y hasta acá la empresa no podía arreglarlo:
+         * había que llamar a la Dirección. Medidas y pin, mientras el trabajo
+         * no esté en un acta firmada — eso ya no lo toca nadie.
+         */}
+        {item.actaId == null ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <CorregirMedidas
+              itemId={item.id}
+              superficieM2={item.superficieM2}
+              espesorCm={item.espesorCm}
+              anchoM={item.anchoM}
+              largoM={item.largoM}
+              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
+              tipoObra={item.tipoObra ?? null}
+              enActa={false}
+              etiqueta="Corregir medidas"
+            />
+            <CorregirUbicacionItem
+              itemId={item.id}
+              lat={item.lat}
+              lon={item.lon}
+              direccion={item.direccion}
+              compacto
+            />
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-texto-3">Certificado en acta: ya no se modifica.</p>
+        )}
         {fotos.length > 0 && (
           /* El visor a pantalla completa: targets grandes para el capataz en
              el celular, sin abrir pestañas. */

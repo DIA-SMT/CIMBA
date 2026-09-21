@@ -11,6 +11,8 @@ import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
 import { Achicando } from "./tarjeta-item";
 import { mensajeDeError } from "@/lib/errores";
+import { enviarOEncolar } from "@/lib/cola-envios";
+import { describirPrecision, mejorPosicion } from "@/lib/gps";
 import {
   CamposMedida,
   medidaAFormData,
@@ -74,6 +76,8 @@ export function ProponerItem({
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [abierto, setAbierto] = useState(abrirAlEntrar);
+  /** Quedó en el teléfono, no en el servidor: se dice con esas palabras. */
+  const [avisoGuardado, setAvisoGuardado] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (abrirAlEntrar) panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -148,34 +152,24 @@ export function ProponerItem({
     void buscarDireccion(frase);
   });
 
-  const usarGps = () => {
-    if (!navigator.geolocation) {
-      setErrorGeo("Este teléfono no expone el GPS al navegador.");
-      return;
-    }
+  const usarGps = async () => {
     setBuscandoGps(true);
     setErrorGeo(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setBuscandoGps(false);
-        const { latitude, longitude, accuracy } = pos.coords;
-        if (!dentroDeSmt(latitude, longitude)) {
-          setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
-          return;
-        }
-        setCandidato({
-          lat: latitude,
-          lon: longitude,
-          origen: "gps",
-          precisionM: Math.round(accuracy),
-        });
-      },
-      () => {
-        setBuscandoGps(false);
-        setErrorGeo("No se pudo leer el GPS: activá la ubicación del teléfono y dale permiso al navegador.");
-      },
-      { enableHighAccuracy: true, timeout: 12000 },
-    );
+    try {
+      // El mejor fix de unos segundos, no el primero (ver lib/gps.ts).
+      const fix = await mejorPosicion();
+      if (!dentroDeSmt(fix.lat, fix.lon)) {
+        setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
+        return;
+      }
+      setCandidato({ lat: fix.lat, lon: fix.lon, origen: "gps", precisionM: Math.round(fix.precisionM) });
+      const p = describirPrecision(fix.precisionM);
+      if (!p.buena) setErrorGeo(`GPS ${p.texto}.`);
+    } catch (e) {
+      setErrorGeo(e instanceof Error ? e.message : "No se pudo leer el GPS.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   /** Se achica en el teléfono antes de subir: ver comprimir-foto.ts. */
@@ -299,9 +293,16 @@ export function ProponerItem({
 
     startTransition(async () => {
       try {
-        await proponerItem(fd);
-        // Reset completo: el propuesto aparece en la lista al refrescar.
+        const { encolado } = await enviarOEncolar(
+          "proponerItem",
+          fd,
+          { ordenId, direccion: direccionTexto.trim() },
+          (f) => proponerItem(f),
+        );
+        // Reset completo: el propuesto aparece en la lista al refrescar —o,
+        // sin señal, en la barra de guardados hasta que se mande.
         limpiar();
+        if (encolado) setAvisoGuardado("Guardado en el teléfono. Se manda solo cuando haya señal.");
         router.refresh();
       } catch (e) {
         setError(mensajeDeError(e, "No se pudo enviar: probá de nuevo."));
@@ -312,6 +313,11 @@ export function ProponerItem({
   if (!abierto) {
     return (
       <div className="space-y-2">
+        {avisoGuardado && (
+          <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-sm font-semibold text-resuelto">
+            {avisoGuardado}
+          </p>
+        )}
         <button
           onClick={() => {
             setModo("bache");
@@ -642,6 +648,11 @@ export function ProponerItem({
       />
 
       {error && <p className="text-sm font-medium text-peligro">{error}</p>}
+      {avisoGuardado && (
+        <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-sm font-semibold text-resuelto">
+          {avisoGuardado}
+        </p>
+      )}
 
       <button
         onClick={enviar}

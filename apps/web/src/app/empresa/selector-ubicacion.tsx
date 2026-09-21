@@ -6,6 +6,7 @@ import { dentroDeSMT } from "@cimba/domain";
 import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
+import { describirPrecision, mejorPosicion } from "@/lib/gps";
 
 /**
  * "¿Dónde fue?" — el selector de punto del portal de empresas.
@@ -100,34 +101,24 @@ export function SelectorUbicacion({
     void buscarDireccion(frase);
   });
 
-  const usarGps = () => {
-    if (!navigator.geolocation) {
-      setErrorGeo("Este teléfono no expone el GPS al navegador.");
-      return;
-    }
+  const usarGps = async () => {
     setBuscandoGps(true);
     setErrorGeo(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setBuscandoGps(false);
-        const { latitude, longitude, accuracy } = pos.coords;
-        if (!dentroDeSMT({ lat: latitude, lon: longitude })) {
-          setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
-          return;
-        }
-        setCandidato({
-          lat: latitude,
-          lon: longitude,
-          origen: "gps",
-          precisionM: Math.round(accuracy),
-        });
-      },
-      () => {
-        setBuscandoGps(false);
-        setErrorGeo("No se pudo leer tu ubicación: revisá que el GPS esté encendido.");
-      },
-      { enableHighAccuracy: true, timeout: 15_000 },
-    );
+    try {
+      // El mejor fix de unos segundos, no el primero (ver lib/gps.ts).
+      const fix = await mejorPosicion();
+      if (!dentroDeSMT({ lat: fix.lat, lon: fix.lon })) {
+        setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
+        return;
+      }
+      setCandidato({ lat: fix.lat, lon: fix.lon, origen: "gps", precisionM: Math.round(fix.precisionM) });
+      const p = describirPrecision(fix.precisionM);
+      if (!p.buena) setErrorGeo(`GPS ${p.texto}.`);
+    } catch (e) {
+      setErrorGeo(e instanceof Error ? e.message : "No se pudo leer tu ubicación.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   return (

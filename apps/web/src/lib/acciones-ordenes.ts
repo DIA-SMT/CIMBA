@@ -2258,12 +2258,12 @@ export async function corregirUbicacionItem(entrada: {
      * de la evidencia que se certifica, y lo corrige el municipio.
      */
     const editables = esEjecutor
-      ? ["pendiente", "propuesto"]
+      ? ["pendiente", "propuesto", "hecho"]
       : ["pendiente", "propuesto", "hecho", "no_encontrado", "no_ejecutable"];
     if (!editables.includes(String(item.estado))) {
       throw new ErrorVisible(
         esEjecutor
-          ? "Este trabajo ya está reportado: pedile a la Dirección que corrija la ubicación"
+          ? "Este trabajo ya se cerró sin hacer: pedile a la Dirección que corrija la ubicación"
           : "Este item no admite corrección de ubicación en su estado actual",
       );
     }
@@ -2313,7 +2313,14 @@ export async function corregirUbicacionItem(entrada: {
 }
 
 export async function corregirMedidasItem(formData: FormData) {
-  const sesion = await requerirRol("planificacion", "supervision");
+  /**
+   * También la EMPRESA, sobre lo suyo. Corregir una medida era solo del
+   * municipio: el capataz que tipeó 0,5 en vez de 5 tenía que llamar a la
+   * Dirección para que se lo arreglen —o dejarlo así, que fue lo que pasó
+   * con 18 baches de Calleri. La propiedad se verifica abajo, y lo que ya
+   * entró en un acta firmada no lo toca nadie.
+   */
+  const sesion = await requerirRol("planificacion", "supervision", "empresa", "cuadrilla");
   const datos = z
     .object({
       itemId: z.coerce.number().int().positive(),
@@ -2342,11 +2349,20 @@ export async function corregirMedidasItem(formData: FormData) {
   await conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
       select oi.id, oi.estado, oi.intervencion_id, oi.incidente_id, oi.acta_id,
-             oi.superficie_m2, oi.espesor_cm, oi.tipo_obra
-      from orden_items oi where oi.id = ${datos.itemId}
+             oi.superficie_m2, oi.espesor_cm, oi.tipo_obra, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
     `)) as unknown as Array<Record<string, unknown>>;
     const item = filas[0];
     if (!item) throw new ErrorVisible("El item no existe");
+    {
+      // Un ejecutor corrige SOLO lo de su empresa. Como la RLS no corre, esta
+      // línea es lo que impide que una contratista toque las medidas de otra.
+      const empresaEjecutora = await empresaDelEjecutor(sesion);
+      if (empresaEjecutora != null && Number(item.empresa_id) !== empresaEjecutora) {
+        throw new ErrorVisible("Este trabajo no es de tu empresa");
+      }
+    }
     if (String(item.estado) !== "hecho" || item.intervencion_id == null) {
       throw new ErrorVisible("Este item no tiene trabajo reportado: no hay medidas que corregir");
     }

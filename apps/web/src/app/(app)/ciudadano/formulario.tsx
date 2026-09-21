@@ -1,5 +1,7 @@
 "use client";
 
+import { mejorPosicion } from "@/lib/gps";
+
 import { Camera, FileUp, LocateFixed, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
@@ -128,24 +130,18 @@ export function FormularioCiudadano() {
     void resolverDireccion(lat, lon);
   };
 
-  const usarGps = () => {
-    if (!navigator.geolocation) {
-      setError("Este navegador no permite usar la ubicación.");
-      return;
-    }
+  const usarGps = async () => {
     setError(null);
     setBuscandoGps(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setBuscandoGps(false);
-        elegirPunto(pos.coords.latitude, pos.coords.longitude, true);
-      },
-      () => {
-        setBuscandoGps(false);
-        setError("No se pudo obtener tu ubicación: permitila en el navegador o marcá en el mapa.");
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
+    try {
+      // El mejor fix de unos segundos, no el primero (ver lib/gps.ts).
+      const fix = await mejorPosicion();
+      elegirPunto(fix.lat, fix.lon, true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo obtener tu ubicación: marcá en el mapa.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   /** Se achican en el navegador antes de subir, igual que en el portal de empresas. */

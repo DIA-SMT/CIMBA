@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { ItemOrden } from "@/lib/ordenes";
 import { numero } from "@/lib/formato";
 import { TarjetaItem } from "./tarjeta-item";
+import { mejorPosicion } from "@/lib/gps";
 
 /**
  * EL TRABAJO DEL DÍA, ORDENADO PARA LA CALLE.
@@ -61,25 +62,20 @@ export function ListaPendientes({
   const [errorGps, setErrorGps] = useState<string | null>(null);
   const [buscandoGps, setBuscandoGps] = useState(false);
 
-  const pedirUbicacion = () => {
-    if (!navigator.geolocation) {
-      setErrorGps("Este teléfono no comparte la ubicación.");
-      return;
-    }
+  const pedirUbicacion = async () => {
     setBuscandoGps(true);
     setErrorGps(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setMiPunto({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        setPorCercania(true);
-        setBuscandoGps(false);
-      },
-      () => {
-        setErrorGps("No se pudo leer tu ubicación. Revisá que el GPS esté encendido.");
-        setBuscandoGps(false);
-      },
-      { enableHighAccuracy: true, timeout: 12_000 },
-    );
+    try {
+      // Para ORDENAR alcanza con menos precisión que para plantar un pin:
+      // se espera menos (ver lib/gps.ts).
+      const fix = await mejorPosicion({ esperaMs: 4_000 });
+      setMiPunto({ lat: fix.lat, lon: fix.lon });
+      setPorCercania(true);
+    } catch (e) {
+      setErrorGps(e instanceof Error ? e.message : "No se pudo leer tu ubicación.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   /** La lista que se dibuja: filtrada por texto y, si se pidió, ordenada por cercanía. */

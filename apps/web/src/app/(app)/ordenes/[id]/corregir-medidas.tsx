@@ -44,6 +44,7 @@ export function CorregirMedidas({
   medicion,
   tipoObra,
   enActa,
+  etiqueta,
 }: {
   itemId: number;
   superficieM2: number | null;
@@ -56,6 +57,12 @@ export function CorregirMedidas({
   tipoObra: string | null;
   /** Ya certificado: no se toca (lo rechaza también el servidor). */
   enActa: boolean;
+  /**
+   * Con texto, el botón cerrado deja de ser un lápiz de 13 px: en la tabla
+   * del municipio alcanza el ícono, pero en el teléfono del capataz —con
+   * guantes— el control tiene que decir qué hace y medir 44 px.
+   */
+  etiqueta?: string;
 }) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
@@ -101,7 +108,15 @@ export function CorregirMedidas({
   }
 
   if (!abierto) {
-    return (
+    return etiqueta ? (
+      <button
+        onClick={() => setAbierto(true)}
+        title="Corregir las medidas cargadas"
+        className="inline-flex items-center gap-1 text-[11px] font-semibold text-celeste hover:underline"
+      >
+        <Pencil size={13} /> {etiqueta}
+      </button>
+    ) : (
       <button
         onClick={() => setAbierto(true)}
         title="Corregir las medidas cargadas"

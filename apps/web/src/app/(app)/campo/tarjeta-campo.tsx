@@ -8,6 +8,7 @@ import { comprimirFoto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { mensajeDeError } from "@/lib/errores";
+import { mejorPosicion } from "@/lib/gps";
 import { hoyISO, minimoEjecucion } from "@/lib/formato";
 
 export interface Trabajo {
@@ -21,15 +22,14 @@ export interface Trabajo {
   fotos: number;
 }
 
-function obtenerGps(): Promise<{ lat: number; lon: number } | null> {
-  return new Promise((resolver) => {
-    if (!navigator.geolocation) return resolver(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolver({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => resolver(null),
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
-  });
+/** El mejor fix de unos segundos, o null: la foto se sube igual, sin punto. */
+async function obtenerGps(): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const fix = await mejorPosicion({ esperaMs: 6_000 });
+    return { lat: fix.lat, lon: fix.lon };
+  } catch {
+    return null;
+  }
 }
 
 export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {

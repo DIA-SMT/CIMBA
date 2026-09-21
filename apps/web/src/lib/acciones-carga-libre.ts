@@ -7,6 +7,7 @@ import { tipoIntervencionSchema } from "@cimba/domain";
 import { requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
 import { camposMedicion, resolverMedicion, volumenDe } from "./medicion";
 
 /**
@@ -70,6 +71,9 @@ export async function reportarTrabajoLibre(formData: FormData) {
        * qué le están declarando.
        */
       motivoSinOrden: z.string().max(300).optional(),
+      /** El día real del trabajo. Lo fija la cola sin señal al guardar, así un
+       *  bache tapado el lunes que sincroniza el jueves queda con fecha lunes. */
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse({
       direccion: formData.get("direccion"),
@@ -89,7 +93,11 @@ export async function reportarTrabajoLibre(formData: FormData) {
       ticket147: formData.get("ticket147") || undefined,
       empresaId: formData.get("empresaId") || undefined,
       motivoSinOrden: formData.get("motivoSinOrden") || undefined,
+      fechaEjecucion: formData.get("fechaEjecucion") || undefined,
     });
+
+  // Cuándo se hizo: hoy, o el día que diga la carga (ver fecha-ejecucion.ts).
+  const cuando = instanteEjecucion(datos.fechaEjecucion);
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
@@ -197,11 +205,10 @@ export async function reportarTrabajoLibre(formData: FormData) {
         values (
           ${datos.tipoTrabajo === "bache" ? "bache" : "pavimento_deteriorado"},
           'reparado', st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-          ${datos.direccion}, ${superficie}, now(), now(),
+          ${datos.direccion}, ${superficie}, ${cuando}, ${cuando},
           ${JSON.stringify({
             origen: "empresa_libre",
             sin_orden: true,
-            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
             empresa: empresa.nombre,
             ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
           })}::jsonb
@@ -217,7 +224,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
         ) values (
           ${id}, 'finalizada',
           st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-          now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+          ${cuando}, ${cuando}, ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
           ${JSON.stringify({
             ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
             espesor_cm: medida.espesorCm,
