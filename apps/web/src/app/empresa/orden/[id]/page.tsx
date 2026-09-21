@@ -217,9 +217,9 @@ export default async function PaginaOrdenEmpresa({
        * Van TODOS los puntos de la orden, no solo los pendientes: lo rojo es
        * lo que falta y lo verde lo tapado, que es el avance dibujado.
        */}
-      {puntosDelMapa.length > 0 && (
+      {(puntosDelMapa.length > 0 || orden.poligono != null) && (
         <div className="mb-4">
-          <MapaOrden puntos={puntosDelMapa} />
+          <MapaOrden puntos={puntosDelMapa} area={orden.poligono} />
         </div>
       )}
 

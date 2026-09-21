@@ -6,7 +6,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { EMPRESAS_HABILITADAS_AGUA, prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
-import { empresaDelEjecutor } from "./ordenes";
+import { empresaDelEjecutor, poligonoSql } from "./ordenes";
 import { ErrorVisible } from "./errores";
 import { hoyISO } from "./formato";
 import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
@@ -62,6 +62,7 @@ export async function crearOrden(entrada: {
   /** Bocas de tormenta, cuando la orden es de la red pluvial. */
   imbornalIds?: number[];
   tramos?: Array<z.infer<typeof tramoSchema>>;
+  poligono?: Array<[number, number]>;
 }) {
   const sesion = await requerirRol("planificacion");
   const datos = z
@@ -70,7 +71,20 @@ export async function crearOrden(entrada: {
       tipo: z
         .enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio","perdida_agua"])
         .default("bacheo"),
-      ambito: z.enum(["distrito","circuito","corredor","barrio","colector","zona"]).default("circuito"),
+      ambito: z
+        .enum(["distrito", "circuito", "corredor", "barrio", "colector", "zona", "poligono"])
+        .default("circuito"),
+      /**
+       * El área dibujada a mano en el mapa, como anillo de [lon, lat]. Solo
+       * tiene sentido con ambito = "poligono". El tope de 500 vértices es el
+       * mismo que el del recorrido: un dibujo a mano no tiene más, y sin tope
+       * un POST armado a mano puede mandar una geometría de megabytes.
+       */
+      poligono: z
+        .array(z.tuple([z.number().min(-65.6).max(-64.9), z.number().min(-27.2).max(-26.5)]))
+        .min(3)
+        .max(500)
+        .optional(),
       ambitoRef: z.union([z.number().int().positive(), z.string().max(120)]).optional(),
       circuitoId: z.number().int().positive().optional(),
       prioridad: prioridadVialSchema,
@@ -97,9 +111,12 @@ export async function crearOrden(entrada: {
    * no es una orden, es un papel en blanco. Con el ámbito, la empresa sabe
    * qué barrer y la certificación sabe a qué zona imputar lo cargado.
    */
+  if (datos.ambito === "poligono" && (!datos.poligono || datos.poligono.length < 3)) {
+    throw new ErrorVisible("El área dibujada necesita al menos tres puntos para cerrarse");
+  }
   const sinPuntos =
     datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0;
-  if (sinPuntos && datos.ambitoRef == null && datos.circuitoId == null) {
+  if (sinPuntos && datos.ambitoRef == null && datos.circuitoId == null && datos.ambito !== "poligono") {
     throw new ErrorVisible(
       "Una orden sin puntos tiene que decir dónde se trabaja: elegí el distrito, barrio, corredor, circuito o zona",
     );
@@ -140,6 +157,7 @@ export async function crearOrden(entrada: {
     const creada = (await tx.execute(sql`
       insert into ordenes_trabajo (
         numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, zona_id, colector,
+        poligono,
         prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por, metadata
       )
       values (
@@ -155,6 +173,10 @@ export async function crearOrden(entrada: {
         ${datos.ambito === "corredor" ? refNum : null},
         ${datos.ambito === "zona" ? refNum : null},
         ${datos.ambito === "colector" && typeof ref === "string" ? ref : null},
+        /* El área dibujada: el alcance de ESTA orden. Cerrar el anillo lo hace
+           poligonoSql — un anillo abierto hace fallar a PostGIS con un error
+           de geometría inválida que no le dice nada a nadie. */
+        ${datos.ambito === "poligono" && datos.poligono ? poligonoSql(datos.poligono) : sql`null`},
         ${datos.prioridad},
         ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},
         ${sesion.sub}::uuid,

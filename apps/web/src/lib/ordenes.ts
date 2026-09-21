@@ -92,14 +92,47 @@ export interface PendienteCircuito {
 }
 
 /** Las cuatro formas de delimitar el trabajo, más el colector para lo pluvial. */
-export type AmbitoOrden = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
+export type AmbitoOrden =
+  | "distrito"
+  | "circuito"
+  | "corredor"
+  | "barrio"
+  | "colector"
+  | "zona"
+  /** El área dibujada a mano sobre el mapa: vive en ordenes_trabajo.poligono. */
+  | "poligono";
+
+/**
+ * El polígono dibujado, como anillo cerrado de [lon, lat].
+ *
+ * Se arma acá y no en cada llamador para que el cierre —repetir el primer
+ * vértice al final— se haga en un solo lugar: un anillo abierto hace fallar a
+ * PostGIS con un error de geometría inválida que no dice nada útil.
+ */
+export function poligonoSql(anillo: Array<[number, number]>) {
+  const cerrado =
+    anillo[0] && anillo[anillo.length - 1] &&
+    anillo[0][0] === anillo[anillo.length - 1]![0] &&
+    anillo[0][1] === anillo[anillo.length - 1]![1]
+      ? anillo
+      : [...anillo, anillo[0]!];
+  return sql`st_setsrid(st_geomfromgeojson(${JSON.stringify({
+    type: "Polygon",
+    coordinates: [cerrado],
+  })}), 4326)`;
+}
 
 /**
  * El WHERE de cada ámbito. El corredor y el barrio no tienen columna propia en
  * incidentes, así que se resuelven contra su geometría: el corredor por
  * cercanía (es una línea) y el barrio por contención (es un polígono).
  */
-function filtroAmbito(ambito: AmbitoOrden, refId: number) {
+function filtroAmbito(ambito: AmbitoOrden, refId: number, poligono?: Array<[number, number]>) {
+  /* El polígono dibujado no tiene id: el recorte ES la geometría. */
+  if (ambito === "poligono") {
+    if (!poligono || poligono.length < 3) return sql`false`;
+    return sql`st_contains(${poligonoSql(poligono)}, i.geom)`;
+  }
   if (ambito === "circuito") return sql`i.circuito_id = ${refId}`;
   if (ambito === "distrito") return sql`i.distrito_id = ${refId}`;
   if (ambito === "barrio") {
@@ -146,6 +179,8 @@ export async function pendientesEnAmbito(
   ambito: AmbitoOrden,
   refId: number,
   tipoOrden: TipoOrden = "bacheo",
+  /** Solo para el ámbito "poligono": el anillo dibujado en el mapa. */
+  poligono?: Array<[number, number]>,
 ): Promise<PendientesDelAmbito> {
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
@@ -163,7 +198,7 @@ export async function pendientesEnAmbito(
                  and ot.estado in ('borrador','emitida','en_ejecucion')
              ) as en_orden
       from incidentes i
-      where ${filtroAmbito(ambito, refId)}
+      where ${filtroAmbito(ambito, refId, poligono)}
         and i.estado in ('detectado','priorizado','programado','en_ejecucion')
         and i.geom is not null
       order by reclamos desc, i.score_prioridad desc nulls last, i.detectado_en
@@ -355,6 +390,14 @@ function nombreDelAmbito(f: Record<string, unknown>): string | null {
       return (f.zona_nombre as string) ?? null;
     case "colector":
       return (f.colector as string) ?? null;
+    case "poligono":
+      /* El área dibujada no tiene nombre; lo que se puede decir de ella es
+         cuánto mide, y eso es lo que sirve en un papel: "Área dibujada
+         (12,4 ha)". Sin las hectáreas —cuando la consulta no las trae— al
+         menos que diga que es un área y no un circuito sin nombre. */
+      return f.poligono_ha != null
+        ? `Área dibujada (${Number(f.poligono_ha).toLocaleString("es-AR", { maximumFractionDigits: 1 })} ha)`
+        : "Área dibujada";
     default:
       return (f.circuito_codigo as string) ?? null;
   }
@@ -372,6 +415,7 @@ export async function listarOrdenes(
              e.nombre as empresa_nombre, c.codigo as circuito_codigo,
              ot.emitida_en, ot.vence_en::text as vence_en, ot.creado_en,
              ot.ambito, ot.distrito_id, ot.colector, ot.metadata,
+             round((st_area(ot.poligono::geography) / 10000)::numeric, 1) as poligono_ha,
              b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
              (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
@@ -455,6 +499,11 @@ export interface ItemOrden {
 }
 
 export interface OrdenDetalle extends OrdenResumen {
+  /**
+   * EL ÁREA DIBUJADA A MANO, cuando el ámbito es "poligono". Es el alcance de
+   * esta orden y de ninguna otra: no se guarda como zona reutilizable.
+   */
+  poligono: { type: "Polygon"; coordinates: Array<Array<[number, number]>> } | null;
   circuitoId: number | null;
   /**
    * POR DÓNDE SE DEFINIÓ la orden: lo que el Director eligió en el paso "2 ·
@@ -483,7 +532,12 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
   return conRls(claims(sesion), async (tx) => {
     const cab = (await tx.execute(sql`
       select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo,
-             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre
+             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
+             round((st_area(ot.poligono::geography) / 10000)::numeric, 1) as poligono_ha,
+             -- El área dibujada, para que el mapa de la orden la muestre: la
+             -- empresa tiene que ver el pedazo de ciudad que le tocó, no solo
+             -- los puntos sueltos que hay adentro.
+             st_asgeojson(ot.poligono)::json as poligono_geojson
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
@@ -633,6 +687,9 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
         ),
       ),
       abierta: esAbierta(o.metadata),
+      /* El área dibujada, si la orden se armó así. Va como GeoJSON crudo: lo
+         consume el mapa, que es lo único que la necesita. */
+      poligono: (o.poligono_geojson as OrdenDetalle["poligono"]) ?? null,
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,
       // vence_en es una columna date pura: viene ya como "YYYY-MM-DD" (::text),
       // no como el Date-a-medianoche-UTC que String() corrompería un día.

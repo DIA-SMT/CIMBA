@@ -41,6 +41,7 @@ export function MapaOrden({
   miPunto = null,
   alElegir,
   alto = 300,
+  area = null,
 }: {
   puntos: PuntoOrden[];
   /** Dónde está quien mira, si compartió el GPS. */
@@ -48,6 +49,13 @@ export function MapaOrden({
   /** Qué hacer al tocar un punto rojo. Sin esto, baja hasta su tarjeta. */
   alElegir?: (id: number) => void;
   alto?: number;
+  /**
+   * EL ÁREA DE LA ORDEN, cuando se armó dibujando sobre el mapa. La empresa
+   * tiene que ver el pedazo de ciudad que le tocó y no solo los puntos
+   * sueltos que hay adentro: el borde del área es parte de la instrucción —
+   * lo que aparezca ahí adentro también es suyo.
+   */
+  area?: { type: "Polygon"; coordinates: Array<Array<[number, number]>> } | null;
 }) {
   const tema = usarTemaMapa();
   const mapRef = useRef<MapRef>(null);
@@ -80,19 +88,26 @@ export function MapaOrden({
 
   /** Encuadre inicial sobre TODOS los puntos de la orden: abrir centrado en el
    *  primero deja la mitad del trabajo fuera de pantalla. */
+  /* El encuadre abarca los puntos Y el área: en una orden abierta dibujada
+     sobre el mapa puede no haber ningún punto todavía, y ahí lo único que hay
+     que mostrar es el área — que es justamente la instrucción. */
   const encuadre = useMemo(() => {
-    if (puntos.length === 0) return null;
     const lats = puntos.map((p) => p.lat);
     const lons = puntos.map((p) => p.lon);
+    for (const [lon, lat] of area?.coordinates[0] ?? []) {
+      lats.push(lat);
+      lons.push(lon);
+    }
+    if (lats.length === 0) return null;
     return {
       minLat: Math.min(...lats),
       maxLat: Math.max(...lats),
       minLon: Math.min(...lons),
       maxLon: Math.max(...lons),
     };
-  }, [puntos]);
+  }, [puntos, area]);
 
-  if (puntos.length === 0) {
+  if (encuadre == null) {
     return (
       <p className="mb-3 rounded-xl border border-borde bg-panel px-4 py-6 text-center text-sm text-texto-2">
         Ningún trabajo de esta orden tiene ubicación cargada todavía.
@@ -111,8 +126,8 @@ export function MapaOrden({
              punto con la mitad de la orden fuera de pantalla. */
           initialViewState={{
             bounds: [
-              [encuadre!.minLon, encuadre!.minLat],
-              [encuadre!.maxLon, encuadre!.maxLat],
+              [encuadre.minLon, encuadre.minLat],
+              [encuadre.maxLon, encuadre.maxLat],
             ],
             fitBoundsOptions: { padding: 40, maxZoom: 16 },
           }}
@@ -128,6 +143,16 @@ export function MapaOrden({
         >
           <NavigationControl position="bottom-right" showCompass={false} />
           {terreno && <CapasTerreno />}
+          {area && (
+            <Source id="orden-area" type="geojson" data={{ type: "Feature", properties: {}, geometry: area }}>
+              <Layer id="orden-area-fondo" type="fill" paint={{ "fill-color": "#0066ff", "fill-opacity": 0.1 }} />
+              <Layer
+                id="orden-area-borde"
+                type="line"
+                paint={{ "line-color": "#0066ff", "line-width": 2.5, "line-opacity": 0.8, "line-dasharray": [2, 1.5] }}
+              />
+            </Source>
+          )}
           <Source id="orden" type="geojson" data={fc}>
             <Layer
               id="orden-puntos"

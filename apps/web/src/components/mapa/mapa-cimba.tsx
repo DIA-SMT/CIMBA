@@ -68,7 +68,7 @@ import { usePanelArrastrable } from "@/lib/arrastrable";
 import { vincularDemanda } from "@/lib/acciones";
 import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
-import { AnalisisZona, type ZonaActiva } from "./analisis-zona";
+import { AnalisisZona, puntoEnPoligono, type ZonaActiva } from "./analisis-zona";
 import { ComparadorObra } from "./comparador-obra";
 import { CortinaComparar } from "./cortina-comparar";
 import { GuiaMapa } from "./guia-mapa";
@@ -1632,6 +1632,15 @@ function MapaInterno({
    */
   const [dibujandoRuta, setDibujandoRuta] = useState(false);
   const [ruta, setRuta] = useState<Array<[number, number]>>([]);
+  /**
+   * EL MISMO DIBUJO, CERRADO EN POLÍGONO.
+   *
+   * Abierto describe un tramo de avenida ("Siria del 1000 al 1900"); cerrado
+   * encierra un pedazo de ciudad ("estas ocho manzanas"), que es como se manda
+   * a trabajar cuando el operativo no coincide con ningún circuito ni barrio.
+   * Es el mismo gesto —clic en cada esquina— y un botón decide qué significa.
+   */
+  const [rutaCerrada, setRutaCerrada] = useState(false);
   const [zonaCerrada, setZonaCerrada] = useState(false);
   // Densidad 3D en hexágonos
   const [verHex, setVerHex] = useState(inicial?.hex ?? false);
@@ -2605,6 +2614,23 @@ function MapaInterno({
     });
     return { type: "FeatureCollection", features };
   }, [data, tipos, corte, distritoFoco]);
+
+  /**
+   * Cuántos pedidos pendientes quedarían adentro del área dibujada. Se cuenta
+   * en el cliente, sobre los mismos incidentes que el mapa está mostrando: el
+   * número que se ve en el panel tiene que ser el mismo que se ve dibujado, o
+   * el botón promete una cosa y la orden trae otra.
+   */
+  const dentroDelArea = useMemo(() => {
+    if (!rutaCerrada || ruta.length < 3) return 0;
+    return incidentesParaMetricas.features.filter((f) => {
+      const paso = pasoDeEstado(f.properties.estado as EstadoIncidente);
+      if (paso === "resuelto" || paso === "inactivo") return false;
+      const c = f.geometry.coordinates;
+      return puntoEnPoligono(c[0] ?? 0, c[1] ?? 0, ruta);
+    }).length;
+  }, [rutaCerrada, ruta, incidentesParaMetricas]);
+
 
   const demandasParaMetricas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
@@ -3707,7 +3733,9 @@ function MapaInterno({
             <Layer {...capas.colectivos} />
           </Source>
         )}
-        {/* El recorrido que se está trazando: la línea y sus vértices */}
+        {/* El recorrido que se está trazando: la línea y sus vértices. Cerrado
+            en polígono, además, el área pintada — que es lo que se está por
+            mandar a trabajar. */}
         {ruta.length > 0 && (
           <Source
             id="ruta-dibujada"
@@ -3715,8 +3743,22 @@ function MapaInterno({
             data={{
               type: "FeatureCollection",
               features: [
+                ...(rutaCerrada && ruta.length >= 3
+                  ? [{
+                      type: "Feature" as const,
+                      properties: {},
+                      geometry: { type: "Polygon" as const, coordinates: [[...ruta, ruta[0]!]] },
+                    }]
+                  : []),
                 ...(ruta.length >= 2
-                  ? [{ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: ruta } }]
+                  ? [{
+                      type: "Feature" as const,
+                      properties: {},
+                      geometry: {
+                        type: "LineString" as const,
+                        coordinates: rutaCerrada && ruta.length >= 3 ? [...ruta, ruta[0]!] : ruta,
+                      },
+                    }]
                   : []),
                 ...ruta.map((p) => ({
                   type: "Feature" as const,
@@ -3726,6 +3768,12 @@ function MapaInterno({
               ],
             }}
           >
+            <Layer
+              id="ruta-area"
+              type="fill"
+              filter={["==", ["geometry-type"], "Polygon"]}
+              paint={{ "fill-color": pal.acento, "fill-opacity": 0.14 }}
+            />
             <Layer
               id="ruta-linea"
               type="line"
@@ -4776,14 +4824,40 @@ function MapaInterno({
       {/* Trazando un recorrido: el panel con lo que se lleva dibujado */}
       {dibujandoRuta && (
         <div className="panel-vidrio pointer-events-auto absolute top-1/2 left-3 z-30 max-w-64 -translate-y-1/2 rounded-xl p-3">
-          <p className="text-[13px] font-bold">Dibujando un recorrido</p>
+          <p className="text-[13px] font-bold">
+            {rutaCerrada ? "Dibujando un área" : "Dibujando un recorrido"}
+          </p>
           <p className="mt-0.5 text-[11px] leading-snug text-texto-3">
-            Hacé clic en cada esquina por donde pasa. Con dos puntos ya se puede emitir la orden.
+            {rutaCerrada
+              ? "Todo lo que quede adentro entra en la orden."
+              : "Hacé clic en cada esquina por donde pasa. Con dos puntos ya se puede emitir la orden."}
           </p>
           <p className="num mt-2 text-2xl font-bold" style={{ color: pal.acento }}>
-            {ruta.length}
-            <span className="ml-1 font-sans text-[11px] font-normal text-texto-3">puntos</span>
+            {rutaCerrada ? numero(dentroDelArea) : ruta.length}
+            <span className="ml-1 font-sans text-[11px] font-normal text-texto-3">
+              {rutaCerrada ? "pedidos adentro" : "puntos"}
+            </span>
           </p>
+          {/* Cerrar o abrir el dibujo. Es el mismo trazo: lo que cambia es si
+              describe un tramo de calle o encierra un pedazo de ciudad. */}
+          <button
+            onClick={() => setRutaCerrada((v) => !v)}
+            disabled={ruta.length < 3}
+            title={
+              ruta.length < 3
+                ? "Hacen falta al menos tres puntos para cerrar un área"
+                : rutaCerrada
+                  ? "Volver a tratarlo como un recorrido (una línea)"
+                  : "Cerrar el dibujo: lo que quede adentro entra en la orden"
+            }
+            className={`mt-2 w-full rounded-md border px-2 py-1.5 text-[11px] font-semibold transition disabled:opacity-40 ${
+              rutaCerrada
+                ? "border-azul bg-azul/15 text-celeste"
+                : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+            }`}
+          >
+            {rutaCerrada ? "Volver a recorrido" : "Cerrar en área"}
+          </button>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               onClick={() => setRuta((r) => r.slice(0, -1))}
@@ -4803,6 +4877,7 @@ function MapaInterno({
               onClick={() => {
                 setDibujandoRuta(false);
                 setRuta([]);
+                setRutaCerrada(false);
               }}
               className="rounded-md border border-borde-2 px-2 py-1 text-[11px] font-semibold text-texto-3 transition hover:text-texto"
             >
@@ -4810,14 +4885,24 @@ function MapaInterno({
             </button>
           </div>
           <a
-            href={`/ordenes/nueva?recorrido=${encodeURIComponent(
-              ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
-            )}`}
+            href={
+              rutaCerrada
+                ? `/ordenes/nueva?poligono=${encodeURIComponent(
+                    ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+                  )}`
+                : `/ordenes/nueva?recorrido=${encodeURIComponent(
+                    ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+                  )}`
+            }
             className={`mt-2 block rounded-lg px-3 py-2 text-center text-[12px] font-semibold text-white transition ${
-              ruta.length >= 2 ? "bg-azul hover:brightness-110" : "pointer-events-none bg-azul/40"
+              (rutaCerrada ? ruta.length >= 3 : ruta.length >= 2)
+                ? "bg-azul hover:brightness-110"
+                : "pointer-events-none bg-azul/40"
             }`}
           >
-            Crear orden con este recorrido
+            {rutaCerrada
+              ? `Crear orden con los ${numero(dentroDelArea)} de adentro`
+              : "Crear orden con este recorrido"}
           </a>
         </div>
       )}

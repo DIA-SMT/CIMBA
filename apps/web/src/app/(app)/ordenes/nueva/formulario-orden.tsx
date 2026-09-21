@@ -2,7 +2,7 @@
 
 import { LocateFixed, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   EMPRESAS_HABILITADAS_AGUA,
   PRIORIDADES_VIALES,
@@ -64,7 +64,7 @@ type TipoOrden =
   | "ripio"
   | "perdida_agua";
 // Espeja AmbitoOrden de lib/ordenes.ts: si se agrega uno allá, va también acá.
-type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
+type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona" | "poligono";
 
 /** Qué trabajo se manda a hacer. De esto depende a qué empresa puede ir. */
 const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> = [
@@ -98,9 +98,15 @@ const COMO_ELEGIR: Record<Ambito, string> = {
   corredor: "un corredor",
   barrio: "un barrio",
   colector: "un colector",
+  poligono: "el área que dibujaste",
 };
 
-const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }> = [
+const AMBITOS: Array<{
+  valor: Ambito;
+  etiqueta: string;
+  soloPluvial?: boolean;
+  soloConPoligono?: boolean;
+}> = [
   { valor: "circuito", etiqueta: "Circuito" },
   /* La división fija del contrato de bacheo integral, una por empresa: es como
      el Director piensa el reparto del trabajo, así que va segunda. */
@@ -109,6 +115,9 @@ const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }>
   { valor: "corredor", etiqueta: "Corredor" },
   { valor: "barrio", etiqueta: "Barrio" },
   { valor: "colector", etiqueta: "Colector", soloPluvial: true },
+  /* El área dibujada a mano en el mapa. No se elige acá: se llega con ella
+     puesta desde el mapa, y por eso la opción solo aparece cuando vino una. */
+  { valor: "poligono", etiqueta: "Área dibujada", soloConPoligono: true },
 ];
 
 const ES_PLUVIAL = (t: TipoOrden) => t === "imbornales" || t === "tapas";
@@ -153,6 +162,7 @@ export function FormularioOrden({
   empresas,
   parametros,
   recorrido,
+  poligono,
 }: {
   circuitos: CircuitoOpcion[];
   distritos: OpcionAmbito[];
@@ -165,13 +175,19 @@ export function FormularioOrden({
   parametros: ParametrosCapacidad;
   /** Trazado dibujado en el mapa: entra como un tramo ya armado. */
   recorrido?: Array<[number, number]>;
+  /**
+   * ÁREA dibujada en el mapa. A diferencia del recorrido —que describe un
+   * tramo de calle— encierra un pedazo de ciudad: el formulario abre con el
+   * ámbito en "área dibujada" y lo que cae adentro ya viene seleccionado.
+   */
+  poligono?: Array<[number, number]>;
 }) {
   const router = useRouter();
 
   // ── La demanda ─────────────────────────────────────────────────────────────
   // QUÉ trabajo y POR DÓNDE: los dos primeros pasos de la orden (Leo, 10/9).
   const [tipo, setTipo] = useState<TipoOrden>("bacheo");
-  const [ambito, setAmbito] = useState<Ambito>("circuito");
+  const [ambito, setAmbito] = useState<Ambito>(poligono ? "poligono" : "circuito");
   const [colector, setColector] = useState("");
   const [imbornales, setImbornales] = useState<ImbornalPend[]>([]);
   const [circuitoId, setCircuitoId] = useState<number>(0);
@@ -192,6 +208,19 @@ export function FormularioOrden({
   );
   // Evita que una respuesta lenta de un circuito anterior pise a la actual.
   const pedidoRef = useRef(0);
+  /**
+   * Con un área dibujada NO hay selector que tocar: el recorte ya viene de la
+   * URL, así que la carga arranca sola al entrar. Una sola vez — sin esto,
+   * cada re-render volvería a pedir los mismos pendientes y a re-tildar lo que
+   * el Director hubiera destildado.
+   */
+  const areaCargada = useRef(false);
+  useEffect(() => {
+    if (!poligono || poligono.length < 3 || areaCargada.current) return;
+    areaCargada.current = true;
+    void elegirAmbitoRef(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── La oferta y el papel ───────────────────────────────────────────────────
   const [empresaId, setEmpresaId] = useState<number>(0);
@@ -215,12 +244,17 @@ export function FormularioOrden({
     setRojas(0);
     setFueraDeAlcance([]);
     setAvisoRelevar(null);
-    if (!ref) return;
+    /* El área dibujada no tiene "ref": el recorte es la geometría. */
+    if (!ref && ambito !== "poligono") return;
     const pedido = ++pedidoRef.current;
     setCargando(true);
     try {
       const r = await fetch(
-        `/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}&tipo=${tipo}`,
+        ambito === "poligono"
+          ? `/api/ordenes/pendientes?ambito=poligono&tipo=${tipo}&poligono=${encodeURIComponent(
+              (poligono ?? []).map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+            )}`
+          : `/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}&tipo=${tipo}`,
       );
       if (!r.ok) throw new Error("No se pudo cargar lo pendiente de esa zona");
       const j = (await r.json()) as {
@@ -231,6 +265,17 @@ export function FormularioOrden({
       };
       if (pedido !== pedidoRef.current) return;
       setPendientes(j.pendientes ?? []);
+      /**
+       * Con un área dibujada, lo de adentro viene TILDADO. El gesto ya fue
+       * elegir: quien encerró ocho manzanas en el mapa ya dijo qué quiere
+       * mandar, y hacerle tildar después ochenta casillas una por una sería
+       * pedirle que lo diga dos veces. Se puede destildar lo que sobre.
+       */
+      if (ambito === "poligono") {
+        setSeleccion(
+          new Set((j.pendientes ?? []).filter((p) => !p.enOrden).map((p) => p.incidenteId)),
+        );
+      }
       setImbornales(j.imbornales ?? []);
       setRojas(j.rojas ?? 0);
       setFueraDeAlcance(j.fueraDeAlcance ?? []);
@@ -498,7 +543,12 @@ export function FormularioOrden({
    * tramo falso para poder emitir el papel. Lo único que se exige es que la
    * orden diga DÓNDE: sin zona no es una orden, es un papel en blanco.
    */
-  const hayAmbito = ambito === "colector" ? colector.trim().length > 0 : circuitoId != null && circuitoId > 0;
+  const hayAmbito =
+    ambito === "poligono"
+      ? (poligono?.length ?? 0) >= 3
+      : ambito === "colector"
+        ? colector.trim().length > 0
+        : circuitoId != null && circuitoId > 0;
   /** Cómo se llama lo que se eligió, para poder nombrarlo en el aviso. */
   const nombreAmbitoElegido =
     opciones.find((o) => o.ref === (ambito === "colector" ? colector : circuitoId))?.etiqueta ?? null;
@@ -513,6 +563,8 @@ export function FormularioOrden({
           tipo,
           ambito,
           ambitoRef: ambito === "colector" ? colector : circuitoId || undefined,
+          // El área dibujada viaja entera: es el alcance de esta orden.
+          poligono: ambito === "poligono" ? poligono : undefined,
           circuitoId: ambito === "circuito" ? circuitoId || undefined : undefined,
           prioridad,
           titulo: titulo.trim() || undefined,
@@ -577,7 +629,11 @@ export function FormularioOrden({
 
           <p className="mb-2 text-sm font-bold">2 · Por dónde se define</p>
           <div className="mb-2 flex flex-wrap gap-2">
-            {AMBITOS.filter((a) => (ES_PLUVIAL(tipo) ? a.valor === "colector" : !a.soloPluvial)).map((a) => (
+            {AMBITOS.filter((a) =>
+              ES_PLUVIAL(tipo)
+                ? a.valor === "colector"
+                : !a.soloPluvial && (!a.soloConPoligono || poligono != null),
+            ).map((a) => (
               <button
                 key={a.valor}
                 type="button"

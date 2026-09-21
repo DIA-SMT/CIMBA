@@ -76,6 +76,9 @@ export const ETIQUETA_AMBITO: Record<string, string> = {
   corredor: "Corredor",
   zona: "Zona",
   colector: "Colector",
+  /* La orden dibujada a mano sobre el mapa: no es un recorte del territorio
+     con nombre, es el área de ESTA orden. */
+  poligono: "Área",
 };
 
 export const ETIQUETA_TIPO_TRABAJO: Record<string, string> = {
