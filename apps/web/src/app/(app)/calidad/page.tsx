@@ -101,6 +101,12 @@ export default async function PaginaCalidad() {
           descripcion="En la descripción u observación piden pavimentar la calle: no es bacheo ni enripiado, es obra nueva. La tipificación de origen se hace con el título; la verdad está en el texto del vecino."
           href="/calidad/tratamiento/pide_pavimento"
         />
+        <TarjetaProblema
+          n={diag.puntoDudoso}
+          titulo="El punto no coincide con la dirección"
+          descripcion="La dirección escrita cae a más de 300 m del pin, según el callejero municipal. En los reclamos sanos las dos cosas coinciden dentro de 18 m: cuando se van a cuadras, mandar una cuadrilla es mandarla a otro barrio."
+          href="/calidad/tratamiento/punto_dudoso"
+        />
       </div>
 
       {/* Problemas de calidad */}

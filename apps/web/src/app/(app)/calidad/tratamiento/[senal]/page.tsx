@@ -6,6 +6,7 @@ import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/format
 import { Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AccionSenal } from "./accion-senal";
+import { MoverAlDomicilio } from "./mover-al-domicilio";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -44,6 +45,12 @@ const SENALES: Record<
       "Estos no se tocan de a uno: se derivan TODOS juntos con la nota administrativa numerada al Director de la S.A.T. — así siempre queda el expediente registrado. La nota incluye además los reclamos de agua sin ubicación (acá se listan solo los georreferenciados).",
     accionMasiva: { href: "/expedientes/sat", texto: "Previsualizar y registrar la nota a la S.A.T. →" },
   },
+  punto_dudoso: {
+    titulo: "El punto no coincide con la dirección",
+    sub: "La dirección escrita del reclamo cae a más de 300 metros de donde quedó el pin, según el callejero municipal.",
+    regla:
+      "Es el mismo principio que la señal de pavimentación: el texto del reclamo sabe más que lo que quedó guardado. Acá la dirección se cruza contra los miles de puntos con calle y altura que el municipio ya tiene —casi todos tomados con GPS parado en la calle— y se compara con el pin. En los reclamos sanos las dos cosas coinciden dentro de 18 metros; cuando se van a cuadras, el pin está mal y mandar una cuadrilla es mandarla a otro barrio. «Mover el pin» lo lleva a la posición que el callejero conoce. Si la que está mal es la dirección, se corrige en la ficha.",
+  },
   pide_pavimento: {
     titulo: "Piden pavimentación",
     sub: "Reclamos que en su descripción u observación piden PAVIMENTAR la calle, sin importar cómo hayan sido tipificados al tomarlos.",
@@ -69,6 +76,7 @@ export default async function PaginaSenal({ params }: { params: Promise<{ senal:
     ya_resuelta: diag.yaResueltas,
     derivar_sat: diag.derivarSat,
     pide_pavimento: diag.pidePavimento,
+    punto_dudoso: diag.puntoDudoso,
   }[s];
   const puedeActuar = ["admin", "planificacion", "atencion_ciudadana"].includes(sesion.rol_cimba);
 
@@ -135,7 +143,17 @@ export default async function PaginaSenal({ params }: { params: Promise<{ senal:
                   >
                     Ficha
                   </Link>
-                  {puedeActuar && s !== "derivar_sat" && (
+                  {/* La acción de "el punto no coincide" no es confirmar una
+                      derivación sino mover el pin a donde el callejero dice
+                      que está esa dirección. */}
+                  {puedeActuar && s === "punto_dudoso" && d.sugerencia && (
+                    <MoverAlDomicilio
+                      demandaId={d.id}
+                      lat={d.sugerencia.lat}
+                      lon={d.sugerencia.lon}
+                    />
+                  )}
+                  {puedeActuar && s !== "derivar_sat" && s !== "punto_dudoso" && (
                     <AccionSenal senal={s} demandaId={d.id} referenciaId={d.referenciaId} />
                   )}
                 </div>

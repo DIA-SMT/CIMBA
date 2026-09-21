@@ -57,13 +57,26 @@ export function resumenMedida(v: ValorMedida): {
   falta: string | null;
 } {
   const espesor = aNumero(v.espesor);
-  const sinEspesor = !(espesor > 0);
+  /**
+   * PISO DE 1 CM, y no "mayor que cero". Una carpeta de medio centímetro no
+   * existe: 18 cargas con 0,5 en vez de 5 certificaron la décima parte de lo
+   * que se colocó, porque el espesor entra directo en las toneladas que se
+   * pagan. El servidor lo rechaza igual; acá se avisa antes de subir la foto.
+   */
+  const sinEspesor = !(espesor >= 1);
 
   if (v.medicion === "lados") {
     const a = aNumero(v.ancho);
     const l = aNumero(v.largo);
     if (!(a > 0) || !(l > 0) || sinEspesor) {
-      return { superficie: null, volumen: null, falta: "Cargá el ancho, el largo y el espesor." };
+      return {
+        superficie: null,
+        volumen: null,
+        falta:
+          espesor > 0 && espesor < 1
+            ? "El espesor no puede ser menor a 1 cm: ¿quisiste poner 5?"
+            : "Cargá el ancho, el largo y el espesor.",
+      };
     }
     const superficie = Math.round(a * l * 100) / 100;
     return { superficie, volumen: volumenDe(superficie, espesor), falta: null };
@@ -72,7 +85,14 @@ export function resumenMedida(v: ValorMedida): {
   if (v.medicion === "superficie") {
     const s = aNumero(v.superficie);
     if (!(s > 0) || sinEspesor) {
-      return { superficie: null, volumen: null, falta: "Cargá la superficie en m² y el espesor." };
+      return {
+        superficie: null,
+        volumen: null,
+        falta:
+          espesor > 0 && espesor < 1
+            ? "El espesor no puede ser menor a 1 cm: ¿quisiste poner 5?"
+            : "Cargá la superficie en m² y el espesor.",
+      };
     }
     const superficie = Math.round(s * 100) / 100;
     return { superficie, volumen: volumenDe(superficie, espesor), falta: null };

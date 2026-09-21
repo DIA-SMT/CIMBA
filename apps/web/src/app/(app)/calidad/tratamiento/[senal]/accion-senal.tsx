@@ -11,7 +11,12 @@ import { mensajeDeError } from "@/lib/errores";
  * window.confirm: no anda en los webviews). El sistema propone, la persona
  * firma; al confirmar, la fila desaparece de la bandeja con el refresh.
  */
-const ROTULO: Record<Exclude<SenalTratamiento, "derivar_sat">, { boton: string; confirmar: (ref: number | null) => string }> = {
+/* punto_dudoso queda afuera como derivar_sat: su acción no es confirmar una
+   derivación sino mover el pin, y eso lo hace <MoverAlDomicilio>. */
+const ROTULO: Record<
+  Exclude<SenalTratamiento, "derivar_sat" | "punto_dudoso">,
+  { boton: string; confirmar: (ref: number | null) => string }
+> = {
   no_es_bache: { boton: "→ Ingeniería", confirmar: () => "¿Derivar a Ingeniería (pasado de máquina)?" },
   duplicada: { boton: "Duplicada", confirmar: (ref) => `¿Descartar como duplicada del reclamo #${ref}?` },
   ya_resuelta: { boton: "Ya resuelta", confirmar: (ref) => `¿Vincular al incidente #${ref} ya reparado?` },
@@ -29,7 +34,7 @@ export function AccionSenal({
   demandaId,
   referenciaId,
 }: {
-  senal: Exclude<SenalTratamiento, "derivar_sat">;
+  senal: Exclude<SenalTratamiento, "derivar_sat" | "punto_dudoso">;
   demandaId: number;
   referenciaId: number | null;
 }) {
