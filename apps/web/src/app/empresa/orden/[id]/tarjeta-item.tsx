@@ -24,6 +24,7 @@ import {
   type ValorMedida,
 } from "@/components/campos-medida";
 import { mensajeDeError } from "@/lib/errores";
+import { hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
   borradorTieneAlgo,
   borrarBorrador,
@@ -166,6 +167,8 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   // Quién carga: ver el bloque del formulario (el ticket 147 se sacó — lo
   // emite Atención Ciudadana, no el capataz).
   const [capataz, setCapataz] = useState("");
+  /** El día real del trabajo. Arranca en hoy: la carga al día no cambia. */
+  const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   // Cómo se resolvió: arranca en lo que pedía la orden (carpeta → carpeta,
   // el resto → bacheo) y el capataz lo corrige si en la calle terminó siendo
   // otra cosa ("empieza como bacheo y al final se ha hecho cambio de paño").
@@ -426,6 +429,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     if (capataz.trim()) fd.set("capataz", capataz.trim());
+    // Solo si NO es hoy: mandarla siempre haría que toda carga quedara
+    // marcada como "fecha puesta a mano", que es justo lo que hay que poder
+    // distinguir.
+    if (fechaEjecucion && fechaEjecucion !== hoyISO()) fd.set("fechaEjecucion", fechaEjecucion);
     // Solo se manda ubicación si es una corrección: si es la de la orden,
     // la acción ya la toma del propio item.
     if (ubicacion.origen !== "orden") {
@@ -1149,15 +1156,45 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               sistema ya tiene, con la única garantía de que a veces lo iba a
               tipear mal. La acción del servidor sigue aceptando el campo para
               las cargas viejas que lo manden. */}
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
-            <input
-              value={capataz}
-              onChange={(e) => setCapataz(e.target.value)}
-              placeholder="Tu nombre"
-              className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
-            />
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
+              <input
+                value={capataz}
+                onChange={(e) => setCapataz(e.target.value)}
+                placeholder="Tu nombre"
+                className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+              />
+            </label>
+            {/**
+             * EL DÍA EN QUE SE TAPÓ, no el día en que se carga.
+             *
+             * La carga viene atrasada: las fotos llegan por WhatsApp y se
+             * suben días después. Con la fecha automática, el parte diario
+             * decía que el lunes no se bacheó nada y el jueves se bachearon
+             * cuatro días juntos, y el acta de medición no coincidía con el
+             * remito. El default es hoy, así que la carga del mismo día
+             * —la deseable— no tiene un paso más.
+             */}
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-texto-2">
+                Fecha del trabajo
+              </span>
+              <input
+                type="date"
+                value={fechaEjecucion}
+                max={hoyISO()}
+                min={minimoEjecucion()}
+                onChange={(e) => setFechaEjecucion(e.target.value)}
+                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base"
+              />
+              {fechaEjecucion !== hoyISO() && (
+                <span className="mt-1 block text-[11px] font-semibold text-amarillo">
+                  Se va a cargar con fecha {fechaEjecucion.split("-").reverse().join("/")}
+                </span>
+              )}
+            </label>
+          </div>
 
           {/* Observaciones */}
           <textarea

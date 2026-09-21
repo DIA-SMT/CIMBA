@@ -7,6 +7,7 @@ import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba
 import { requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
 import { ErrorVisible } from "./errores";
+import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
 
 /** Lo único que se acepta subir al bucket público de fotos. */
 const TIPOS_FOTO: Record<string, string> = {
@@ -253,6 +254,8 @@ export async function finalizarIntervencion(entrada: {
   intervencionId: number;
   superficieM2?: number;
   observaciones?: string;
+  /** Día real del trabajo, 'YYYY-MM-DD'. Sin esto, hoy. Ver fecha-ejecucion.ts. */
+  fechaEjecucion?: string;
 }) {
   const sesion = await requerirRol("cuadrilla", "planificacion", "supervision");
   const datos = z
@@ -260,6 +263,7 @@ export async function finalizarIntervencion(entrada: {
       intervencionId: z.number().int(),
       superficieM2: z.number().positive().max(99999).optional(),
       observaciones: z.string().max(2000).optional(),
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse(entrada);
 
@@ -275,16 +279,37 @@ export async function finalizarIntervencion(entrada: {
     if (!f || Number(f.antes) === 0 || Number(f.despues) === 0) {
       throw new ErrorVisible("Para finalizar hacen falta la foto de ANTES y la de DESPUÉS");
     }
+    /**
+     * El trabajo se fecha el día en que SE HIZO, no el día en que se carga.
+     * El límite inferior es el inicio de la intervención: cerrarla antes de
+     * haberla empezado no existe.
+     */
+    const iniciada = (await tx.execute(sql`
+      select (iniciada_en at time zone 'America/Argentina/Tucuman')::date::text as d
+      from intervenciones where id = ${datos.intervencionId}
+    `)) as unknown as Array<{ d: string | null }>;
+    const cuando = instanteEjecucion(datos.fechaEjecucion, {
+      fecha: iniciada[0]?.d ?? null,
+      que: "el día en que se inició el trabajo",
+    });
+
     await tx.execute(sql`
       update intervenciones set
         estado = 'finalizada',
-        finalizada_en = now(),
+        finalizada_en = ${cuando},
         superficie_m2 = coalesce(${datos.superficieM2 ?? null}, superficie_m2),
-        observaciones = coalesce(${datos.observaciones ?? null}, observaciones)
+        observaciones = coalesce(${datos.observaciones ?? null}, observaciones),
+        -- Queda escrito que la fecha la puso una persona: un acta con fechas
+        -- cargadas a mano tiene que poder distinguirse de una automática.
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(
+          datos.fechaEjecucion
+            ? { fecha_manual: { por: sesion.nombre, en: new Date().toISOString(), fecha: datos.fechaEjecucion } }
+            : {},
+        )}::jsonb
       where id = ${datos.intervencionId} and estado = 'en_curso'
     `);
     await tx.execute(sql`
-      update incidentes set estado = 'reparado', cerrado_en = now()
+      update incidentes set estado = 'reparado', cerrado_en = ${cuando}
       where id = (select incidente_id from intervenciones where id = ${datos.intervencionId})
         and estado = 'en_ejecucion'
     `);

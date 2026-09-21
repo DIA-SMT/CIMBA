@@ -8,6 +8,7 @@ import { comprimirFoto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { mensajeDeError } from "@/lib/errores";
+import { hoyISO, minimoEjecucion } from "@/lib/formato";
 
 export interface Trabajo {
   id: number;
@@ -37,6 +38,13 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
   const [error, setError] = useState<string | null>(null);
   const [m2, setM2] = useState("");
   const [obs, setObs] = useState("");
+  /**
+   * EL DÍA EN QUE SE HIZO EL TRABAJO. La carga viene atrasada —las fotos
+   * llegan por WhatsApp y se suben días después—, y con la fecha automática
+   * el parte diario mentía: nada el lunes, cuatro días juntos el jueves.
+   * Arranca en hoy, así que cargar al día no tiene un paso más.
+   */
+  const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   const [subiendo, setSubiendo] = useState<string | null>(null);
   const refAntes = useRef<HTMLInputElement>(null);
   const refDespues = useRef<HTMLInputElement>(null);
@@ -184,6 +192,25 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
             />
           </div>
 
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-texto-2">
+              Día en que se hizo el trabajo
+            </span>
+            <input
+              type="date"
+              value={fechaEjecucion}
+              max={hoyISO()}
+              min={minimoEjecucion()}
+              onChange={(e) => setFechaEjecucion(e.target.value)}
+              className="num w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm"
+            />
+            {fechaEjecucion !== hoyISO() && (
+              <span className="mt-1 block text-[11px] font-semibold text-amarillo">
+                Se va a registrar con fecha {fechaEjecucion.split("-").reverse().join("/")}, no la de hoy.
+              </span>
+            )}
+          </label>
+
           <button
             disabled={pendiente}
             onClick={() =>
@@ -192,6 +219,9 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
                   intervencionId: intervencion.id,
                   superficieM2: m2 ? Number(m2.replace(",", ".")) : undefined,
                   observaciones: obs || undefined,
+                  // Solo si no es hoy: así "fecha puesta a mano" queda
+                  // reservado para las cargas que de verdad lo son.
+                  fechaEjecucion: fechaEjecucion !== hoyISO() ? fechaEjecucion : undefined,
                 }),
               )
             }

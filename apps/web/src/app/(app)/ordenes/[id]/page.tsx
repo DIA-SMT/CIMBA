@@ -213,7 +213,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.cerradaEn && <> · cerrada {fechaCorta(o.cerradaEn)}</>}
             </p>
           </div>
-          <AccionesOrden ordenId={o.id} estado={o.estado} puedePlanificar={puedePlanificar} />
+          <AccionesOrden
+            ordenId={o.id}
+            estado={o.estado}
+            puedePlanificar={puedePlanificar}
+            itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente" || i.estado === "propuesto").length}
+            emitidaEn={o.emitidaEn ? o.emitidaEn.slice(0, 10) : null}
+          />
         </div>
 
         {o.indicaciones && (

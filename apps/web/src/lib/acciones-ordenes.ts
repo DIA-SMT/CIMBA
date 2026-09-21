@@ -8,6 +8,8 @@ import { EMPRESAS_HABILITADAS_AGUA, prioridadVialSchema, tipoIntervencionSchema 
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { hoyISO } from "./formato";
+import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
 import { camposMedicion, resolverMedicion } from "./medicion";
 import { MOTIVO_POR_VALOR, VALORES_MOTIVO } from "./problemas-calle";
 
@@ -301,6 +303,110 @@ export async function anularOrden(entrada: { ordenId: number; motivo: string }) 
 
 // ── Asignación de circuitos y prioridades ────────────────────────────────────
 
+/**
+ * CERRAR LA ORDEN A MANO, con la fecha real y lo que haya que dejar escrito.
+ *
+ * Hasta ahora una orden solo se cerraba sola —cuando el último item dejaba de
+ * estar pendiente— o se anulaba. En la calle pasa otra cosa muy seguido: la
+ * cuadrilla terminó lo que se pudo hacer, el resto no se hizo (quedó agua,
+ * cambió la prioridad, se acabó el plazo del contrato) y la orden tiene que
+ * darse por terminada igual, con la fecha del día en que efectivamente se
+ * dejó de trabajar, que casi nunca es el día en que alguien se acuerda de
+ * entrar al sistema.
+ *
+ * Cerrar NO es anular: lo hecho queda hecho y certificable. Lo que quedó
+ * pendiente vuelve a la cola —igual que en una anulación—, porque un bache
+ * que no se tapó sigue siendo deuda de la ciudad y tiene que poder entrar en
+ * la próxima orden. Si se quedara 'programado' desaparecería de la brecha sin
+ * que nadie lo haya arreglado.
+ */
+export async function cerrarOrden(entrada: {
+  ordenId: number;
+  /** Día en que se terminó de trabajar, 'YYYY-MM-DD'. Sin esto, hoy. */
+  fecha?: string;
+  observacion?: string;
+}) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({
+      ordenId: z.number().int().positive(),
+      fecha: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha tiene que ser un día del calendario")
+        .optional(),
+      observacion: z.string().max(1000).optional(),
+    })
+    .parse(entrada);
+
+  /**
+   * Una orden no se puede cerrar en el futuro —sería certificar trabajo que
+   * todavía no pasó— ni antes de haberse emitido. Los dos límites se validan
+   * contra el día de Tucumán, no contra UTC: a las 21:30 de acá ya es el día
+   * siguiente en UTC y "hoy" habría sido rechazado por futuro.
+   */
+  const hoy = hoyISO();
+  const fecha = datos.fecha ?? hoy;
+  if (fecha > hoy) throw new ErrorVisible("La fecha de cierre no puede ser posterior a hoy");
+
+  const resultado = await conRls(claims(sesion), async (tx) => {
+    const previa = (await tx.execute(sql`
+      select estado::text, emitida_en::date::text as emitida
+      from ordenes_trabajo where id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string; emitida: string | null }>;
+    const o = previa[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado === "completada") throw new ErrorVisible("La orden ya estaba cerrada");
+    if (o.estado === "borrador") {
+      throw new ErrorVisible("La orden todavía no se emitió: no hay nada que cerrar");
+    }
+    if (o.estado === "anulada") throw new ErrorVisible("La orden está anulada");
+    if (o.emitida && fecha < o.emitida) {
+      throw new ErrorVisible(`La orden se emitió el ${o.emitida}: no se puede cerrar antes de esa fecha`);
+    }
+
+    // Lo que quedó sin hacer, contado ANTES de moverlo: es el dato que se deja
+    // escrito en la orden y el que se le muestra a quien cierra.
+    const pend = (await tx.execute(sql`
+      select count(*)::int as n from orden_items
+      where orden_id = ${datos.ordenId} and estado in ('pendiente','propuesto')
+    `)) as unknown as Array<{ n: number }>;
+    const pendientes = Number(pend[0]?.n ?? 0);
+
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        estado = 'completada',
+        -- La fecha que dice quien cierra, a mediodía de Tucumán para que el
+        -- día no se corra al guardarse como timestamp con zona.
+        cerrada_en = (${fecha}::date + time '12:00') at time zone 'America/Argentina/Tucuman',
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'cierre_manual', jsonb_build_object(
+            'por', ${sesion.nombre}::text,
+            'en', now()::text,
+            'fecha', ${fecha}::text,
+            'observacion', ${datos.observacion?.trim() || null}::text,
+            'pendientes_al_cerrar', ${pendientes}::int
+          )
+        )
+      where id = ${datos.ordenId}
+    `);
+
+    // Lo no hecho vuelve a la cola, exactamente como en una anulación.
+    await tx.execute(sql`
+      update incidentes set estado = 'priorizado'
+      from orden_items oi
+      where oi.orden_id = ${datos.ordenId} and oi.incidente_id = incidentes.id
+        and oi.estado in ('pendiente','propuesto') and incidentes.estado = 'programado'
+    `);
+
+    return { pendientes };
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  return { ok: true, ...resultado };
+}
+
 export async function asignarCircuito(entrada: {
   circuitoId: number;
   empresaId?: number | null;
@@ -377,6 +483,14 @@ export async function reportarItemHecho(formData: FormData) {
        * cercanía a 40 m, que es como se adivina hoy.
        */
       ticket147: z.string().max(40).optional(),
+      /**
+       * EL DÍA EN QUE SE HIZO EL BACHE, que no es el día en que se carga.
+       * La Dirección viene atrasada con la carga —las fotos llegan por
+       * WhatsApp y se cargan días después—, así que sin este campo el parte
+       * diario y el acta de medición fechan todo el día en que alguien tuvo
+       * tiempo de sentarse. Ver lib/fecha-ejecucion.ts.
+       */
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse({
       itemId: formData.get("itemId"),
@@ -394,6 +508,7 @@ export async function reportarItemHecho(formData: FormData) {
       tipoObra: formData.get("tipoObra") || undefined,
       capataz: formData.get("capataz") || undefined,
       ticket147: formData.get("ticket147") || undefined,
+      fechaEjecucion: formData.get("fechaEjecucion") || undefined,
     });
 
   /**
@@ -507,7 +622,8 @@ export async function reportarItemHecho(formData: FormData) {
     const items = (await tx.execute(sql`
       select oi.id, oi.orden_id, oi.incidente_id, oi.direccion, oi.tipo_trabajo, oi.estado,
              st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
-             ot.estado as orden_estado, ot.numero, ot.empresa_id, e.nombre as empresa_nombre
+             ot.estado as orden_estado, ot.numero, ot.empresa_id, e.nombre as empresa_nombre,
+             (ot.emitida_en at time zone 'America/Argentina/Tucuman')::date::text as emitida_dia
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
       join empresas e on e.id = ot.empresa_id
@@ -549,6 +665,18 @@ export async function reportarItemHecho(formData: FormData) {
     }
     const direccion = datos.direccionCorregida ?? ((item.direccion as string) || null);
 
+    /**
+     * Cuándo se hizo. Todo lo que se escribe abajo —la intervención, el cierre
+     * del incidente, el reportado_en del item— usa este mismo instante: si la
+     * fecha manual se aplicara solo a una parte, el acta y el parte diario
+     * dirían días distintos del mismo bache. El piso es la emisión de la
+     * orden: no se puede haber bacheado por una orden que todavía no existía.
+     */
+    const cuando = instanteEjecucion(datos.fechaEjecucion, {
+      fecha: (item.emitida_dia as string) ?? null,
+      que: "la emisión de la orden",
+    });
+
     // Incidente: el del item, o uno nuevo si el item era un tramo sin incidente.
     let incidenteId = item.incidente_id != null ? Number(item.incidente_id) : null;
     if (incidenteId == null) {
@@ -564,7 +692,7 @@ export async function reportarItemHecho(formData: FormData) {
         values (
           ${String(item.tipo_trabajo) === "bache" ? "bache" : "pavimento_deteriorado"},
           'reparado', st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-          ${direccion}, ${superficie}, now(), now(),
+          ${direccion}, ${superficie}, ${cuando}, ${cuando},
           ${JSON.stringify({ origen: "orden_trabajo", orden: item.numero })}::jsonb
         ) returning id
       `)) as unknown as Array<{ id: number }>;
@@ -605,7 +733,7 @@ export async function reportarItemHecho(formData: FormData) {
       ) values (
         ${incidenteId}, 'finalizada',
         st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-        now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+        ${cuando}, ${cuando}, ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
         ${JSON.stringify({
           ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
           espesor_cm: medida.espesorCm,
@@ -642,7 +770,7 @@ export async function reportarItemHecho(formData: FormData) {
     }
 
     await tx.execute(sql`
-      update incidentes set estado = 'reparado', cerrado_en = now(),
+      update incidentes set estado = 'reparado', cerrado_en = ${cuando},
         superficie_m2 = coalesce(${superficie}, superficie_m2)
       where id = ${incidenteId} and estado <> 'verificado'
     `);
@@ -654,11 +782,23 @@ export async function reportarItemHecho(formData: FormData) {
         superficie_m2 = ${superficie},
         tipo_obra = ${tipoObra}::tipo_obra_bacheo,
         intervencion_id = ${intervencionId},
-        reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+        reportado_en = ${cuando}, reportado_por = ${sesion.sub}::uuid,
         metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
           medicion: medida.medicion,
           ...(datos.capataz ? { capataz: datos.capataz } : {}),
           ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),
+          /* Que la fecha la puso una persona queda escrito: un acta con
+             fechas cargadas a mano no es lo mismo que una automática, y quien
+             la firma tiene derecho a distinguirlas. */
+          ...(datos.fechaEjecucion
+            ? {
+                fecha_manual: {
+                  fecha: datos.fechaEjecucion,
+                  por: sesion.nombre,
+                  en: new Date().toISOString(),
+                },
+              }
+            : {}),
         })}::jsonb,
         observaciones = ${datos.observaciones ?? null},
         direccion = coalesce(${datos.direccionCorregida ?? null}, direccion),

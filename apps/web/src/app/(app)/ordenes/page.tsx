@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
 export default async function PaginaOrdenes({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string }>;
+  searchParams: Promise<{ estado?: string; empresa?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -50,12 +50,21 @@ export default async function PaginaOrdenes({
     ? (filtros.estado as EstadoOrden)
     : undefined;
   const soloVencidas = filtros.estado === "vencidas";
-  const ordenesFiltradas = soloVencidas
-    ? ordenes.filter(estaVencida)
-    : estadoFiltro
-      ? ordenes.filter((o) => o.estado === estadoFiltro)
-      : ordenes;
-  const hayFiltro = Boolean(estadoFiltro) || soloVencidas;
+  /**
+   * Filtro por empresa: con doce contratistas trabajando a la vez, buscar las
+   * órdenes de una sola en una lista de doscientas se hacía a ojo. Se valida
+   * contra las empresas que existen — un id cualquiera en la URL no filtra a
+   * la nada, simplemente no filtra.
+   */
+  const empresaFiltro = empresas.some((e) => e.id === Number(filtros.empresa))
+    ? Number(filtros.empresa)
+    : undefined;
+  const ordenesFiltradas = ordenes
+    .filter((o) =>
+      soloVencidas ? estaVencida(o) : estadoFiltro ? o.estado === estadoFiltro : true,
+    )
+    .filter((o) => empresaFiltro == null || o.empresaId === empresaFiltro);
+  const hayFiltro = Boolean(estadoFiltro) || soloVencidas || empresaFiltro != null;
 
   // KPIs del tablero
   const ordenesActivas = ordenes.filter((o) => o.estado === "emitida" || o.estado === "en_ejecucion");
@@ -147,102 +156,6 @@ export default async function PaginaOrdenes({
         <Kpi n={empresasConCarga} etiqueta="empresas con carga" color="var(--color-amarillo)" nota={`de ${empresas.length} registradas`} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        {/* Tabla de circuitos: la vista de relevamiento del Director */}
-        <div className="min-w-0">
-          <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
-            Los 47 circuitos{" "}
-            <span className="font-normal text-texto-3 normal-case">
-              — ordenados por pendientes; la prioridad y la empresa se editan acá mismo
-            </span>
-          </h2>
-          <PanelTabla>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
-                  <th className="px-3 py-3">Circuito</th>
-                  <th className="px-3 py-3">Prioridad</th>
-                  <th className="px-3 py-3">Empresa</th>
-                  <th className="num px-3 py-3 text-right">Pendientes</th>
-                  <th className="num px-3 py-3 text-right" title="Reclamos abiertos de vecinos e instituciones que caen en el circuito">
-                    Reclamos
-                  </th>
-                  <th className="num px-3 py-3 text-right">Reparados</th>
-                  <th className="num px-3 py-3 text-right" title="Órdenes emitidas o en ejecución ahora">
-                    OTs
-                  </th>
-                  <th className="px-3 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {circuitos.map((c) => (
-                  <tr key={c.id} className="border-b border-borde/60 transition hover:bg-panel-2">
-                    <td className="px-3 py-2 font-bold">{c.codigo}</td>
-                    {puedePlanificar ? (
-                      <AsignacionCircuito
-                        circuitoId={c.id}
-                        prioridad={c.prioridad}
-                        empresaId={c.empresaId}
-                        empresas={empresasParaAsignar}
-                      />
-                    ) : (
-                      <>
-                        <td className="px-3 py-2 text-xs" style={{ color: c.prioridad ? COLOR_PRIORIDAD[c.prioridad] : undefined }}>
-                          {c.prioridad ? ETIQUETA_PRIORIDAD[c.prioridad] : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-texto-2">{c.empresaNombre ?? "—"}</td>
-                      </>
-                    )}
-                    <td className="num px-3 py-2 text-right font-bold" style={{ color: c.pendientes > 0 ? "var(--color-encurso)" : "var(--color-texto-3)" }}>
-                      {numero(c.pendientes)}
-                    </td>
-                    <td className="num px-3 py-2 text-right text-amarillo">{numero(c.demandasAbiertas)}</td>
-                    <td className="num px-3 py-2 text-right" style={{ color: "var(--color-ok)" }}>
-                      {numero(c.reparados)}
-                    </td>
-                    <td className="num px-3 py-2 text-right text-texto-2">{numero(c.ordenesActivas)}</td>
-                    <td className="px-3 py-2 text-right">
-                      {/* El cuadrado, no un viaje: el mini-mapa abre acá mismo
-                          y adentro está "Mapa completo →" para quien lo quiera
-                          — "que no me mande a otra funcionalidad y me pierda". */}
-                      <ChipMiniMapa
-                        lat={c.lat}
-                        lon={c.lon}
-                        etiqueta={`Circuito ${c.codigo}`}
-                      />
-                    </td>
-                  </tr>
-                ))}
-                {circuitos.length === 0 && (
-                  <FilaVacia
-                    columnas={8}
-                    titulo="Todavía no hay circuitos cargados"
-                    detalle="Los circuitos son la división operativa del bacheo: entran por Cargar datos, con la capa que provee la Dirección de Obras Viales."
-                    accion={{ texto: "Ir a Cargar datos", href: "/cargar" }}
-                  />
-                )}
-              </tbody>
-            </table>
-          </PanelTabla>
-        </div>
-
-        {/* Proyección de capacidad */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-bold tracking-wide uppercase">Proyección</h2>
-          <PanelProyeccion
-            parametros={parametros}
-            bachesIniciales={totalPendientes}
-            carpetasIniciales={0}
-            cuadrillasIniciales={cuadrillasActivas}
-            puedeEditar={puedePlanificar}
-          />
-          <p className="text-[11px] leading-relaxed text-texto-3">
-            {numero(totalPendientes)} pendientes en toda la ciudad y {numero(cuadrillasActivas)} cuadrillas
-            contratadas activas.
-          </p>
-        </div>
-      </div>
-
       {/* Listado de órdenes */}
       <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">
         Órdenes <span className="font-normal text-texto-3 normal-case">— las últimas 200</span>
@@ -264,9 +177,35 @@ export default async function PaginaOrdenes({
             </option>
           ))}
         </select>
+        {/* Por empresa: con doce contratistas en la calle, "las de Calleri"
+            es la pregunta más frecuente de esta pantalla y se contestaba
+            leyendo la columna a ojo. Van TODAS, no solo las activas: una
+            empresa dada de baja sigue teniendo órdenes viejas que consultar. */}
+        <select
+          name="empresa"
+          defaultValue={empresaFiltro != null ? String(empresaFiltro) : ""}
+          className="max-w-56 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
+        >
+          <option value="">Todas las empresas</option>
+          {[...empresas]
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+            .map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nombre}
+              </option>
+            ))}
+        </select>
         <button className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste">
           Filtrar
         </button>
+        {/* Cuántas quedaron a la vista: sin esto, un filtro que deja 3 de 200
+            se lee igual que una lista vacía de verdad. */}
+        {hayFiltro && (
+          <span className="text-[12px] text-texto-3">
+            <b className="num text-texto-2">{numero(ordenesFiltradas.length)}</b> de{" "}
+            <b className="num">{numero(ordenes.length)}</b>
+          </span>
+        )}
         {hayFiltro && (
           <Link href="/ordenes" className="text-sm text-texto-2 hover:text-texto">
             Limpiar
@@ -395,6 +334,102 @@ export default async function PaginaOrdenes({
           </tbody>
         </table>
       </PanelTabla>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_340px]">
+        {/* Tabla de circuitos: la vista de relevamiento del Director */}
+        <div className="min-w-0">
+          <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
+            Los 47 circuitos{" "}
+            <span className="font-normal text-texto-3 normal-case">
+              — ordenados por pendientes; la prioridad y la empresa se editan acá mismo
+            </span>
+          </h2>
+          <PanelTabla>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+                  <th className="px-3 py-3">Circuito</th>
+                  <th className="px-3 py-3">Prioridad</th>
+                  <th className="px-3 py-3">Empresa</th>
+                  <th className="num px-3 py-3 text-right">Pendientes</th>
+                  <th className="num px-3 py-3 text-right" title="Reclamos abiertos de vecinos e instituciones que caen en el circuito">
+                    Reclamos
+                  </th>
+                  <th className="num px-3 py-3 text-right">Reparados</th>
+                  <th className="num px-3 py-3 text-right" title="Órdenes emitidas o en ejecución ahora">
+                    OTs
+                  </th>
+                  <th className="px-3 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {circuitos.map((c) => (
+                  <tr key={c.id} className="border-b border-borde/60 transition hover:bg-panel-2">
+                    <td className="px-3 py-2 font-bold">{c.codigo}</td>
+                    {puedePlanificar ? (
+                      <AsignacionCircuito
+                        circuitoId={c.id}
+                        prioridad={c.prioridad}
+                        empresaId={c.empresaId}
+                        empresas={empresasParaAsignar}
+                      />
+                    ) : (
+                      <>
+                        <td className="px-3 py-2 text-xs" style={{ color: c.prioridad ? COLOR_PRIORIDAD[c.prioridad] : undefined }}>
+                          {c.prioridad ? ETIQUETA_PRIORIDAD[c.prioridad] : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-texto-2">{c.empresaNombre ?? "—"}</td>
+                      </>
+                    )}
+                    <td className="num px-3 py-2 text-right font-bold" style={{ color: c.pendientes > 0 ? "var(--color-encurso)" : "var(--color-texto-3)" }}>
+                      {numero(c.pendientes)}
+                    </td>
+                    <td className="num px-3 py-2 text-right text-amarillo">{numero(c.demandasAbiertas)}</td>
+                    <td className="num px-3 py-2 text-right" style={{ color: "var(--color-ok)" }}>
+                      {numero(c.reparados)}
+                    </td>
+                    <td className="num px-3 py-2 text-right text-texto-2">{numero(c.ordenesActivas)}</td>
+                    <td className="px-3 py-2 text-right">
+                      {/* El cuadrado, no un viaje: el mini-mapa abre acá mismo
+                          y adentro está "Mapa completo →" para quien lo quiera
+                          — "que no me mande a otra funcionalidad y me pierda". */}
+                      <ChipMiniMapa
+                        lat={c.lat}
+                        lon={c.lon}
+                        etiqueta={`Circuito ${c.codigo}`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+                {circuitos.length === 0 && (
+                  <FilaVacia
+                    columnas={8}
+                    titulo="Todavía no hay circuitos cargados"
+                    detalle="Los circuitos son la división operativa del bacheo: entran por Cargar datos, con la capa que provee la Dirección de Obras Viales."
+                    accion={{ texto: "Ir a Cargar datos", href: "/cargar" }}
+                  />
+                )}
+              </tbody>
+            </table>
+          </PanelTabla>
+        </div>
+
+        {/* Proyección de capacidad */}
+        <div className="space-y-3">
+          <h2 className="text-sm font-bold tracking-wide uppercase">Proyección</h2>
+          <PanelProyeccion
+            parametros={parametros}
+            bachesIniciales={totalPendientes}
+            carpetasIniciales={0}
+            cuadrillasIniciales={cuadrillasActivas}
+            puedeEditar={puedePlanificar}
+          />
+          <p className="text-[11px] leading-relaxed text-texto-3">
+            {numero(totalPendientes)} pendientes en toda la ciudad y {numero(cuadrillasActivas)} cuadrillas
+            contratadas activas.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

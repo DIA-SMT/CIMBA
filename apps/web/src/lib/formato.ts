@@ -247,3 +247,17 @@ export const venceHoy = (o: { venceEn: string | null; estado: string }): boolean
 export function numero(n: number): string {
   return new Intl.NumberFormat("es-AR").format(n);
 }
+
+/**
+ * Hasta cuántos días atrás se puede fechar un trabajo cargado a mano. Más que
+ * eso ya no es "vengo atrasado con la carga" sino otra cosa, y conviene que
+ * el calendario no lo ofrezca como si fuera normal. Ver lib/fecha-ejecucion.ts,
+ * que es donde se valida del lado del servidor.
+ */
+export const DIAS_ATRAS_EJECUCION = 90;
+
+export function minimoEjecucion(): string {
+  const d = new Date(`${hoyISO()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - DIAS_ATRAS_EJECUCION);
+  return d.toISOString().slice(0, 10);
+}
