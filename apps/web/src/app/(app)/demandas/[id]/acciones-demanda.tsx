@@ -3,7 +3,7 @@
 import { Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { crearIncidenteDesdeDemanda, descartarDemanda, vincularDemanda } from "@/lib/acciones";
+import { crearIncidenteDesdeDemanda, descartarDemanda, noEsElMismo, vincularDemanda } from "@/lib/acciones";
 import { analizarDemandaConIA } from "@/lib/acciones-ia";
 import type { AnalisisDemanda } from "@/lib/ia";
 import type { SugerenciaIncidente } from "@/lib/consultas";
@@ -142,14 +142,31 @@ export function AccionesDemanda({
                   <div className="num text-sm font-bold text-celeste">{s.distanciaM.toFixed(0)} m</div>
                   <div className="num text-[10px] text-texto-3">score {s.score.toFixed(2)}</div>
                 </div>
-                {puedeGestionar && !yaVinculada && (
-                  <button
-                    disabled={pendiente}
-                    onClick={() => ejecutar(() => vincularDemanda({ demandaId, incidenteId: s.incidenteId, confianza: s.score }))}
-                    className="rounded-lg border border-celeste/50 bg-celeste/10 px-3 py-1.5 text-xs font-semibold text-celeste transition hover:bg-celeste/20 disabled:opacity-50"
-                  >
-                    Vincular
-                  </button>
+                {puedeGestionar && (
+                  <div className="flex items-center gap-1.5">
+                    {!yaVinculada && (
+                      <button
+                        disabled={pendiente}
+                        onClick={() => ejecutar(() => vincularDemanda({ demandaId, incidenteId: s.incidenteId, confianza: s.score }))}
+                        className="rounded-lg border border-celeste/50 bg-celeste/10 px-3 py-1.5 text-xs font-semibold text-celeste transition hover:bg-celeste/20 disabled:opacity-50"
+                      >
+                        Es el mismo
+                      </button>
+                    )}
+                    {/* LO CONTRARIO DE VINCULAR, que no existía. A 40 metros
+                        conviven el bache de la esquina y el de media cuadra:
+                        quien sabe que son dos tenía que ignorar la fila cada
+                        vez que entraba, y el siguiente volvía a dudar lo
+                        mismo. Descartado, no se vuelve a sugerir. */}
+                    <button
+                      disabled={pendiente}
+                      onClick={() => ejecutar(() => noEsElMismo({ demandaId, incidenteId: s.incidenteId }))}
+                      title="Descartar este incidente: no es el problema que reclamó el vecino"
+                      className="rounded-lg border border-borde-2 px-3 py-1.5 text-xs font-semibold text-texto-2 transition hover:border-peligro/50 hover:text-peligro disabled:opacity-50"
+                    >
+                      No es el mismo
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

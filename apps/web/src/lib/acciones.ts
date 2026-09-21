@@ -74,6 +74,72 @@ export async function vincularDemanda(entrada: { demandaId: number; incidenteId:
   return { ok: true };
 }
 
+/**
+ * NO ES EL MISMO — lo contrario de vincular, que hasta ahora no existía.
+ *
+ * Las sugerencias salen por cercanía y tipo, y a 40 metros conviven el bache
+ * de la esquina y el de media cuadra: son dos problemas distintos. Quien lo
+ * sabe no tenía forma de decirlo. La fila seguía apareciendo cada vez que
+ * alguien abría el reclamo, y la próxima persona volvía a dudar exactamente lo
+ * mismo — o lo vinculaba mal, que es peor: el reclamo del vecino se cierra con
+ * la reparación de OTRO bache y el suyo sigue ahí.
+ *
+ * Se guarda en la demanda y no en una tabla propia porque es una decisión
+ * sobre ESTE reclamo: la lista de incidentes que ya se miraron y se
+ * descartaron. Queda la traza de quién lo dijo y cuándo.
+ */
+export async function noEsElMismo(entrada: { demandaId: number; incidenteId: number; motivo?: string }) {
+  const sesion = await requerirRol("atencion_ciudadana");
+  const datos = z
+    .object({
+      demandaId: z.number().int().positive(),
+      incidenteId: z.number().int().positive(),
+      motivo: z.string().max(300).optional(),
+    })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const r = (await tx.execute(sql`
+      update demandas set
+        metadata = coalesce(metadata, '{}'::jsonb)
+          || jsonb_build_object(
+               'no_es_el_mismo',
+               coalesce(metadata->'no_es_el_mismo', '[]'::jsonb) || to_jsonb(${datos.incidenteId}::int))
+          || jsonb_build_object(
+               'no_es_el_mismo_detalle',
+               coalesce(metadata->'no_es_el_mismo_detalle', '[]'::jsonb) || jsonb_build_array(
+                 jsonb_build_object(
+                   'incidente', ${datos.incidenteId}::int,
+                   'por', ${sesion.nombre}::text,
+                   'en', now()::text,
+                   'motivo', ${datos.motivo?.trim() || null}::text)))
+      where id = ${datos.demandaId}
+      returning id
+    `)) as unknown as Array<{ id: number }>;
+    if (!r[0]) throw new ErrorVisible("El reclamo no existe");
+    /* Si estaba vinculado a ese incidente, el vínculo se deshace: decir "no es
+       el mismo" sobre algo que se vinculó por error tiene que poder
+       desvincularlo, o la corrección no corrige nada. */
+    await tx.execute(sql`
+      delete from demanda_incidente
+      where demanda_id = ${datos.demandaId} and incidente_id = ${datos.incidenteId}
+    `);
+    /* Y si ese era su único vínculo, el reclamo vuelve a estar sin vincular:
+       dejarlo en 'vinculada' sin vínculo lo esconde de la bandeja de trabajo. */
+    await tx.execute(sql`
+      update demandas set estado = 'en_validacion'
+      where id = ${datos.demandaId} and estado = 'vinculada'
+        and not exists (select 1 from demanda_incidente di where di.demanda_id = demandas.id)
+    `);
+    await recalcularScore(tx, datos.incidenteId);
+  });
+
+  revalidatePath(`/demandas/${datos.demandaId}`);
+  revalidatePath("/demandas");
+  revalidatePath("/incidentes");
+  return { ok: true };
+}
+
 export async function crearIncidenteDesdeDemanda(entrada: { demandaId: number }) {
   const sesion = await requerirRol("atencion_ciudadana");
   const { demandaId } = z.object({ demandaId: z.number().int() }).parse(entrada);

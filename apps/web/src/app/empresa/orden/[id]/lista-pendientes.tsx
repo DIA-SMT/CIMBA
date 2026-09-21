@@ -1,12 +1,9 @@
 "use client";
 
-import "maplibre-gl/dist/maplibre-gl.css";
-import { LocateFixed, Map as IconoMapa, Search, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-import { Layer, Map as MapaGL, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
+import { LocateFixed, Search, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { ItemOrden } from "@/lib/ordenes";
 import { numero } from "@/lib/formato";
-import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 import { TarjetaItem } from "./tarjeta-item";
 
 /**
@@ -48,8 +45,6 @@ const normalizar = (s: string) =>
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "");
 
-type Punto = { id: number; lat: number; lon: number; direccion: string | null; hecho: boolean };
-
 export function ListaPendientes({
   pendientes,
   hechos,
@@ -65,7 +60,6 @@ export function ListaPendientes({
   const [miPunto, setMiPunto] = useState<{ lat: number; lon: number } | null>(null);
   const [errorGps, setErrorGps] = useState<string | null>(null);
   const [buscandoGps, setBuscandoGps] = useState(false);
-  const [verMapa, setVerMapa] = useState(false);
 
   const pedirUbicacion = () => {
     if (!navigator.geolocation) {
@@ -107,16 +101,6 @@ export function ListaPendientes({
     return lista;
   }, [pendientes, busqueda, porCercania, miPunto]);
 
-  const irA = (id: number) => {
-    setVerMapa(false);
-    // El timeout deja que el mapa se pliegue antes de medir la posición del
-    // destino; sin esto el scroll apunta a donde estaba la tarjeta con el
-    // mapa abierto y queda a media pantalla.
-    setTimeout(() => {
-      document.getElementById(`item-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
-  };
-
   // Solo vale la pena la barra cuando hay lista para navegar.
   const conHerramientas = pendientes.length >= 5;
 
@@ -144,12 +128,15 @@ export function ListaPendientes({
             )}
           </div>
 
-          <div className="mt-2 grid grid-cols-2 gap-2">
+          {/* El botón "Ver el mapa" se fue: el mapa de la orden ahora está
+              siempre arriba, fuera de la lista y sin depender de cuántos
+              pendientes haya. Acá queda lo que sí es de la lista. */}
+          <div className="mt-2">
             <button
               type="button"
               onClick={() => (miPunto ? setPorCercania((v) => !v) : pedirUbicacion())}
               disabled={buscandoGps}
-              className={`flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition disabled:opacity-60 ${
+              className={`flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition disabled:opacity-60 ${
                 porCercania
                   ? "border-celeste/60 bg-celeste/10 text-celeste"
                   : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
@@ -157,18 +144,6 @@ export function ListaPendientes({
             >
               <LocateFixed size={15} />
               {buscandoGps ? "Ubicando…" : porCercania ? "Más cerca mío" : "Ordenar por cercanía"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setVerMapa((v) => !v)}
-              className={`flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition ${
-                verMapa
-                  ? "border-celeste/60 bg-celeste/10 text-celeste"
-                  : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
-              }`}
-            >
-              <IconoMapa size={15} />
-              {verMapa ? "Ocultar el mapa" : "Ver el mapa"}
             </button>
           </div>
 
@@ -187,25 +162,6 @@ export function ListaPendientes({
             {porCercania && miPunto && " · ordenados desde donde estás"}
           </p>
         </div>
-      )}
-
-      {verMapa && (
-        <MapaOrden
-          puntos={[
-            ...pendientes.flatMap((i) =>
-              i.lat != null && i.lon != null
-                ? [{ id: i.id, lat: i.lat, lon: i.lon, direccion: i.direccion, hecho: false }]
-                : [],
-            ),
-            ...hechos.flatMap((i) =>
-              i.lat != null && i.lon != null
-                ? [{ id: i.id, lat: i.lat, lon: i.lon, direccion: i.direccion, hecho: true }]
-                : [],
-            ),
-          ]}
-          miPunto={miPunto}
-          alElegir={irA}
-        />
       )}
 
       {visibles.length === 0 && (
@@ -234,160 +190,3 @@ export function ListaPendientes({
   );
 }
 
-/** El semáforo de siempre, acá reducido a la única pregunta de la jornada:
- *  rojo = falta, verde = tapado. */
-const COLOR_FALTA = "#d42d20";
-const COLOR_HECHO = "#199e70";
-
-function MapaOrden({
-  puntos,
-  miPunto,
-  alElegir,
-}: {
-  puntos: Punto[];
-  miPunto: { lat: number; lon: number } | null;
-  alElegir: (id: number) => void;
-}) {
-  const tema = usarTemaMapa();
-  const mapRef = useRef<MapRef>(null);
-  const [tocado, setTocado] = useState<Punto | null>(null);
-
-  const fc = useMemo(
-    () => ({
-      type: "FeatureCollection" as const,
-      features: puntos.map((p) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] },
-        properties: { id: p.id, hecho: p.hecho, direccion: p.direccion ?? "Sin dirección" },
-      })),
-    }),
-    [puntos],
-  );
-
-  /** Encuadre inicial sobre TODOS los puntos de la orden: abrir centrado en el
-   *  primero deja la mitad del trabajo fuera de pantalla. */
-  const encuadre = useMemo(() => {
-    if (puntos.length === 0) return null;
-    const lats = puntos.map((p) => p.lat);
-    const lons = puntos.map((p) => p.lon);
-    return {
-      minLat: Math.min(...lats),
-      maxLat: Math.max(...lats),
-      minLon: Math.min(...lons),
-      maxLon: Math.max(...lons),
-    };
-  }, [puntos]);
-
-  if (puntos.length === 0) {
-    return (
-      <p className="mb-3 rounded-xl border border-borde bg-panel px-4 py-6 text-center text-sm text-texto-2">
-        Ningún trabajo de esta orden tiene ubicación cargada todavía.
-      </p>
-    );
-  }
-
-  return (
-    <div className="mb-3">
-      <div className="overflow-hidden rounded-xl border border-borde" style={{ height: 300 }}>
-        <MapaGL
-          ref={mapRef}
-          /* El encuadre va en el estado INICIAL y no en un fitBounds dentro
-             de un efecto: al montar, el mapa todavía no terminó de cargar el
-             estilo y el fitBounds se pierde — abría centrado en el primer
-             punto con la mitad de la orden fuera de pantalla. */
-          initialViewState={{
-            bounds: [
-              [encuadre!.minLon, encuadre!.minLat],
-              [encuadre!.maxLon, encuadre!.maxLat],
-            ],
-            fitBoundsOptions: { padding: 40, maxZoom: 16 },
-          }}
-          mapStyle={estiloMapa(tema)}
-          attributionControl={false}
-          interactiveLayerIds={["orden-puntos"]}
-          onClick={(e) => {
-            const f = e.features?.[0];
-            if (!f) return;
-            const id = Number(f.properties?.id);
-            setTocado(puntos.find((p) => p.id === id) ?? null);
-          }}
-        >
-          <NavigationControl position="bottom-right" showCompass={false} />
-          <Source id="orden" type="geojson" data={fc}>
-            <Layer
-              id="orden-puntos"
-              type="circle"
-              paint={{
-                "circle-radius": ["case", ["get", "hecho"], 6, 9],
-                "circle-color": ["case", ["get", "hecho"], COLOR_HECHO, COLOR_FALTA],
-                "circle-opacity": ["case", ["get", "hecho"], 0.7, 0.95],
-                "circle-stroke-width": 1.5,
-                "circle-stroke-color": "#ffffff",
-              }}
-            />
-          </Source>
-          {miPunto && (
-            <Source
-              id="yo"
-              type="geojson"
-              data={{
-                type: "FeatureCollection",
-                features: [
-                  {
-                    type: "Feature",
-                    geometry: { type: "Point", coordinates: [miPunto.lon, miPunto.lat] },
-                    properties: {},
-                  },
-                ],
-              }}
-            >
-              <Layer
-                id="yo-punto"
-                type="circle"
-                paint={{
-                  "circle-radius": 7,
-                  "circle-color": "#0066ff",
-                  "circle-stroke-width": 3,
-                  "circle-stroke-color": "#ffffff",
-                }}
-              />
-            </Source>
-          )}
-        </MapaGL>
-      </div>
-
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-texto-3">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_FALTA }} />
-          falta
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_HECHO }} />
-          tapado
-        </span>
-        {miPunto && (
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#0066ff" }} />
-            estás acá
-          </span>
-        )}
-        <span className="ml-auto">Tocá un punto rojo para ir a cargarlo.</span>
-      </div>
-
-      {tocado && !tocado.hecho && (
-        <button
-          type="button"
-          onClick={() => alElegir(tocado.id)}
-          className="mt-2 w-full rounded-xl bg-azul px-4 py-3 text-left text-sm font-bold text-white"
-        >
-          Cargar {tocado.direccion ?? "este trabajo"} →
-        </button>
-      )}
-      {tocado?.hecho && (
-        <p className="mt-2 rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-sm text-resuelto">
-          {tocado.direccion ?? "Este trabajo"} ya está cargado.
-        </p>
-      )}
-    </div>
-  );
-}

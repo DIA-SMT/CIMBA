@@ -225,6 +225,12 @@ export async function sugerenciasParaDemanda(
            lateral sugerir_incidente(d.geom, coalesce(d.tipo, 'bache'::tipo_problema), d.creado_en) s
       join incidentes i on i.id = s.incidente_id
       where d.id = ${demandaId} and d.geom is not null
+        /* LO QUE ALGUIEN YA DIJO QUE NO ERA, NO SE VUELVE A SUGERIR.
+           La sugerencia es por cercanía y tipo: a 40 metros conviven el bache
+           de la esquina y el de media cuadra, y son dos. Sin poder decir "no
+           es el mismo", el operador tenía que ignorar la fila cada vez que
+           entraba, y la próxima persona volvía a dudar lo mismo. */
+        and not (coalesce(d.metadata->'no_es_el_mismo', '[]'::jsonb) @> to_jsonb(s.incidente_id))
       order by s.score desc
       limit 8
     `)) as unknown as Array<Record<string, unknown>>;

@@ -11,6 +11,7 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
 
@@ -91,6 +92,24 @@ export default async function PaginaOrdenEmpresa({
    * los mismos que usa la lista: restarlos acá en TypeScript era lo que hacía
    * que las dos pantallas mostraran números distintos.
    */
+  /**
+   * Los puntos del mapa de ubicación: todo lo que tenga coordenada, con el
+   * color del avance. Lo cerrado sin trabajo —no encontrado, ya resuelto—
+   * cuenta como hecho a los fines del mapa: lo que importa dibujar es qué
+   * queda por visitar.
+   */
+  const puntosDelMapa = orden.itemsDetalle.flatMap((i) =>
+    i.lat != null && i.lon != null && i.estado !== "rechazado"
+      ? [{
+          id: i.id,
+          lat: i.lat,
+          lon: i.lon,
+          direccion: i.direccion,
+          hecho: i.estado !== "pendiente" && i.estado !== "propuesto",
+        }]
+      : [],
+  );
+
   const enPlan = orden.enPlan;
   const pctHecho = enPlan > 0 ? Math.round((100 * orden.hechos) / enPlan) : 0;
   const pctSinTrabajo =
@@ -185,6 +204,24 @@ export default async function PaginaOrdenEmpresa({
           </p>
         )}
       </Panel>
+
+      {/**
+       * DÓNDE QUEDA EL TRABAJO. Antes la empresa recibía una lista de
+       * direcciones y nada más: si está todo en tres cuadras o repartido en
+       * medio distrito, y por dónde conviene arrancar, se armaba en la cabeza
+       * del capataz leyendo direcciones sueltas. El mapa existía pero estaba
+       * escondido dentro de la lista, detrás de un botón que solo aparecía con
+       * cinco o más pendientes — o sea que en la mayoría de las órdenes no
+       * había mapa, y en una terminada tampoco.
+       *
+       * Van TODOS los puntos de la orden, no solo los pendientes: lo rojo es
+       * lo que falta y lo verde lo tapado, que es el avance dibujado.
+       */}
+      {puntosDelMapa.length > 0 && (
+        <div className="mb-4">
+          <MapaOrden puntos={puntosDelMapa} />
+        </div>
+      )}
 
       {/* Lo cargado en ESTA orden: el papel que la empresa lleva a la
           medición conjunta. */}
