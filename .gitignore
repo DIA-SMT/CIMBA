@@ -15,6 +15,10 @@ dist/
 .env
 .env.local
 .env*.local
+# Cualquier copia de trabajo del .env. Una vez se coló un .env.bak con la
+# cadena de conexión a producción adentro; el patrón de arriba no lo tapaba.
+.env.*
+!.env.example
 
 # supabase local
 supabase/.branches/

@@ -1452,11 +1452,31 @@ function MapaInterno({
     [pal, modoImbornal],
   );
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
-  const [panelCapas, setPanelCapas] = useState(true);
-  // En pantallas chicas el panel de Capas taparía medio mapa: arranca cerrado.
+  /**
+   * EL PANEL DE CAPAS ARRANCA CERRADO.
+   *
+   * Abría siempre abierto: 288 px de alto completo sobre el borde izquierdo,
+   * tapando una franja de ciudad en cada visita, aunque en la mayoría de las
+   * sesiones nadie toca una capa. Ahora se abre cuando hace falta y —eso sí—
+   * la decisión se recuerda: quien trabaja con el panel abierto lo encuentra
+   * abierto la próxima vez, sin volver a abrirlo todos los días.
+   */
+  const [panelCapas, setPanelCapas] = useState(false);
   useEffect(() => {
-    if (window.innerWidth < 640) setPanelCapas(false);
+    try {
+      if (localStorage.getItem("cimba-panel-capas") === "1") setPanelCapas(true);
+    } catch {
+      /* modo privado: arranca cerrado, que es el default */
+    }
   }, []);
+  const cambiarPanelCapas = (abierto: boolean) => {
+    setPanelCapas(abierto);
+    try {
+      localStorage.setItem("cimba-panel-capas", abierto ? "1" : "0");
+    } catch {
+      /* sin storage: vale para esta sesión y nada más */
+    }
+  };
   // Recorrido guiado ("?"): el botón pulsa hasta que lo abren por primera vez.
   const [guiaAbierta, setGuiaAbierta] = useState(false);
   const [guiaConocida, setGuiaConocida] = useState(true);
@@ -4238,7 +4258,18 @@ function MapaInterno({
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
         ) : (
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] flex-col rounded-xl p-1 sm:max-w-none">
+          /**
+           * EL ANCHO ESTÁ ACOTADO SIEMPRE, no solo en celular.
+           *
+           * En escritorio el panel decía `sm:max-w-none` y se estiraba a 591 px
+           * sobre un mapa de 679: una banda blanca que tapaba media ciudad. El
+           * culpable era el renglón de ayuda de abajo, que al ser `basis-full`
+           * obligaba al ancho máximo del contenido a contarlo en UNA línea. Se
+           * fue el renglón (su texto vive en el title de cada chip, que es
+           * donde se lo busca) y el ancho quedó topado: la barra de
+           * herramientas no puede volver a comerse el mapa.
+           */
+          <div data-tour="vistas" className="panel-vidrio flex max-w-[min(22rem,calc(100vw-88px))] flex-col rounded-xl p-1">
             <div className="flex overflow-x-auto sm:flex-wrap sm:overflow-visible">
               {(Object.keys(VISTAS) as Vista[]).map((v) => (
                 <button
@@ -4261,7 +4292,11 @@ function MapaInterno({
                 que se leía como tres datos informativos y no como el filtro que
                 es. El rótulo lo nombra y el pie aclara qué mide la cifra; los
                 dos son texto chico y envuelven, así que entran en 375 px. */}
-            <div data-tour="destinos" className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1">
+            <div
+              data-tour="destinos"
+              title={AYUDA_CUENTA_DESTINO}
+              className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1"
+            >
               <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Resuelve</span>
               {DESTINOS.map((d) => {
                 const activo = destinos[d] === true;
@@ -4285,9 +4320,6 @@ function MapaInterno({
                   </button>
                 );
               })}
-              <span className="basis-full text-[10px] leading-tight text-texto-3" title={AYUDA_CUENTA_DESTINO}>
-                Prendé o apagá cada cola · la cifra es el total de la cola, no lo que se ve
-              </span>
             </div>
           </div>
         )}
@@ -5481,7 +5513,7 @@ function MapaInterno({
                 >
                   <Satellite size={14} />
                 </button>
-                <button onClick={() => setPanelCapas(false)} className="text-texto-3 hover:text-texto">
+                <button onClick={() => cambiarPanelCapas(false)} className="text-texto-3 hover:text-texto">
                   <X size={14} />
                 </button>
               </span>
@@ -6153,7 +6185,7 @@ function MapaInterno({
             )}
           </div>
         ) : (
-          <button onClick={() => setPanelCapas(true)} className="panel-vidrio rounded-xl p-3 text-celeste transition hover:text-texto" title="Capas">
+          <button onClick={() => cambiarPanelCapas(true)} className="panel-vidrio rounded-xl p-3 text-celeste transition hover:text-texto" title="Capas">
             <Layers size={18} />
           </button>
         )}
@@ -6473,6 +6505,25 @@ function LeyendaSemaforo({
    *  leyenda lo recibe hecho para pintar exactamente lo que pinta la capa. */
   colorEdadReciente: string;
 }) {
+  /** La clave de formas: se aprende una vez y después estorba. Arranca
+   *  desplegada y quien la pliega no la vuelve a ver. */
+  const [verClave, setVerClave] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("cimba-clave-formas") === "0") setVerClave(false);
+    } catch {
+      /* modo privado: se muestra, que es el default seguro */
+    }
+  }, []);
+  const cambiarClave = (v: boolean) => {
+    setVerClave(v);
+    try {
+      localStorage.setItem("cimba-clave-formas", v ? "1" : "0");
+    } catch {
+      /* sin storage: vale para esta sesión */
+    }
+  };
+
   /** Con el mapa pintado por antigüedad el semáforo no aplica: la leyenda
    *  muestra la rampa real de capaDemandasEdad, mismos colores y mismos cortes. */
   const porEdad = vista === "brecha" && modoBrecha === "antiguedad";
@@ -6517,21 +6568,37 @@ function LeyendaSemaforo({
        debajo de la columna derecha de controles de MapLibre (zoom, brújula y
        geolocalizar, x≈336..365), que quedaban intocables. Sigue sin capturar el
        puntero (pointer-events-none): es un rótulo, no un control. */
-    <div className="panel-vidrio pointer-events-none max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
-      {/* LA CLAVE DE FORMAS va primero: el color dice el ESTADO, la forma dice
-          QUÉ ES. Sin esto, un pedido rojo y un incidente rojo eran el mismo
-          punto para el ojo, y hay ~990 lugares donde los dos se superponen. */}
-      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-borde/60 pb-1 text-[10px] text-texto-3">
-        <span className="flex items-center gap-1 whitespace-nowrap">
-          <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-texto-2" />
-          anillo = lo que <b className="font-semibold text-texto-2">piden</b>
-        </span>
-        <span className="flex items-center gap-1 whitespace-nowrap">
-          <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-texto-2" />
-          relleno = lo que el municipio <b className="font-semibold text-texto-2">trabaja</b>
-        </span>
-        <span className="whitespace-nowrap">el color dice en qué paso está</span>
-      </div>
+    <div className="panel-vidrio pointer-events-auto max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
+      {/**
+       * LA CLAVE DE FORMAS —anillo = lo que piden, relleno = lo que el
+       * municipio trabaja— se lee UNA vez y después es ruido: eran tres
+       * renglones de texto permanentes sobre el mapa. Ahora arranca desplegada
+       * (hay que aprenderla) y se puede plegar para siempre con un clic: la
+       * decisión se recuerda y la leyenda queda en una sola línea de colores.
+       */}
+      <button
+        type="button"
+        onClick={() => cambiarClave(!verClave)}
+        title={verClave ? "Ocultar la clave de formas" : "Qué significan el anillo y el relleno"}
+        className="flex w-full items-center gap-1 text-left text-[10px] text-texto-3 transition hover:text-texto-2"
+      >
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-2 border-texto-2" />
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-texto-2" />
+        <span className="ml-0.5 font-semibold">{verClave ? "▾" : "▸"} piden / trabaja</span>
+      </button>
+      {verClave && (
+        <div className="mt-1 mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-borde/60 pb-1 text-[10px] text-texto-3">
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-texto-2" />
+            anillo = lo que <b className="font-semibold text-texto-2">piden</b>
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-texto-2" />
+            relleno = lo que el municipio <b className="font-semibold text-texto-2">trabaja</b>
+          </span>
+          <span className="whitespace-nowrap">el color dice en qué paso está</span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] font-medium text-texto-2">
         {porEdad ? (
           <>
