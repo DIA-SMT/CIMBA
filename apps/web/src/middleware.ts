@@ -1,7 +1,24 @@
 import { jwtVerify } from "jose";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLICAS = ["/acceso", "/api/auth", "/dev/sso", "/marca", "/_next", "/favicon", "/sw.js"];
+/**
+ * El manifest y los íconos van acá y no detrás de la sesión: el navegador los
+ * pide para decidir si la app es instalable, y a veces sin mandar la cookie.
+ * Detrás del login, el manifest respondía un redirect a /acceso y Chrome
+ * concluía que CIMBA no era instalable — sin decir por qué. No hay nada
+ * sensible en ellos: el nombre de la app y un dibujo.
+ */
+const PUBLICAS = [
+  "/acceso",
+  "/api/auth",
+  "/dev/sso",
+  "/marca",
+  "/icono",
+  "/manifest.webmanifest",
+  "/_next",
+  "/favicon",
+  "/sw.js",
+];
 
 /**
  * Lo ÚNICO que puede tocar el rol empresa (usuario EXTERNO: contratistas).

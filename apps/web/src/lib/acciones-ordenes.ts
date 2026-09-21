@@ -407,6 +407,99 @@ export async function cerrarOrden(entrada: {
   return { ok: true, ...resultado };
 }
 
+/**
+ * PASARLE LA ORDEN A OTRA EMPRESA.
+ *
+ * Pasa seguido: la contratista a la que se le asignó el circuito no llega,
+ * cambia el reparto de zonas, o la orden se armó con la empresa equivocada y
+ * ya se emitió. Hasta ahora la única salida era anular y volver a armarla
+ * entera, perdiendo el número y —si ya se había trabajado— el trabajo cargado.
+ *
+ * Lo ya reportado NO cambia de dueño. Cada intervención guarda en su metadata
+ * el `contratista` que la ejecutó en el momento de reportarla, así que la
+ * certificación y las métricas por empresa siguen contando ese trabajo para
+ * quien lo hizo. Lo que cambia de manos es lo que falta.
+ */
+export async function reasignarOrden(entrada: {
+  ordenId: number;
+  empresaId: number;
+  motivo?: string;
+}) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({
+      ordenId: z.number().int().positive(),
+      empresaId: z.number().int().positive(),
+      motivo: z.string().max(500).optional(),
+    })
+    .parse(entrada);
+
+  const resultado = await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select ot.estado::text, ot.tipo::text, ot.empresa_id, e.nombre as empresa_nombre
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string; tipo: string; empresa_id: number; empresa_nombre: string }>;
+    const o = filas[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado === "completada" || o.estado === "anulada") {
+      throw new ErrorVisible("Una orden cerrada o anulada no se reasigna: su historia ya está cerrada");
+    }
+    if (Number(o.empresa_id) === datos.empresaId) {
+      throw new ErrorVisible("La orden ya es de esa empresa");
+    }
+
+    const nueva = (await tx.execute(sql`
+      select nombre, slug, activa from empresas where id = ${datos.empresaId}
+    `)) as unknown as Array<{ nombre: string; slug: string; activa: boolean }>;
+    const n = nueva[0];
+    if (!n) throw new ErrorVisible("La empresa no existe");
+    if (!n.activa) throw new ErrorVisible(`${n.nombre} está dada de baja: no se le puede asignar trabajo`);
+    // El mismo límite de contrato que valida el alta: las pérdidas de agua
+    // son de la SAT y por contrato solo las ejecutan dos empresas. Sin esto,
+    // reasignar era la puerta de atrás para saltearlo.
+    if (o.tipo === "perdida_agua" && !(EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(n.slug)) {
+      throw new ErrorVisible(
+        "Las pérdidas de agua son de la SAT: por contrato solo las pueden ejecutar UOCRA e INGECO",
+      );
+    }
+
+    // Lo que efectivamente cambia de manos, para poder decirlo.
+    const p = (await tx.execute(sql`
+      select count(*)::int as n from orden_items
+      where orden_id = ${datos.ordenId} and estado in ('pendiente','propuesto')
+    `)) as unknown as Array<{ n: number }>;
+
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        empresa_id = ${datos.empresaId},
+        -- La traza completa en el historial de la orden: un array, no una
+        -- clave sola, porque una orden puede pasar de mano más de una vez y
+        -- la anterior no se puede perder.
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'reasignaciones',
+          coalesce(metadata->'reasignaciones', '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+            'de', ${o.empresa_nombre}::text,
+            'de_id', ${Number(o.empresa_id)}::int,
+            'a', ${n.nombre}::text,
+            'a_id', ${datos.empresaId}::int,
+            'por', ${sesion.nombre}::text,
+            'en', now()::text,
+            'motivo', ${datos.motivo?.trim() || null}::text
+          ))
+        )
+      where id = ${datos.ordenId}
+    `);
+
+    return { de: o.empresa_nombre, a: n.nombre, pendientes: Number(p[0]?.n ?? 0) };
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  return { ok: true, ...resultado };
+}
+
 export async function asignarCircuito(entrada: {
   circuitoId: number;
   empresaId?: number | null;

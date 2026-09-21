@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
-import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
+import { listarEmpresas, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
@@ -108,6 +108,11 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   if (!o) notFound();
 
   const puedePlanificar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "planificacion";
+  /* Para poder pasarle la orden a otra empresa. Solo las activas: a una dada
+     de baja no se le asigna trabajo nuevo. */
+  const empresas = puedePlanificar
+    ? (await listarEmpresas(sesion)).filter((e) => e.activa).map((e) => ({ id: e.id, nombre: e.nombre }))
+    : [];
   // Supervisión también valida propuestos (resolverPropuesto lo permite); la
   // corrección del tipo de intervención queda para admin/planificación.
   const puedeSupervisar = puedePlanificar || sesion.rol_cimba === "supervision";
@@ -219,6 +224,8 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             puedePlanificar={puedePlanificar}
             itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente" || i.estado === "propuesto").length}
             emitidaEn={o.emitidaEn ? o.emitidaEn.slice(0, 10) : null}
+            empresaId={o.empresaId}
+            empresas={empresas}
           />
         </div>
 
