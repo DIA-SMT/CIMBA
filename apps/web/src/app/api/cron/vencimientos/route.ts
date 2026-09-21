@@ -107,5 +107,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, avisadas , cerrables: nCerrables, avisoCierres, pulsoEnviado });
+  /**
+   * El callejero municipal al día. Es una vista materializada: todo lo que se
+   * cargó ayer —cada bache con GPS, cada pin corregido a mano— recién entra al
+   * geocodificador cuando se refresca, y es justamente lo que hace que
+   * geocodificar mañana sea mejor que hoy. Va al final y no rompe el cron: si
+   * falla, el parte igual salió.
+   */
+  let callejero = false;
+  try {
+    await db.execute(sql`select refrescar_callejero()`);
+    callejero = true;
+  } catch {
+    /* sin refresco: el callejero sigue contestando con lo de ayer */
+  }
+
+  return NextResponse.json({ ok: true, avisadas, cerrables: nCerrables, avisoCierres, pulsoEnviado, callejero });
 }

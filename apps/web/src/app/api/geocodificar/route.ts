@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { crearGeocoderNominatim } from "@cimba/integrations";
+import { crearGeocoder } from "@cimba/integrations";
 import { dentroDeSMT } from "@cimba/domain";
 import { leerSesion } from "@/lib/auth";
 
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       : undefined;
 
   try {
-    const geocoder = crearGeocoderNominatim();
+    const geocoder = crearGeocoder();
     const resultado = await geocoder.geocodificar(q, { cerca });
     return NextResponse.json({ resultado });
   } catch {

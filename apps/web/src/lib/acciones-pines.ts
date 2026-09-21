@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { dentroDeSMT } from "@cimba/domain";
-import { crearGeocoderNominatim } from "@cimba/integrations";
+import { crearGeocoder } from "@cimba/integrations";
 import { requerirRol, type Sesion } from "./auth";
 
 /**
@@ -67,7 +67,7 @@ export async function proponerCorreccionPines(): Promise<{
   });
 
   const total = Number(candidatas[0]?.total ?? 0);
-  const geocoder = crearGeocoderNominatim();
+  const geocoder = crearGeocoder();
   const propuestas: PropuestaPin[] = [];
   const fallidas: number[] = [];
 
