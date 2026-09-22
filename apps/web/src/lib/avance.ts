@@ -1,12 +1,15 @@
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
 import { urlFoto } from "./fotos";
+import { numero } from "./formato";
 import {
   type Cifra,
   type DatosAvance,
   type DiasVentana,
   type EnCursoProps,
+  type EventoAvance,
   type FilaEmpresa,
+  type FotoAvance,
   type HechoProps,
   type OrdenActiva,
   type PendienteProps,
@@ -28,7 +31,7 @@ export type { DatosAvance, DiasVentana } from "./avance-tipos";
  *
  * Todo sale de las mismas tablas que el resto del sistema. No hay una cuenta
  * nueva: "m²" son los m² de intervenciones finalizadas, igual que en los KPI
- * del mapa y de /tv; "pendientes" son los pedidos que cuenta la Brecha. Si dos
+ * del mapa; "pendientes" son los pedidos que cuenta la Brecha. Si dos
  * pantallas dicen cosas distintas es un bug, no una interpretación.
  */
 
@@ -104,7 +107,14 @@ const cifraDe = (f: Fila, p: string): Cifra => ({
 });
 
 const texto = (v: unknown): string | null => (v == null ? null : String(v));
+const num = (v: unknown): number | null => (v == null ? null : Number(v));
 const punto = (f: Fila) => ({ type: "Point" as const, coordinates: [Number(f.lon), Number(f.lat)] });
+
+/** "CALLERI E HIJOS S.A." → "Calleri": el nombre corto de una empresa, en TS. */
+function corto(nombre: string): string {
+  const palabra = nombre.trim().split(/[\s(]+/)[0] ?? nombre;
+  return palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase();
+}
 
 /**
  * Las 26 semanas completas, con ceros donde no hubo nada: la serie que sale
@@ -124,16 +134,231 @@ function completarSerie(filas: Fila[], hoy: string): PuntoSerie[] {
   return serie;
 }
 
+const ETIQUETA_DESCARTE: Record<string, string> = {
+  no_encontrado: "no encontrado",
+  no_ejecutable: "no ejecutable",
+  ya_resuelto: "ya resuelto",
+  rechazado: "rechazado",
+};
+
+/**
+ * Un movimiento interpretado pero todavía no redactado: lo que hace falta para
+ * juntar varios iguales en una línea y después escribir la frase.
+ */
+interface Movimiento {
+  id: string;
+  en: string;
+  tipo: EventoAvance["tipo"];
+  /** Los que comparten clave y están cerca en el tiempo se cuentan juntos. */
+  clave: string;
+  actor: string;
+  empresa: string | null;
+  empresaOrden: string | null;
+  nro: string | null;
+  ordenId: number | null;
+  lugares: string[];
+  m2: number;
+  n: number;
+  lon: number | null;
+  lat: number | null;
+  /** Para los descartes: qué se dijo del bache (no encontrado, ya resuelto…). */
+  etiqueta: string | null;
+  /** Para las cargas sueltas: si la informó la empresa o la cargó el municipio. */
+  deEmpresa: boolean;
+  /** Frase ya cerrada, para los movimientos que no se agrupan (órdenes). */
+  fija: string | null;
+}
+
+/**
+ * DE LA AUDITORÍA A UN MOVIMIENTO. El feed viejo mostraba "CALLERI E HIJOS
+ * S.A.: insert en orden_items", que es lo que dice la base, no lo que pasó.
+ * Acá cada movimiento de TRABAJO se interpreta —quién, qué, en qué orden,
+ * dónde, cuánto— y lo que no es trabajo (entrar al sistema, un aviso) o no
+ * tiene una lectura clara devuelve null y no aparece.
+ *
+ * El actor empresa se muestra por su nombre corto, que es el mismo que pinta
+ * el mapa. Los actores del municipio, por su nombre de perfil.
+ */
+function interpretar(f: Fila): Movimiento | null {
+  const entidad = String(f.entidad);
+  const accion = String(f.accion);
+  const rol = texto(f.actor_rol);
+  const actorCrudo = texto(f.actor_nombre) ?? "Alguien";
+  const actor = rol === "empresa" ? corto(actorCrudo) : actorCrudo;
+  const empresaOrden = texto(f.orden_empresa);
+  const empresa = rol === "empresa" ? actor : empresaOrden;
+  const nro = texto(f.orden_numero) ?? texto(f.numero_diff);
+  const ordenId = num(f.orden_id);
+  const antes = texto(f.estado_antes);
+  const despues = texto(f.estado_despues);
+  const lugar = texto(f.lugar) ?? texto(f.direccion_diff);
+  const m2 = num(f.m2) ?? 0;
+
+  const mov = (tipo: Movimiento["tipo"], extra: Partial<Movimiento> = {}): Movimiento => ({
+    id: String(f.id),
+    en: String(f.en),
+    tipo,
+    clave: `${tipo}|${actor}|${ordenId ?? ""}|${extra.etiqueta ?? ""}`,
+    actor,
+    empresa,
+    empresaOrden,
+    nro,
+    ordenId,
+    lugares: lugar ? [lugar] : [],
+    m2: m2 > 0 ? m2 : 0,
+    n: 1,
+    lon: num(f.lon),
+    lat: num(f.lat),
+    etiqueta: null,
+    deEmpresa: rol === "empresa",
+    fija: null,
+    ...extra,
+  });
+  /* Las órdenes no se agrupan: cada una es una noticia. La clave lleva el id. */
+  const deOrden = (frase: string) => mov("orden", { fija: frase, clave: `orden|${String(f.id)}` });
+
+  if (entidad === "orden_items") {
+    if (accion === "insert") {
+      if (despues === "propuesto") return mov("propuesto");
+      return mov("orden", { fija: `${actor} agregó un bache a ${nro ?? "una orden"}`, clave: `agrego|${actor}|${ordenId ?? ""}` });
+    }
+    if (accion === "update") {
+      if (antes === "propuesto" && rol !== "empresa" && (despues === "pendiente" || despues === "hecho")) return mov("validado");
+      if (antes === "propuesto" && despues === "rechazado") return mov("descartado", { etiqueta: "rechazado" });
+      if (despues === "hecho" && antes !== "hecho") return mov("hecho");
+      if (despues && despues !== antes && ETIQUETA_DESCARTE[despues]) return mov("descartado", { etiqueta: ETIQUETA_DESCARTE[despues]! });
+      return null;
+    }
+    return null;
+  }
+
+  if (entidad === "orden_item" && accion === "medidas_corregidas") return mov("corregido");
+
+  if (entidad === "ordenes_trabajo" && accion === "update") {
+    const a = empresaOrden ? ` a ${empresaOrden}` : "";
+    const de = empresaOrden ? ` de ${empresaOrden}` : "";
+    if (f.cierre_manual === true) return deOrden(`${actor} cerró ${nro ?? "una orden"}`);
+    if (f.reasignada === true) return deOrden(`${actor} pasó ${nro ?? "una orden"}${a}`);
+    if (despues !== antes) {
+      if (despues === "emitida") return deOrden(`${actor} emitió ${nro ?? "una orden"}${a}`);
+      if (despues === "en_ejecucion") return deOrden(`${nro ?? "Una orden"}${de} entró en ejecución`);
+      if (despues === "completada") return deOrden(`Se completó ${nro ?? "una orden"}${de}`);
+      if (despues === "anulada") return deOrden(`${actor} anuló ${nro ?? "una orden"}`);
+    }
+    return null;
+  }
+
+  if (entidad === "intervenciones") {
+    if (accion === "insert" && f.en_orden !== true) return mov("carga");
+    if (accion === "update" && despues === "finalizada" && antes && antes !== "finalizada") {
+      return mov("hecho", { clave: `obra|${actor}` });
+    }
+    return null;
+  }
+
+  if (entidad === "incidentes" && accion === "update" && despues === "verificado" && antes !== "verificado") {
+    return mov("verificado");
+  }
+
+  if (entidad === "demandas" && f.cierre_vecino === true) return mov("vecino");
+
+  return null;
+}
+
+/** Hasta cuánto tiempo entre dos movimientos iguales para contarlos juntos. */
+const VENTANA_AGRUPAR_MS = 45 * 60_000;
+
+/**
+ * JUNTAR LO REPETIDO. Una empresa que carga siete propuestos en veinte minutos
+ * es UNA noticia —"Calleri propuso 7 baches en OT-2026-0006"—, no siete
+ * líneas idénticas que tapan todo lo demás. Se agrupan los consecutivos con la
+ * misma clave (mismo tipo, mismo actor, misma orden) a menos de 45 minutos.
+ */
+function agrupar(movs: Movimiento[]): Movimiento[] {
+  const salida: Movimiento[] = [];
+  for (const m of movs) {
+    const ultimo = salida[salida.length - 1];
+    if (ultimo && ultimo.clave === m.clave && Date.parse(ultimo.en) - Date.parse(m.en) < VENTANA_AGRUPAR_MS) {
+      ultimo.n += m.n;
+      ultimo.m2 += m.m2;
+      ultimo.lugares.push(...m.lugares);
+      continue;
+    }
+    salida.push({ ...m, lugares: [...m.lugares] });
+  }
+  return salida;
+}
+
+const plural = (n: number, uno: string, varios: string) => (n === 1 ? uno : `${numero(n)} ${varios}`);
+
+/** La frase final de un movimiento (o de un grupo), con la orden y los m² si los hay. */
+function redactar(m: Movimiento): EventoAvance {
+  const enOrden = m.nro ? ` en ${m.nro}` : "";
+  const conM2 = m.m2 > 0 ? ` · ${numero(Math.round(m.m2 * 10) / 10)} m²` : "";
+  const por = m.empresaOrden ? ` por ${m.empresaOrden}` : "";
+  let frase: string;
+  switch (m.tipo) {
+    case "propuesto":
+      frase = `${m.actor} propuso ${plural(m.n, "un bache", "baches")}${enOrden}${conM2}`;
+      break;
+    case "hecho":
+      frase =
+        m.clave.startsWith("obra|")
+          ? `${m.actor} dio por terminada ${plural(m.n, "una obra", "obras")}${conM2}`
+          : `${m.actor} reportó ${plural(m.n, "un bache hecho", "baches hechos")}${enOrden}${conM2}`;
+      break;
+    case "validado":
+      frase = `${m.actor} validó ${plural(m.n, "un bache propuesto", "baches propuestos")}${por}${enOrden}`;
+      break;
+    case "descartado":
+      frase =
+        m.etiqueta === "rechazado"
+          ? `${m.actor} rechazó ${plural(m.n, "un bache propuesto", "baches propuestos")}${enOrden}`
+          : `${m.actor} marcó ${plural(m.n, "un bache", "baches")} como ${m.etiqueta ?? "no ejecutable"}${enOrden}`;
+      break;
+    case "corregido":
+      frase = `${m.actor} corrigió las medidas de ${plural(m.n, "un bache", "baches")}${enOrden}`;
+      break;
+    case "carga":
+      frase = m.deEmpresa
+        ? `${m.actor} informó ${plural(m.n, "un trabajo", "trabajos")} sin orden${conM2}`
+        : `${m.actor} cargó ${plural(m.n, "un trabajo terminado", "trabajos terminados")}${conM2}`;
+      break;
+    case "verificado":
+      frase = `${m.actor} verificó ${plural(m.n, "una reparación", "reparaciones")}`;
+      break;
+    case "vecino":
+      frase = `${m.actor} le avisó a ${plural(m.n, "un vecino", "vecinos")} que su pedido quedó resuelto`;
+      break;
+    default:
+      frase = m.fija ?? `${m.actor} actualizó una orden`;
+  }
+  const [primero, ...resto] = m.lugares;
+  return {
+    id: m.id,
+    en: m.en,
+    tipo: m.tipo,
+    frase,
+    empresa: m.empresa,
+    lugar: primero ? (resto.length > 0 ? `${primero} y ${numero(resto.length)} más` : primero) : null,
+    lon: m.lon,
+    lat: m.lat,
+    ordenId: m.ordenId,
+  };
+}
+
 export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<DatosAvance> {
   const desde = desdeDe(dias);
   const enVentana = desde ? sql`b.fecha >= ${desde}` : sql`true`;
   const diaLocal = sql`(b.fecha at time zone ${TZ})::date`;
+  // El feed nombra a quien hizo cada cosa: misma regla que /actividad.
+  const conFeed = ["admin", "planificacion"].includes(sesion.rol_cimba);
 
   /**
-   * Las ocho consultas se despachan JUNTAS: postgres.js las encadena por la
-   * misma conexión (pipelining) y se ahorra siete idas y vueltas al servidor.
-   * En serie tardaban ~2,8 s desde la oficina; es la portada, y la portada no
-   * puede hacer esperar tres segundos.
+   * Las consultas se despachan JUNTAS: postgres.js las encadena por la misma
+   * conexión (pipelining) y se ahorra las idas y vueltas al servidor. En serie
+   * tardaban ~2,8 s desde la oficina; es la portada, y la portada no puede
+   * hacer esperar tres segundos.
    */
   return conRls(claims(sesion), async (tx) => {
     const qHechos = tx.execute(sql`
@@ -226,7 +451,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
     /**
      * Las cifras de lo hecho, todas en una pasada sobre la misma base. `ref`
      * va a la izquierda del join para que, aun con la base vacía, salga una
-     * fila con ceros y no ninguna.
+     * fila con ceros y no ninguna. "Otros" no cuenta como empresa.
      */
     const qCifras = tx.execute(sql`
       with b as (${BASE}),
@@ -235,7 +460,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         count(b.id) filter (where ${enVentana})::int as v_n,
         round(coalesce(sum(b.superficie_m2) filter (where ${enVentana}), 0))::int as v_m2,
         round(coalesce(sum(b.volumen_m3) filter (where ${enVentana}), 0) * 2.4)::int as v_t,
-        count(distinct b.slug) filter (where ${enVentana})::int as v_empresas,
+        count(distinct b.slug) filter (where ${enVentana} and b.slug <> 'otros')::int as v_empresas,
 
         count(b.id) filter (where ${diaLocal} = ref.hoy)::int as h_n,
         round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy), 0))::int as h_m2,
@@ -306,16 +531,114 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       order by 1
     `);
 
-    const [hechos, enCurso, pendientes, ordenes, filasCifras, filasResto, porEmpresa, serie] = (await Promise.all([
-      qHechos,
-      qEnCurso,
-      qPendientes,
-      qOrdenes,
-      qCifras,
-      qResto,
-      qPorEmpresa,
-      qSerie,
-    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+    /**
+     * PASANDO AHORA, materia prima: los movimientos de la última semana sobre
+     * las tablas de TRABAJO, hechos por una persona (lo automático entra
+     * aparte, agregado). Se traen con la orden, la empresa y el LUGAR del
+     * registro vivo, para que cada línea del feed pueda ir al mapa. La frase
+     * se arma en fraseDe(); lo que no tiene lectura clara se descarta ahí, por
+     * eso se piden más filas de las que se muestran.
+     */
+    const qFeed = conFeed
+      ? tx.execute(sql`
+      select a.id, a.entidad, a.entidad_id, a.accion,
+             to_char(a.ocurrido_en at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as en,
+             p.nombre as actor_nombre, p.rol::text as actor_rol,
+             a.diff->'antes'->>'estado' as estado_antes,
+             coalesce(a.diff->'despues'->>'estado', case when a.accion = 'insert' then a.diff->>'estado' end) as estado_despues,
+             coalesce(a.diff->>'direccion', a.diff->'despues'->>'direccion') as direccion_diff,
+             nullif(coalesce(a.diff->>'superficie_m2', a.diff->'despues'->>'superficie_m2'), '')::numeric as m2,
+             coalesce(a.diff->>'numero', a.diff->'despues'->>'numero') as numero_diff,
+             (a.entidad = 'ordenes_trabajo'
+               and (a.diff->'despues'->'metadata' ? 'cierre_manual')
+               and not coalesce(a.diff->'antes'->'metadata' ? 'cierre_manual', false)) as cierre_manual,
+             (a.entidad = 'ordenes_trabajo'
+               and coalesce(jsonb_array_length(a.diff->'despues'->'metadata'->'reasignaciones'), 0)
+                 > coalesce(jsonb_array_length(a.diff->'antes'->'metadata'->'reasignaciones'), 0)) as reasignada,
+             (a.entidad = 'demandas'
+               and (a.diff->'despues'->'metadata' ? 'cierre')
+               and not coalesce(a.diff->'antes'->'metadata' ? 'cierre', false)) as cierre_vecino,
+             (a.entidad = 'intervenciones'
+               and exists (select 1 from orden_items x where x.intervencion_id = a.entidad_id)) as en_orden,
+             ot.id as orden_id, ot.numero as orden_numero,
+             initcap(split_part(e.nombre, ' ', 1)) as orden_empresa,
+             coalesce(oi.direccion, i_it.direccion, i_iv.direccion, inc.direccion,
+                      d.direccion_normalizada, d.direccion_texto) as lugar,
+             st_x(st_centroid(coalesce(oi.geom, iv.geom_ejecucion, inc.geom, d.geom)))::float as lon,
+             st_y(st_centroid(coalesce(oi.geom, iv.geom_ejecucion, inc.geom, d.geom)))::float as lat
+      from auditoria a
+      left join perfiles p on p.id = a.actor
+      left join orden_items oi on a.entidad in ('orden_items', 'orden_item') and oi.id = a.entidad_id
+      left join incidentes i_it on i_it.id = oi.incidente_id
+      left join intervenciones iv on a.entidad = 'intervenciones' and iv.id = a.entidad_id
+      left join incidentes i_iv on i_iv.id = iv.incidente_id
+      left join incidentes inc on a.entidad = 'incidentes' and inc.id = a.entidad_id
+      left join demandas d on a.entidad = 'demandas' and d.id = a.entidad_id
+      left join ordenes_trabajo ot
+        on ot.id = coalesce(oi.orden_id, case when a.entidad = 'ordenes_trabajo' then a.entidad_id end)
+      left join empresas e on e.id = ot.empresa_id
+      where a.ocurrido_en > now() - interval '7 days'
+        and a.actor is not null
+        and a.entidad in ('orden_items', 'orden_item', 'ordenes_trabajo', 'intervenciones', 'incidentes', 'demandas')
+      order by a.ocurrido_en desc
+      limit 150
+    `)
+      : Promise.resolve([] as unknown[]);
+
+    /**
+     * Lo automático, agregado: las tandas de trabajos que entran por la
+     * sincronización con la app de las empresas o por un archivo. Una tanda
+     * de 231 baches es una noticia de avance; 231 líneas no lo son.
+     */
+    const qSync = conFeed
+      ? tx.execute(sql`
+      select to_char(max(a.ocurrido_en) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as en,
+             count(*)::int as n,
+             mode() within group (order by initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))) as empresa
+      from auditoria a
+      left join intervenciones iv on iv.id = a.entidad_id
+      where a.entidad = 'intervenciones' and a.accion = 'insert' and a.actor is null
+        and a.ocurrido_en > now() - interval '7 days'
+      group by date_trunc('hour', a.ocurrido_en)
+      order by 1 desc
+      limit 5
+    `)
+      : Promise.resolve([] as unknown[]);
+
+    /* Las últimas fotos del "después", con su lugar: la prueba, y un atajo al mapa. */
+    const qFotos = tx.execute(sql`
+      select fo.url_externa, fo.storage_path, i.direccion, iv.id as intervencion_id,
+             nullif(coalesce(initcap(split_part(e.nombre, ' ', 1)),
+                             initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))), '') as empresa,
+             st_x(st_centroid(iv.geom_ejecucion))::float as lon,
+             st_y(st_centroid(iv.geom_ejecucion))::float as lat
+      from fotografias fo
+      join intervenciones iv on iv.id = fo.intervencion_id
+      left join incidentes i on i.id = iv.incidente_id
+      left join lateral (
+        select ot.empresa_id from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+        where oi.intervencion_id = iv.id limit 1
+      ) it on true
+      left join empresas e on e.id = it.empresa_id
+      where fo.momento = 'despues'
+      order by fo.tomada_en desc nulls last
+      limit 6
+    `);
+
+    const [hechos, enCurso, pendientes, ordenes, filasCifras, filasResto, porEmpresa, serie, feedCrudo, sync, fotos] =
+      (await Promise.all([
+        qHechos,
+        qEnCurso,
+        qPendientes,
+        qOrdenes,
+        qCifras,
+        qResto,
+        qPorEmpresa,
+        qSerie,
+        qFeed,
+        qSync,
+        qFotos,
+      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
     const cifras = filasCifras[0] ?? {};
     const resto = filasResto[0] ?? {};
 
@@ -331,6 +654,25 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       hechos: Number(o.hechos),
       ultimo: texto(o.ultimo),
     }));
+
+    const feed: EventoAvance[] = [
+      ...agrupar(feedCrudo.map(interpretar).filter((m): m is Movimiento => m != null)).map(redactar),
+      ...sync.map(
+        (s, i): EventoAvance => ({
+          id: `sync-${i}`,
+          en: String(s.en),
+          tipo: "sync",
+          frase: `Entraron ${numero(Number(s.n))} trabajos ${texto(s.empresa) ? `de ${String(s.empresa)}` : "de las planillas"} por sincronización`,
+          empresa: texto(s.empresa),
+          lugar: null,
+          lon: null,
+          lat: null,
+          ordenId: null,
+        }),
+      ),
+    ]
+      .sort((a, b) => (a.en < b.en ? 1 : a.en > b.en ? -1 : 0))
+      .slice(0, 12);
 
     return {
       generadoEn: new Date().toISOString(),
@@ -351,11 +693,11 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
             fecha: String(f.fecha),
             dia: Number(f.dia),
             empresa: String(f.empresa),
-            m2: f.m2 == null ? null : Number(f.m2),
-            toneladas: f.toneladas == null ? null : Number(f.toneladas),
+            m2: num(f.m2),
+            toneladas: num(f.toneladas),
             fuente: f.fuente === "orden" ? "orden" : "archivo",
             orden: texto(f.orden),
-            ordenId: f.orden_id == null ? null : Number(f.orden_id),
+            ordenId: num(f.orden_id),
             direccion: texto(f.direccion),
             foto: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }),
             tipo: texto(f.tipo),
@@ -371,7 +713,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
           properties: {
             id: Number(f.id),
             empresa: String(f.empresa),
-            m2: f.m2 == null ? null : Number(f.m2),
+            m2: num(f.m2),
             tipo: texto(f.tipo),
             iniciada: texto(f.iniciada),
             direccion: texto(f.direccion),
@@ -430,6 +772,19 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         }),
       ),
       serie: completarSerie(serie, hoy),
+      feed,
+      fotos: fotos
+        .map(
+          (f): FotoAvance => ({
+            url: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }) ?? "",
+            direccion: texto(f.direccion),
+            empresa: texto(f.empresa),
+            lon: num(f.lon),
+            lat: num(f.lat),
+            intervencionId: num(f.intervencion_id),
+          }),
+        )
+        .filter((f) => f.url !== ""),
     };
   });
 }

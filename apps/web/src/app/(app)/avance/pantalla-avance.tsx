@@ -3,7 +3,7 @@
 import { Play, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RolUsuario } from "@cimba/domain";
-import { type DatosAvance, type DiasVentana, type Vivo, VENTANAS, fechaDeDia } from "@/lib/avance-tipos";
+import { type DatosAvance, type DiasVentana, type Foco, VENTANAS, fechaDeDia } from "@/lib/avance-tipos";
 import { numero } from "@/lib/formato";
 import { MapaAvance } from "./mapa-avance";
 import { RailAvance } from "./rail-avance";
@@ -17,13 +17,18 @@ import { RailAvance } from "./rail-avance";
  *  - LO HECHO es la protagonista: cada trabajo terminado, un círculo del color
  *    de su empresa y del tamaño de sus m².
  *  - LO QUE SE HACE AHORA es el pulso: las órdenes activas dibujadas por su
- *    área real, y lo cargado en las últimas 48 horas latiendo.
+ *    área real, las obras en curso como anillos, y lo cargado en las últimas
+ *    48 horas latiendo.
  *  - LO QUE FALTA es el fondo: los pedidos que esperan, en gris, siempre
  *    visibles. Se pueden apagar, pero abren prendidos.
  *
  * La ventana por defecto es EL MES, no el día: hay días sin carga y una
  * pantalla que abriera en "Hoy" mostraría una ciudad vacía la mitad de las
  * mañanas, que es lo contrario de lo que tiene que decir.
+ *
+ * El mapa y la columna se hablan: pasar el cursor por una empresa o una orden
+ * en la columna la resalta en el mapa; tocar una foto o una línea del feed
+ * vuela al lugar; tocar una empresa la aísla y la encuadra.
  *
  * "Reproducir" pinta la ciudad día por día desde el principio de la ventana
  * hasta hoy: nueve segundos que explican el trabajo de un mes sin hablar. Es
@@ -46,12 +51,14 @@ export function PantallaAvance({
   const diasRef = useRef(dias);
   const [cargando, setCargando] = useState(false);
   const [empresaSel, setEmpresaSel] = useState<string | null>(null);
+  const [resaltada, setResaltada] = useState<string | null>(null);
+  const [ordenResaltada, setOrdenResaltada] = useState<number | null>(null);
+  const [foco, setFoco] = useState<Foco | null>(null);
   const [verPendientes, setVerPendientes] = useState(true);
   const [leyendaAbierta, setLeyendaAbierta] = useState(false);
   /** El día hasta el que se muestra mientras se reproduce; null = todo. */
   const [cursor, setCursor] = useState<number | null>(null);
   const [reproduciendo, setReproduciendo] = useState(false);
-  const [vivo, setVivo] = useState<Vivo | null>(null);
 
   const cargar = useCallback(async (d: DiasVentana, silencioso: boolean) => {
     if (!silencioso) setCargando(true);
@@ -90,20 +97,10 @@ export function PantallaAvance({
     void cargar(d, false);
   };
 
-  /* Cada minuto: los datos con la ventana puesta, y lo vivo (fotos + feed). */
+  /* Cada minuto, los datos con la ventana puesta. Todo lo vivo (feed, fotos)
+     viene en el mismo paquete: una sola fuente, un solo refresco. */
   useEffect(() => {
-    const cargarVivo = () =>
-      fetch("/api/tv", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: Partial<Vivo> | null) => {
-          if (j) setVivo({ fotos: j.fotos ?? [], feed: j.feed ?? [] });
-        })
-        .catch(() => {});
-    cargarVivo();
-    const id = window.setInterval(() => {
-      void cargar(diasRef.current, true);
-      cargarVivo();
-    }, 60_000);
+    const id = window.setInterval(() => void cargar(diasRef.current, true), 60_000);
     return () => window.clearInterval(id);
   }, [cargar]);
 
@@ -162,6 +159,10 @@ export function PantallaAvance({
   }, [cursor, datos, empresaSel]);
 
   const alternarEmpresa = useCallback((e: string) => setEmpresaSel((s) => (s === e ? null : e)), []);
+  const enfocar = useCallback(
+    (lugar: { lon: number; lat: number; id: number | null }) => setFoco({ ...lugar, clave: Date.now() }),
+    [],
+  );
 
   const sinTrabajo = datos.hechos.features.length === 0;
 
@@ -172,8 +173,11 @@ export function PantallaAvance({
         <MapaAvance
           datos={datos}
           empresaSel={empresaSel}
+          resaltada={resaltada}
+          ordenResaltada={ordenResaltada}
           cursor={cursor}
           verPendientes={verPendientes}
+          foco={foco}
           pantalla={pantalla}
         />
 
@@ -283,6 +287,7 @@ export function PantallaAvance({
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-texto-3" aria-hidden="true" />
               Gris: pedido que espera ({numero(datos.cifras.pendientes.pedidos)})
             </label>
+            <p className="mt-1 text-texto-3">Pasá el cursor para ver qué es cada cosa; tocá para abrir la ficha.</p>
           </div>
         </div>
       </div>
@@ -293,7 +298,9 @@ export function PantallaAvance({
         dias={dias}
         empresaSel={empresaSel}
         alElegirEmpresa={alternarEmpresa}
-        vivo={vivo}
+        alResaltarEmpresa={setResaltada}
+        alResaltarOrden={setOrdenResaltada}
+        alEnfocar={enfocar}
         pantalla={pantalla}
         rol={rol}
       />

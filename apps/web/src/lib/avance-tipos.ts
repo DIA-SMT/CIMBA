@@ -129,22 +129,59 @@ export interface DatosAvance {
   };
   porEmpresa: FilaEmpresa[];
   serie: PuntoSerie[];
+  /** Los últimos movimientos de trabajo, redactados. Vacío para los roles que no ven el feed. */
+  feed: EventoAvance[];
+  /** Las últimas fotos del "después". */
+  fotos: FotoAvance[];
 }
 
-/** Lo vivo que llega de /api/tv: las últimas fotos y los últimos movimientos. */
-export interface Vivo {
-  fotos: Array<{ url: string; direccion: string | null }>;
-  feed: Array<{
-    en: string;
-    actor: string;
-    entidad: string;
-    entidadId: number;
-    accion: string;
-    estadoDespues: string | null;
-    numero: string | null;
-    marca: string | null;
-    m2: number | null;
-  }>;
+/**
+ * Un movimiento del feed "Pasando ahora", ya redactado en el servidor: el
+ * cliente no interpreta tablas ni acciones, muestra una frase. Trae además lo
+ * necesario para ir al lugar en el mapa con un toque.
+ */
+export interface EventoAvance {
+  id: string;
+  /** Cuándo pasó, ISO (UTC). */
+  en: string;
+  tipo:
+    | "hecho"
+    | "propuesto"
+    | "validado"
+    | "descartado"
+    | "orden"
+    | "verificado"
+    | "vecino"
+    | "carga"
+    | "corregido"
+    | "sync";
+  frase: string;
+  /** Empresa involucrada (nombre corto), para el chip de color. */
+  empresa: string | null;
+  lugar: string | null;
+  lon: number | null;
+  lat: number | null;
+  ordenId: number | null;
+}
+
+/** Una de las últimas fotos de trabajo terminado, con su lugar para ir al mapa. */
+export interface FotoAvance {
+  url: string;
+  direccion: string | null;
+  empresa: string | null;
+  lon: number | null;
+  lat: number | null;
+  intervencionId: number | null;
+}
+
+/** Un lugar al que el mapa tiene que ir (desde una foto o un movimiento del feed). */
+export interface Foco {
+  lon: number;
+  lat: number;
+  /** La intervención, si la hay: el mapa abre su ficha cuando está en la ventana. */
+  id: number | null;
+  /** Cambia en cada pedido para que ir dos veces al mismo lugar también vuele. */
+  clave: number;
 }
 
 const DIA_CERO = Date.UTC(2026, 0, 1, 12);
