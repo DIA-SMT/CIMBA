@@ -65,6 +65,27 @@ export async function enviarEmail(datos: {
 }
 
 /**
+ * Telegram contesta con un código y una descripción en inglés. Los cuatro
+ * errores que se dan en la práctica tienen una causa concreta y un arreglo de
+ * una línea, así que se traducen: quien lee el tablero no tiene por qué saber
+ * qué significa un 404 de una API. El código se deja al final, para nosotros.
+ *
+ * Los dos primeros cuestan una tarde de diagnóstico si no están escritos: un
+ * 404 es el token mal copiado (el de BotFather viene con los dígitos y los dos
+ * puntos adelante), y un 403 es que el destinatario nunca le escribió al bot
+ * — Telegram no deja que un bot hable primero.
+ */
+function explicarTelegram(estado: number, cuerpo: string): string {
+  const descripcion = /"description"\s*:\s*"([^"]*)"/.exec(cuerpo)?.[1] ?? "";
+  if (estado === 404) return "el token del bot no es válido o está incompleto";
+  if (estado === 401) return "Telegram rechazó el token del bot";
+  if (estado === 403) return "esa persona todavía no le escribió al bot: tiene que abrirlo y apretar Start";
+  if (descripcion.includes("chat not found")) return "ese id de chat no existe";
+  if (estado === 429) return "demasiados mensajes seguidos: Telegram está frenando los envíos";
+  return descripcion || "error desconocido";
+}
+
+/**
  * Un mensaje a un chat de Telegram. Mismo criterio que enviarEmail: un POST
  * con fetch, sin SDK, y nunca lanza — devuelve el motivo para que el
  * despachador lo anote en `saltados`.
@@ -96,7 +117,7 @@ export async function enviarTelegram(datos: {
     });
     if (!r.ok) {
       const detalle = await r.text().catch(() => "");
-      return { ok: false, motivo: `Telegram ${r.status}: ${detalle.slice(0, 120)}` };
+      return { ok: false, motivo: `${explicarTelegram(r.status, detalle)} (Telegram ${r.status})` };
     }
     return { ok: true };
   } catch (e) {
