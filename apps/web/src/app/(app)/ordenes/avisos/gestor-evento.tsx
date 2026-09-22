@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Mail, Plus, Trash2 } from "lucide-react";
+import { Bell, Mail, Plus, Send, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { agregarDestinatario, alternarDestinatario, quitarDestinatario } from "@/lib/acciones-avisos";
@@ -17,17 +17,25 @@ export function GestorEvento({
   destinatarios,
   puedeGestionar,
   emailActivo,
+  telegramActivo,
 }: {
   evento: EventoAviso;
   destinatarios: Destinatario[];
   puedeGestionar: boolean;
   emailActivo: boolean;
+  telegramActivo: boolean;
 }) {
   return (
     <div>
       <ul className="space-y-1.5">
         {destinatarios.map((d) => (
-          <FilaDestinatario key={d.id} destinatario={d} puedeGestionar={puedeGestionar} emailActivo={emailActivo} />
+          <FilaDestinatario
+            key={d.id}
+            destinatario={d}
+            puedeGestionar={puedeGestionar}
+            emailActivo={emailActivo}
+            telegramActivo={telegramActivo}
+          />
         ))}
         {destinatarios.length === 0 && (
           <li className="rounded-lg border border-dashed border-borde-2 px-3 py-2.5 text-xs text-texto-3">
@@ -35,7 +43,9 @@ export function GestorEvento({
           </li>
         )}
       </ul>
-      {puedeGestionar && <FormAgregar evento={evento} emailActivo={emailActivo} />}
+      {puedeGestionar && (
+        <FormAgregar evento={evento} emailActivo={emailActivo} telegramActivo={telegramActivo} />
+      )}
     </div>
   );
 }
@@ -44,10 +54,12 @@ function FilaDestinatario({
   destinatario: d,
   puedeGestionar,
   emailActivo,
+  telegramActivo,
 }: {
   destinatario: Destinatario;
   puedeGestionar: boolean;
   emailActivo: boolean;
+  telegramActivo: boolean;
 }) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
@@ -87,6 +99,8 @@ function FilaDestinatario({
       <div className="flex items-center gap-2.5">
         {d.canal === "push" ? (
           <Bell size={14} className="shrink-0 text-celeste" aria-label="Push" />
+        ) : d.canal === "telegram" ? (
+          <Send size={14} className="shrink-0 text-celeste" aria-label="Telegram" />
         ) : (
           <Mail size={14} className="shrink-0 text-azul" aria-label="Email" />
         )}
@@ -99,7 +113,11 @@ function FilaDestinatario({
               ? d.destino === "empresa"
                 ? "push a los teléfonos de la contratista dueña de la orden"
                 : `push a todo el personal con rol ${d.destino}`
-              : (d.etiqueta ?? "email") + (!emailActivo ? " — canal apagado: hoy se saltea" : "")}
+              : d.canal === "telegram"
+                ? (d.etiqueta ?? "Telegram") +
+                  " — por Telegram" +
+                  (!telegramActivo ? ", canal apagado: hoy se saltea" : "")
+                : (d.etiqueta ?? "email") + (!emailActivo ? " — canal apagado: hoy se saltea" : "")}
           </p>
         </div>
 
@@ -164,12 +182,21 @@ function FilaDestinatario({
   );
 }
 
-function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo: boolean }) {
+function FormAgregar({
+  evento,
+  emailActivo,
+  telegramActivo,
+}: {
+  evento: EventoAviso;
+  emailActivo: boolean;
+  telegramActivo: boolean;
+}) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
-  const [canal, setCanal] = useState<"push" | "email">("push");
+  const [canal, setCanal] = useState<"push" | "email" | "telegram">("push");
   const [rol, setRol] = useState<string>(ROLES_PUSH[0]);
   const [email, setEmail] = useState("");
+  const [chat, setChat] = useState("");
   const [etiqueta, setEtiqueta] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -177,9 +204,13 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
   const agregar = () => {
     setError(null);
     setAviso(null);
-    const destino = canal === "push" ? rol : email.trim();
+    const destino = canal === "push" ? rol : canal === "telegram" ? chat.trim() : email.trim();
     if (canal === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(destino)) {
       setError("Escribí un email válido (nombre@dominio).");
+      return;
+    }
+    if (canal === "telegram" && !/^-?\d{1,20}$/.test(destino)) {
+      setError("El id de chat es un número. El de un grupo empieza con un guion.");
       return;
     }
     startTransition(async () => {
@@ -188,12 +219,16 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
           evento,
           canal,
           destino,
-          etiqueta: canal === "email" && etiqueta.trim() ? etiqueta.trim() : undefined,
+          etiqueta: canal !== "push" && etiqueta.trim() ? etiqueta.trim() : undefined,
         });
         setEmail("");
+        setChat("");
         setEtiqueta("");
         if (canal === "email" && !emailActivo) {
           setAviso("Quedó guardado, pero con el canal de email apagado no va a recibir nada por ahora.");
+        }
+        if (canal === "telegram" && !telegramActivo) {
+          setAviso("Quedó guardado, pero el bot de Telegram todavía no está configurado: por ahora no le va a llegar.");
         }
         router.refresh();
       } catch (e) {
@@ -231,6 +266,16 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
           />
           <Mail size={12} className="text-azul" /> Email
         </label>
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input
+            type="radio"
+            name={`canal-${evento}`}
+            checked={canal === "telegram"}
+            onChange={() => setCanal("telegram")}
+            className="accent-[var(--color-azul)]"
+          />
+          <Send size={12} className="text-celeste" /> Telegram
+        </label>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -249,15 +294,28 @@ function FormAgregar({ evento, emailActivo }: { evento: EventoAviso; emailActivo
           </select>
         ) : (
           <>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="direccion@smt.gob.ar"
-              aria-label="Email destinatario"
-              className="min-w-0 flex-1 rounded-lg border border-borde-2 bg-panel-2 px-2.5 py-1.5 text-xs"
-            />
+            {canal === "telegram" ? (
+              <input
+                type="text"
+                required
+                inputMode="numeric"
+                value={chat}
+                onChange={(e) => setChat(e.target.value)}
+                placeholder="Id del chat, ej.: 123456789"
+                aria-label="Id del chat de Telegram"
+                className="min-w-0 flex-1 rounded-lg border border-borde-2 bg-panel-2 px-2.5 py-1.5 text-xs"
+              />
+            ) : (
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="direccion@smt.gob.ar"
+                aria-label="Email destinatario"
+                className="min-w-0 flex-1 rounded-lg border border-borde-2 bg-panel-2 px-2.5 py-1.5 text-xs"
+              />
+            )}
             <input
               type="text"
               value={etiqueta}

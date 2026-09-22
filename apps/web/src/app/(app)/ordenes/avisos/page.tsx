@@ -21,9 +21,13 @@ export default async function PaginaAvisos() {
 
   // Server-side, y solo el booleano: la key jamás baja al cliente.
   const emailActivo = Boolean(process.env.RESEND_API_KEY);
+  const telegramActivo = Boolean(process.env.CIMBA_TELEGRAM_BOT_TOKEN);
+
+  const canalEncendido = (canal: string) =>
+    canal === "push" || (canal === "email" && emailActivo) || (canal === "telegram" && telegramActivo);
 
   const hayAvisoGeneralActivo = destinatarios.some(
-    (d) => d.evento === "aviso_general" && d.activo && (d.canal === "push" || emailActivo),
+    (d) => d.evento === "aviso_general" && d.activo && canalEncendido(d.canal),
   );
 
   return (
@@ -59,6 +63,13 @@ export default async function PaginaAvisos() {
         </div>
       )}
 
+      {!telegramActivo && (
+        <div className="mb-5 rounded-lg border border-amarillo/50 bg-amarillo/10 px-4 py-3 text-sm text-amarillo">
+          <b>El canal de Telegram está apagado: falta CIMBA_TELEGRAM_BOT_TOKEN.</b> Los chats que
+          configures quedan guardados y arrancan solos cuando el canal se encienda.
+        </div>
+      )}
+
       {!puedeGestionar && (
         <Panel className="mb-5 px-4 py-3 text-sm text-texto-2">
           Estás viendo la configuración en modo lectura: la gestionan Planificación y Administración.
@@ -76,6 +87,7 @@ export default async function PaginaAvisos() {
               destinatarios={destinatarios.filter((d) => d.evento === evento)}
               puedeGestionar={puedeGestionar}
               emailActivo={emailActivo}
+              telegramActivo={telegramActivo}
             />
           </Panel>
         ))}
