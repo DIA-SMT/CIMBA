@@ -1,4 +1,4 @@
-import { conRls, sql } from "@cimba/db";
+import { conRls, getDb, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
 import { urlFoto } from "./fotos";
 import { numero } from "./formato";
@@ -11,13 +11,17 @@ import {
   type FilaEmpresa,
   type FotoAvance,
   type HechoProps,
+  type ListasTerritorios,
   type OrdenActiva,
   type PendienteProps,
   type PuntoSerie,
+  type Territorio,
+  type TerritorioRef,
+  type TopBarrio,
 } from "./avance-tipos";
 
-export { VENTANAS, VENTANA_DEFAULT, ventanaValida } from "./avance-tipos";
-export type { DatosAvance, DiasVentana } from "./avance-tipos";
+export { VENTANAS, VENTANA_DEFAULT, leerCamara, leerTerritorio, ventanaValida } from "./avance-tipos";
+export type { DatosAvance, DiasVentana, TerritorioRef } from "./avance-tipos";
 
 /**
  * AVANCE: la ciudad contada desde lo hecho.
@@ -33,16 +37,37 @@ export type { DatosAvance, DiasVentana } from "./avance-tipos";
  * nueva: "m²" son los m² de intervenciones finalizadas, igual que en los KPI
  * del mapa; "pendientes" son los pedidos que cuenta la Brecha. Si dos
  * pantallas dicen cosas distintas es un bug, no una interpretación.
+ *
+ * Se puede RECORTAR a un distrito o a un barrio: todo —puntos, cifras,
+ * ranking, ritmo— pasa a ser del recorte. Y tiene una versión PÚBLICA, sin
+ * nombres de personas ni direcciones de pedidos, para mostrar afuera.
  */
 
 const TZ = "America/Argentina/Tucuman";
 type Fila = Record<string, unknown>;
+type SQL = ReturnType<typeof sql>;
+/** Lo que necesitamos de una conexión: poder ejecutar. Sirve el pool o una transacción. */
+type Ejecutor = { execute: (q: SQL) => Promise<unknown> };
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
+export interface OpcionesAvance {
+  dias: DiasVentana;
+  territorio?: TerritorioRef | null;
+  /** Sin sesión y para afuera: se quitan nombres de personas, direcciones de pedidos y el feed. */
+  publico?: boolean;
+}
+
+/** La geometría del recorte, como subconsulta constante (el planificador la evalúa una vez). */
+function geomDe(t: TerritorioRef): SQL {
+  return t.tipo === "distrito"
+    ? sql`(select d.geom from distritos d where d.id = ${t.id})`
+    : sql`(select ba.geom from barrios ba where ba.id = ${t.id})`;
+}
+
 /**
  * LA BASE: cada intervención con ubicación en un estado dado, atribuida a su
- * empresa.
+ * empresa, y dentro del recorte si lo hay.
  *
  * La atribución tiene dos caminos porque el trabajo entra por dos puertas. Lo
  * mandado por una orden de CIMBA tiene la empresa en la orden. Lo que llegó
@@ -56,7 +81,7 @@ const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona:
  * La fecha es la del TRABAJO (finalizada_en), no la de la carga: un bache
  * tapado el lunes que se cargó el jueves cuenta para el lunes.
  */
-const baseDe = (estado: "finalizada" | "en_curso") => sql`
+const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null) => sql`
   select iv.id,
          coalesce(iv.finalizada_en, iv.iniciada_en, iv.creado_en) as fecha,
          iv.iniciada_en,
@@ -80,10 +105,8 @@ const baseDe = (estado: "finalizada" | "en_curso") => sql`
    and e_md.slug = lower(public.unaccent(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1)))
   where iv.estado = ${estado}
     and iv.geom_ejecucion is not null
+    ${t ? sql`and st_intersects(${geomDe(t)}, st_centroid(iv.geom_ejecucion))` : sql``}
 `;
-
-/** Lo terminado: es lo que se cuenta como hecho, igual que en el resto del sistema. */
-const BASE = baseDe("finalizada");
 
 /** El nombre corto con el que se muestra la empresa: la primera palabra del canónico. */
 const EMPRESA_CORTA = sql`coalesce(initcap(split_part(b.empresa_nombre, ' ', 1)), 'Otros')`;
@@ -347,12 +370,33 @@ function redactar(m: Movimiento): EventoAvance {
   };
 }
 
-export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<DatosAvance> {
+/** Los 20 distritos y los 327 barrios, para el selector del recorte. */
+export async function listarTerritorios(): Promise<ListasTerritorios> {
+  const db = getDb();
+  const [distritos, barrios] = (await Promise.all([
+    db.execute(sql`select id, nombre from distritos order by id`),
+    db.execute(sql`select id, nombre from barrios order by nombre`),
+  ])) as unknown as [Fila[], Fila[]];
+  const opcion = (f: Fila) => ({ id: Number(f.id), nombre: String(f.nombre).replace(/\s+/g, " ").trim() });
+  return { distritos: distritos.map(opcion), barrios: barrios.map(opcion) };
+}
+
+export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvance): Promise<DatosAvance> {
+  const { dias } = opciones;
+  const t = opciones.territorio ?? null;
+  const publico = opciones.publico === true;
   const desde = desdeDe(dias);
   const enVentana = desde ? sql`b.fecha >= ${desde}` : sql`true`;
   const diaLocal = sql`(b.fecha at time zone ${TZ})::date`;
-  // El feed nombra a quien hizo cada cosa: misma regla que /actividad.
-  const conFeed = ["admin", "planificacion"].includes(sesion.rol_cimba);
+  const BASE = baseDe("finalizada", t);
+  // El feed nombra a quien hizo cada cosa: misma regla que /actividad, y nunca en público.
+  const conFeed = !publico && sesion != null && ["admin", "planificacion"].includes(sesion.rol_cimba);
+
+  /* Con sesión, por la transacción con claims como todo el sistema; sin sesión
+     (la vista pública), directo por el pool. La RLS no se aplica hoy, pero el
+     día que se aplique la vista pública tiene que seguir siendo agregada. */
+  const correr = <T>(fn: (tx: Ejecutor) => Promise<T>): Promise<T> =>
+    sesion ? conRls(claims(sesion), fn) : fn(getDb());
 
   /**
    * Las consultas se despachan JUNTAS: postgres.js las encadena por la misma
@@ -360,7 +404,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
    * tardaban ~2,8 s desde la oficina; es la portada, y la portada no puede
    * hacer esperar tres segundos.
    */
-  return conRls(claims(sesion), async (tx) => {
+  return correr(async (tx) => {
     const qHechos = tx.execute(sql`
       select b.id,
              to_char(b.fecha at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
@@ -372,6 +416,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
              b.numero as orden, b.orden_id, i.direccion, b.tipo,
              (b.fecha >= now() - interval '48 hours') as reciente,
              fo.storage_path, fo.url_externa,
+             fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
              st_x(st_centroid(b.geom_ejecucion))::float as lon,
              st_y(st_centroid(b.geom_ejecucion))::float as lat
       from (${BASE}) b
@@ -383,6 +428,13 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         order by f.tomada_en desc nulls last
         limit 1
       ) fo on true
+      left join lateral (
+        select f.storage_path, f.url_externa
+        from fotografias f
+        where f.intervencion_id = b.id and f.momento = 'antes'
+        order by f.tomada_en asc nulls last
+        limit 1
+      ) fa on true
       where ${enVentana}
       order by b.fecha
     `);
@@ -400,7 +452,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
              i.direccion,
              st_x(st_centroid(b.geom_ejecucion))::float as lon,
              st_y(st_centroid(b.geom_ejecucion))::float as lat
-      from (${baseDe("en_curso")}) b
+      from (${baseDe("en_curso", t)}) b
       left join incidentes i on i.id = b.incidente_id
       order by b.superficie_m2 desc nulls last
     `);
@@ -408,18 +460,20 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
     /**
      * EL FONDO QUE NO SE APAGA: los pedidos de bacheo que esperan, con
      * ubicación. Es exactamente el conjunto que dibuja el mapa de la Brecha
-     * como "en cola", así que el número de acá y el de allá son el mismo.
+     * como "en cola", así que el número de acá y el de allá son el mismo. En
+     * público van sin dirección: el punto en el mapa alcanza.
      */
     const qPendientes = tx.execute(sql`
       select d.id,
              to_char(d.creado_en at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
-             coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
+             ${publico ? sql`null::text` : sql`coalesce(d.direccion_normalizada, d.direccion_texto)`} as direccion,
              st_x(st_centroid(d.geom))::float as lon,
              st_y(st_centroid(d.geom))::float as lat
       from demandas d
       where d.estado in ('recibida', 'en_validacion')
         and d.geom is not null
         and coalesce(d.destino::text, 'bacheo') = 'bacheo'
+        ${t ? sql`and st_intersects(${geomDe(t)}, d.geom)` : sql``}
     `);
 
     /**
@@ -427,7 +481,8 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
      * envolvente de sus items, con 50 m de margen— y no el ámbito nominal. Una
      * orden "del distrito 9" pintaría medio distrito; la envolvente de sus 112
      * baches pinta las cuadras donde de verdad está la cuadrilla. Una orden
-     * con un solo item queda como un círculo de 50 m.
+     * con un solo item queda como un círculo de 50 m. Con recorte, las que
+     * tienen al menos un bache adentro.
      */
     const qOrdenes = tx.execute(sql`
       select ot.id, ot.numero, ot.estado::text as estado, ot.tipo::text as tipo,
@@ -444,6 +499,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       join empresas e on e.id = ot.empresa_id
       left join orden_items oi on oi.orden_id = ot.id
       where ot.estado in ('emitida', 'en_ejecucion')
+        ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``}
       group by ot.id, ot.numero, ot.estado, ot.tipo, e.nombre, ot.emitida_en
       order by max(oi.reportado_en) desc nulls last, ot.emitida_en desc
     `);
@@ -461,6 +517,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         round(coalesce(sum(b.superficie_m2) filter (where ${enVentana}), 0))::int as v_m2,
         round(coalesce(sum(b.volumen_m3) filter (where ${enVentana}), 0) * 2.4)::int as v_t,
         count(distinct b.slug) filter (where ${enVentana} and b.slug <> 'otros')::int as v_empresas,
+        count(b.id) filter (where ${enVentana} and coalesce(b.superficie_m2, 0) = 0)::int as v_sin_medida,
 
         count(b.id) filter (where ${diaLocal} = ref.hoy)::int as h_n,
         round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy), 0))::int as h_m2,
@@ -492,19 +549,24 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       group by ref.hoy
     `);
 
-    /* Lo que pasa ahora y lo que falta: números chicos, consultas directas. */
+    /* Lo que pasa ahora, lo que falta y los vecinos respondidos: números
+       chicos, consultas directas, dentro del recorte si lo hay. */
+    const enTerr = (col: SQL) => (t ? sql`and st_intersects(${geomDe(t)}, ${col})` : sql``);
     const qResto = tx.execute(sql`
       select
-        (select count(*) from intervenciones where estado = 'en_curso' and geom_ejecucion is not null)::int as ec_n,
-        (select round(coalesce(sum(superficie_m2), 0)) from intervenciones where estado = 'en_curso' and geom_ejecucion is not null)::int as ec_m2,
-        (select count(*) from ordenes_trabajo where estado in ('emitida', 'en_ejecucion'))::int as ordenes_activas,
+        (select count(*) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_n,
+        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_m2,
+        (select count(*) from ordenes_trabajo ot where ot.estado in ('emitida', 'en_ejecucion')
+          ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``})::int as ordenes_activas,
         (select count(*) from demandas d
           where d.estado in ('recibida', 'en_validacion') and d.geom is not null
-            and coalesce(d.destino::text, 'bacheo') = 'bacheo')::int as pedidos,
-        (select count(*) from incidentes
-          where estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion'))::int as incidentes,
-        (select count(*) from intervenciones where estado = 'asignada')::int as as_n,
-        (select round(coalesce(sum(superficie_m2), 0)) from intervenciones where estado = 'asignada')::int as as_m2
+            and coalesce(d.destino::text, 'bacheo') = 'bacheo' ${enTerr(sql`d.geom`)})::int as pedidos,
+        (select count(*) from incidentes i
+          where i.estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion') ${enTerr(sql`i.geom`)})::int as incidentes,
+        (select count(*) from intervenciones iv where iv.estado = 'asignada' ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as as_n,
+        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'asignada' ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as as_m2,
+        (select count(*) from demandas d where d.estado = 'cerrada'
+          ${desde ? sql`and d.actualizado_en >= ${desde}` : sql``} ${enTerr(sql`d.geom`)})::int as vecinos
     `);
 
     const qPorEmpresa = tx.execute(sql`
@@ -531,13 +593,37 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       order by 1
     `);
 
+    /* DÓNDE SE AVANZÓ MÁS: los barrios con más trabajo en la ventana. Con un
+       distrito recortado, sus barrios; con un barrio recortado no tiene sentido. */
+    const qTopBarrios =
+      t?.tipo === "barrio"
+        ? Promise.resolve([] as unknown[])
+        : tx.execute(sql`
+      select ba.id, ba.nombre, count(*)::int as n, round(coalesce(sum(b.superficie_m2), 0))::int as m2
+      from (${BASE}) b
+      join barrios ba on st_intersects(ba.geom, st_centroid(b.geom_ejecucion))
+      where ${enVentana}
+      group by ba.id, ba.nombre
+      order by 3 desc, 4 desc
+      limit 6
+    `);
+
+    /* El recorte, con su contorno simplificado para dibujarlo y encuadrarlo. */
+    const qTerritorio = t
+      ? tx.execute(
+          t.tipo === "distrito"
+            ? sql`select id, nombre, st_asgeojson(st_simplify(geom, 0.0002))::json as contorno from distritos where id = ${t.id}`
+            : sql`select id, nombre, st_asgeojson(st_simplify(geom, 0.0002))::json as contorno from barrios where id = ${t.id}`,
+        )
+      : Promise.resolve([] as unknown[]);
+
     /**
      * PASANDO AHORA, materia prima: los movimientos de la última semana sobre
      * las tablas de TRABAJO, hechos por una persona (lo automático entra
      * aparte, agregado). Se traen con la orden, la empresa y el LUGAR del
      * registro vivo, para que cada línea del feed pueda ir al mapa. La frase
-     * se arma en fraseDe(); lo que no tiene lectura clara se descarta ahí, por
-     * eso se piden más filas de las que se muestran.
+     * se arma en redactar(); lo que no tiene lectura clara se descarta en
+     * interpretar(), por eso se piden más filas de las que se muestran.
      */
     const qFeed = conFeed
       ? tx.execute(sql`
@@ -605,9 +691,11 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
     `)
       : Promise.resolve([] as unknown[]);
 
-    /* Las últimas fotos del "después", con su lugar: la prueba, y un atajo al mapa. */
+    /* Las últimas fotos del "después" (y su "antes", si lo hay), con su lugar:
+       la prueba, y un atajo al mapa. */
     const qFotos = tx.execute(sql`
       select fo.url_externa, fo.storage_path, i.direccion, iv.id as intervencion_id,
+             fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
              nullif(coalesce(initcap(split_part(e.nombre, ' ', 1)),
                              initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))), '') as empresa,
              st_x(st_centroid(iv.geom_ejecucion))::float as lon,
@@ -616,16 +704,22 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       join intervenciones iv on iv.id = fo.intervencion_id
       left join incidentes i on i.id = iv.incidente_id
       left join lateral (
+        select f.storage_path, f.url_externa from fotografias f
+        where f.intervencion_id = iv.id and f.momento = 'antes'
+        order by f.tomada_en asc nulls last limit 1
+      ) fa on true
+      left join lateral (
         select ot.empresa_id from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
         where oi.intervencion_id = iv.id limit 1
       ) it on true
       left join empresas e on e.id = it.empresa_id
       where fo.momento = 'despues'
+        ${t ? sql`and st_intersects(${geomDe(t)}, st_centroid(iv.geom_ejecucion))` : sql``}
       order by fo.tomada_en desc nulls last
       limit 6
     `);
 
-    const [hechos, enCurso, pendientes, ordenes, filasCifras, filasResto, porEmpresa, serie, feedCrudo, sync, fotos] =
+    const [hechos, enCurso, pendientes, ordenes, filasCifras, filasResto, porEmpresa, serie, topBarrios, filasTerr, feedCrudo, sync, fotos] =
       (await Promise.all([
         qHechos,
         qEnCurso,
@@ -635,12 +729,15 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         qResto,
         qPorEmpresa,
         qSerie,
+        qTopBarrios,
+        qTerritorio,
         qFeed,
         qSync,
         qFotos,
-      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
     const cifras = filasCifras[0] ?? {};
     const resto = filasResto[0] ?? {};
+    const terr = filasTerr[0];
 
     const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
 
@@ -674,6 +771,16 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       .sort((a, b) => (a.en < b.en ? 1 : a.en > b.en ? -1 : 0))
       .slice(0, 12);
 
+    const territorio: Territorio | null =
+      t && terr
+        ? {
+            tipo: t.tipo,
+            id: Number(terr.id),
+            nombre: String(terr.nombre).replace(/\s+/g, " ").trim(),
+            contorno: terr.contorno as Territorio["contorno"],
+          }
+        : null;
+
     return {
       generadoEn: new Date().toISOString(),
       hoy,
@@ -683,6 +790,8 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         desde: texto(cifras.v_desde),
         desdeDia: cifras.v_desde_dia == null ? null : Number(cifras.v_desde_dia),
       },
+      territorio,
+      publico,
       hechos: {
         type: "FeatureCollection",
         features: hechos.map((f) => ({
@@ -700,6 +809,7 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
             ordenId: num(f.orden_id),
             direccion: texto(f.direccion),
             foto: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }),
+            fotoAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
             tipo: texto(f.tipo),
             reciente: Boolean(f.reciente),
           } satisfies HechoProps,
@@ -744,7 +854,12 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
       },
       ordenes: ordenesLista,
       cifras: {
-        ventana: { ...cifraDe(cifras, "v"), empresas: Number(cifras.v_empresas ?? 0) },
+        ventana: {
+          ...cifraDe(cifras, "v"),
+          empresas: Number(cifras.v_empresas ?? 0),
+          sinMedida: Number(cifras.v_sin_medida ?? 0),
+          vecinos: Number(resto.vecinos ?? 0),
+        },
         hoy: cifraDe(cifras, "h"),
         ayer: cifraDe(cifras, "a"),
         semana: cifraDe(cifras, "s"),
@@ -772,11 +887,20 @@ export async function datosAvance(sesion: Sesion, dias: DiasVentana): Promise<Da
         }),
       ),
       serie: completarSerie(serie, hoy),
+      topBarrios: topBarrios.map(
+        (f): TopBarrio => ({
+          id: Number(f.id),
+          nombre: String(f.nombre).replace(/\s+/g, " ").trim(),
+          n: Number(f.n),
+          m2: Number(f.m2),
+        }),
+      ),
       feed,
       fotos: fotos
         .map(
           (f): FotoAvance => ({
             url: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }) ?? "",
+            urlAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
             direccion: texto(f.direccion),
             empresa: texto(f.empresa),
             lon: num(f.lon),

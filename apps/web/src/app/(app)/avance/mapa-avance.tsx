@@ -3,7 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ExpressionSpecification, FilterSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, FilterSpecification, Map as MapaLibre } from "maplibre-gl";
 import {
   Layer,
   Map as MapaGL,
@@ -16,22 +16,25 @@ import {
 } from "react-map-gl/maplibre";
 import {
   fechaLarga,
+  type Camara,
   type DatosAvance,
   type EnCursoProps,
   type Foco,
   type HechoProps,
   type OrdenActiva,
   type PendienteProps,
+  type Territorio,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresa } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
+import { AntesDespues } from "@/components/antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 
 /**
- * EL MAPA DE AVANCE: cuatro fuentes, seis capas, en este orden de abajo hacia
- * arriba —áreas de órdenes, pedidos pendientes, trabajo hecho, el latido de lo
- * reciente, obras en curso, rótulos de las órdenes— para que lo hecho tape lo
- * pendiente y no al revés.
+ * EL MAPA DE AVANCE: cinco fuentes, siete capas, en este orden de abajo hacia
+ * arriba —contorno del recorte, áreas de órdenes, pedidos pendientes, trabajo
+ * hecho, el latido de lo reciente, obras en curso, rótulos de las órdenes—
+ * para que lo hecho tape lo pendiente y no al revés.
  *
  * El color de la empresa se resuelve acá y viaja como propiedad: MapLibre no
  * puede hashear el nombre adentro de una expresión de pintado. La línea de
@@ -39,7 +42,10 @@ import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
  * pintado, no datos nuevos: cambiar de día no vuelve a subir 3.000 puntos.
  *
  * Al pasar el cursor, una etiqueta chica dice qué es eso (empresa, lugar,
- * fecha, medida). El clic abre la ficha completa, con la foto.
+ * fecha, medida). El clic abre la ficha completa, con el antes y el después.
+ *
+ * `preserveDrawingBuffer` está prendido para poder copiar el canvas a la
+ * imagen que se comparte; cuesta un poco de memoria de video y nada más.
  */
 
 const CENTRO_SMT: [number, number] = [-65.2226, -26.8241];
@@ -87,6 +93,21 @@ interface Sobrevuelo {
 
 const medida = (m2: unknown) => (typeof m2 === "number" && m2 > 0 ? `${numero(Math.round(m2))} m²` : "sin medida");
 
+/** La caja de un polígono o multipolígono, para encuadrarlo. */
+function cajaDe(g: Territorio["contorno"]): [[number, number], [number, number]] | null {
+  const anillos = g.type === "Polygon" ? g.coordinates : g.coordinates.flat();
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+  for (const anillo of anillos) {
+    for (const [lon, lat] of anillo as Array<[number, number]>) {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  return Number.isFinite(minLon) ? [[minLon, minLat], [maxLon, maxLat]] : null;
+}
+
 export function MapaAvance({
   datos,
   empresaSel,
@@ -95,7 +116,10 @@ export function MapaAvance({
   cursor,
   verPendientes,
   foco,
+  camaraInicial,
+  alListo,
   pantalla,
+  publico,
 }: {
   datos: DatosAvance;
   /** Empresa aislada (clic en la columna): solo ella se dibuja. */
@@ -109,7 +133,12 @@ export function MapaAvance({
   verPendientes: boolean;
   /** A dónde ir (una foto, una línea del feed). */
   foco: Foco | null;
+  /** La cámara con la que abre (de un link compartido). */
+  camaraInicial: Camara | null;
+  /** El mapa ya cargó: quien lo necesite (compartir) se lo guarda. */
+  alListo?: (mapa: MapaLibre) => void;
   pantalla: boolean;
+  publico: boolean;
 }) {
   const tema = usarTemaMapa();
   const oscuro = tema === "oscuro";
@@ -118,6 +147,7 @@ export function MapaAvance({
   const [sel, setSel] = useState<Seleccion | null>(null);
   const [sobre, setSobre] = useState<Sobrevuelo | null>(null);
   const [marcador, setMarcador] = useState<{ lon: number; lat: number } | null>(null);
+  const sinLinks = pantalla || publico;
 
   const conColor = <T extends { properties: { empresa: string } }>(fc: { type: "FeatureCollection"; features: T[] }) => ({
     type: "FeatureCollection" as const,
@@ -129,6 +159,15 @@ export function MapaAvance({
   const hechos = useMemo(() => conColor(datos.hechos), [datos.hechos]);
   const areas = useMemo(() => conColor(datos.areas), [datos.areas]);
   const enCurso = useMemo(() => conColor(datos.enCurso), [datos.enCurso]);
+  const contorno = useMemo(
+    () => ({
+      type: "FeatureCollection" as const,
+      features: datos.territorio
+        ? [{ type: "Feature" as const, geometry: datos.territorio.contorno, properties: { nombre: datos.territorio.nombre } }]
+        : [],
+    }),
+    [datos.territorio],
+  );
 
   /* Los filtros: la línea de tiempo y la empresa aislada. ["all"] vacío es verdadero. */
   const partes = useMemo(() => {
@@ -197,6 +236,25 @@ export function MapaAvance({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaSel, cargado]);
 
+  /* El recorte: al elegir un distrito o un barrio, la cámara lo encuadra; al
+     quitarlo, vuelve a la ciudad. */
+  const recorteAnterior = useRef<string | null>(null);
+  useEffect(() => {
+    if (!cargado) return;
+    const mapa = mapRef.current?.getMap();
+    if (!mapa) return;
+    const clave = datos.territorio ? `${datos.territorio.tipo}-${datos.territorio.id}` : null;
+    if (clave === recorteAnterior.current) return;
+    const habia = recorteAnterior.current;
+    recorteAnterior.current = clave;
+    if (datos.territorio) {
+      const caja = cajaDe(datos.territorio.contorno);
+      if (caja) mapa.fitBounds(caja, { padding: 50, maxZoom: 16, duration: 1000 });
+    } else if (habia) {
+      mapa.flyTo({ center: CENTRO_SMT, zoom: 12.3, duration: 1000 });
+    }
+  }, [datos.territorio, cargado]);
+
   /* Ir a un lugar (una foto, una línea del feed): vuela, marca, y si el
      trabajo está en la ventana abre su ficha. */
   useEffect(() => {
@@ -244,18 +302,36 @@ export function MapaAvance({
   return (
     <MapaGL
       ref={mapRef}
-      initialViewState={{ longitude: CENTRO_SMT[0], latitude: CENTRO_SMT[1], zoom: 12.3 }}
+      initialViewState={{
+        longitude: camaraInicial?.lon ?? CENTRO_SMT[0],
+        latitude: camaraInicial?.lat ?? CENTRO_SMT[1],
+        zoom: camaraInicial?.zoom ?? 12.3,
+      }}
       mapStyle={estiloMapa(tema)}
       maxZoom={19.5}
+      canvasContextAttributes={{ preserveDrawingBuffer: true }}
       attributionControl={{ compact: true }}
       interactiveLayerIds={["av-hechos-punto", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
-      onLoad={() => setCargado(true)}
+      onLoad={(e) => {
+        setCargado(true);
+        alListo?.(e.target);
+      }}
       onClick={alClick}
       onMouseMove={alMover}
       onMouseOut={() => setSobre(null)}
       cursor={sobre ? "pointer" : "grab"}
     >
       {!pantalla && <NavigationControl position="top-right" showCompass={false} />}
+
+      {/* 0. El contorno del recorte, en el amarillo de la marca */}
+      <Source key="av-terr" id="av-terr" type="geojson" data={contorno}>
+        <Layer id="av-terr-relleno" type="fill" paint={{ "fill-color": "#f4dc00", "fill-opacity": 0.04 }} />
+        <Layer
+          id="av-terr-borde"
+          type="line"
+          paint={{ "line-color": "#f4dc00", "line-width": 2.2, "line-opacity": 0.9 }}
+        />
+      </Source>
 
       {/* 1. El área real de cada orden activa */}
       <Source key="av-areas" id="av-areas" type="geojson" data={areas}>
@@ -410,10 +486,10 @@ export function MapaAvance({
             >
               ×
             </button>
-            {sel.tipo === "hecho" && <FichaHecho p={sel.props} pantalla={pantalla} />}
+            {sel.tipo === "hecho" && <FichaHecho p={sel.props} sinLinks={sinLinks} />}
             {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} />}
-            {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} pantalla={pantalla} />}
-            {sel.tipo === "orden" && <FichaOrden p={sel.props} pantalla={pantalla} />}
+            {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} />}
+            {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} />}
           </div>
         </Popup>
       )}
@@ -441,6 +517,7 @@ function Etiqueta({ capa, props }: { capa: string; props: Record<string, unknown
         <p className="num text-texto-3">
           {typeof props.fecha === "string" ? fechaLarga(props.fecha) : ""} · {medida(props.m2)}
           {props.fuente === "orden" && typeof props.orden === "string" ? ` · ${props.orden}` : ""}
+          {typeof props.fotoAntes === "string" && typeof props.foto === "string" ? " · antes y después" : ""}
         </p>
       </>
     );
@@ -478,13 +555,13 @@ function Etiqueta({ capa, props }: { capa: string; props: Record<string, unknown
   return (
     <>
       <p className="font-bold text-texto-2">Pedido que espera</p>
-      <p className="truncate text-texto-2">{direccion ?? "Sin dirección"}</p>
+      {direccion && <p className="truncate text-texto-2">{direccion}</p>}
       <p className="num text-texto-3">desde el {typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"}</p>
     </>
   );
 }
 
-function FichaHecho({ p, pantalla }: { p: HechoProps; pantalla: boolean }) {
+function FichaHecho({ p, sinLinks }: { p: HechoProps; sinLinks: boolean }) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
@@ -511,7 +588,9 @@ function FichaHecho({ p, pantalla }: { p: HechoProps; pantalla: boolean }) {
           : "Informado por planilla, por el SIGOV o por la app de la empresa"}
         {p.reciente ? " · cargado en las últimas 48 h" : ""}
       </p>
-      {p.foto && (
+      {p.foto && p.fotoAntes ? (
+        <AntesDespues antes={p.fotoAntes} despues={p.foto} alt="El bache antes y después" className="mt-2 aspect-[4/3] w-full" />
+      ) : p.foto ? (
         // eslint-disable-next-line @next/next/no-img-element -- fotos de Storage/externas
         <img
           src={p.foto}
@@ -519,8 +598,8 @@ function FichaHecho({ p, pantalla }: { p: HechoProps; pantalla: boolean }) {
           className="mt-2 h-36 w-full rounded-lg border border-borde object-cover"
           loading="lazy"
         />
-      )}
-      {!pantalla && p.ordenId != null && (
+      ) : null}
+      {!sinLinks && p.ordenId != null && (
         <Link href={`/ordenes/${p.ordenId}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver la orden →
         </Link>
@@ -555,15 +634,15 @@ function FichaEnCurso({ p }: { p: EnCursoProps }) {
   );
 }
 
-function FichaPendiente({ p, pantalla }: { p: PendienteProps; pantalla: boolean }) {
+function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks: boolean; publico: boolean }) {
   return (
     <>
-      <p className="pr-5 font-bold">{p.direccion ?? "Sin dirección"}</p>
+      <p className="pr-5 font-bold">{publico ? "Un pedido que espera" : (p.direccion ?? "Sin dirección")}</p>
       <p className="mt-1 text-xs text-texto-2">
-        Pedido #{p.id} · espera desde el {fechaCorta(p.fecha)}
+        {publico ? "Pedido de un vecino" : `Pedido #${p.id}`} · espera desde el {fechaCorta(p.fecha)}
       </p>
       <p className="mt-1 text-xs text-texto-3">Todavía no tiene una orden de trabajo. Está en la cola de la Brecha.</p>
-      {!pantalla && (
+      {!sinLinks && (
         <Link href={`/demandas/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver el pedido →
         </Link>
@@ -572,7 +651,7 @@ function FichaPendiente({ p, pantalla }: { p: PendienteProps; pantalla: boolean 
   );
 }
 
-function FichaOrden({ p, pantalla }: { p: OrdenActiva; pantalla: boolean }) {
+function FichaOrden({ p, sinLinks }: { p: OrdenActiva; sinLinks: boolean }) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
@@ -592,7 +671,7 @@ function FichaOrden({ p, pantalla }: { p: OrdenActiva; pantalla: boolean }) {
         {numero(p.hechos)} de {numero(p.items)} baches hechos
         {p.ultimo ? ` · último reporte ${fechaCorta(p.ultimo)}` : " · sin reportes todavía"}
       </p>
-      {!pantalla && (
+      {!sinLinks && (
         <Link href={`/ordenes/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver la orden →
         </Link>

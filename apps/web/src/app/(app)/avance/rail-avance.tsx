@@ -1,16 +1,19 @@
 "use client";
 
-import { MapPin } from "lucide-react";
+import { MapPin, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RolUsuario } from "@cimba/domain";
 import {
   conMayuscula,
+  diasEntre,
   etiquetaVentana,
   fechaLarga,
+  nombreRecorte,
   type DatosAvance,
   type DiasVentana,
   type EventoAvance,
+  type TerritorioRef,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresa } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
@@ -18,16 +21,17 @@ import { LogoCimba } from "@/components/marca";
 
 /**
  * LA COLUMNA DE DATOS de Avance: las cifras de la ventana, el ritmo semanal,
- * quién produjo, las órdenes activas, las últimas fotos y lo que está pasando.
+ * dónde se avanzó más, quién produjo, las órdenes activas, las últimas fotos
+ * y lo que está pasando.
  *
  * Positiva primero y honesta después: la cifra grande es lo hecho, pero la
  * tarjeta "Queda por hacer" está siempre, en neutro, con el mismo número que
- * dibuja el mapa en gris. Una pantalla de gestión que no muestra lo pendiente
- * no es positiva, es incompleta.
+ * dibuja el mapa en gris; y al lado de los m² dice cuántos trabajos no tienen
+ * medida. Una pantalla de gestión que esconde eso no es positiva, es incompleta.
  *
  * La columna le habla al mapa: pasar el cursor por una empresa o una orden la
- * resalta; tocar una empresa la aísla y la encuadra; tocar una foto o una
- * línea del feed vuela al lugar.
+ * resalta; tocar una empresa la aísla y la encuadra; tocar un barrio recorta
+ * la pantalla a ese barrio; tocar una foto o una línea del feed vuela al lugar.
  */
 
 type Lugar = { lon: number; lat: number; id: number | null };
@@ -40,7 +44,9 @@ export function RailAvance({
   alResaltarEmpresa,
   alResaltarOrden,
   alEnfocar,
+  alElegirTerritorio,
   pantalla,
+  publico,
   rol,
 }: {
   datos: DatosAvance;
@@ -50,7 +56,9 @@ export function RailAvance({
   alResaltarEmpresa: (empresa: string | null) => void;
   alResaltarOrden: (id: number | null) => void;
   alEnfocar: (lugar: Lugar) => void;
+  alElegirTerritorio: (t: TerritorioRef | null) => void;
   pantalla: boolean;
+  publico: boolean;
   rol: RolUsuario;
 }) {
   const c = datos.cifras;
@@ -59,9 +67,11 @@ export function RailAvance({
   const hero = filaSel
     ? { n: filaSel.n, m2: filaSel.m2, toneladas: filaSel.toneladas, empresas: 1 }
     : c.ventana;
-  const puedeNavegar = !pantalla;
+  const puedeNavegar = !pantalla && !publico;
   /* Lo cargado en las últimas 48 h que está en la ventana (con "Hoy" solo lo de hoy). */
   const recientes = datos.hechos.features.reduce((n, f) => n + (f.properties.reciente ? 1 : 0), 0);
+  const nAnimado = useContador(hero.n);
+  const m2Animado = useContador(hero.m2);
 
   return (
     <aside
@@ -73,21 +83,52 @@ export function RailAvance({
 
       {/* La cifra grande: lo hecho en la ventana */}
       <section className="rounded-2xl border border-borde bg-panel-2 p-4">
-        <p className="text-[10px] font-bold tracking-[0.14em] text-texto-3 uppercase">
-          {etiquetaVentana(dias, c.total.desde)}
-          {empresaSel ? ` · ${empresaSel}` : ""}
+        <p className="flex flex-wrap items-center gap-x-1.5 text-[10px] font-bold tracking-[0.14em] text-texto-3 uppercase">
+          <span>{etiquetaVentana(dias, c.total.desde)}</span>
+          {datos.territorio && (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => alElegirTerritorio(null)}
+                title="Volver a toda la ciudad"
+                className="flex items-center gap-1 rounded-md bg-amarillo/15 px-1.5 py-0.5 text-amarillo normal-case tracking-normal"
+              >
+                {nombreRecorte(datos.territorio)}
+                <X size={10} />
+              </button>
+            </>
+          )}
+          {empresaSel && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="normal-case tracking-normal" style={{ color: colorDeEmpresa(empresaSel) }}>
+                {empresaSel}
+              </span>
+            </>
+          )}
         </p>
         <p className={`num mt-1 leading-none font-extrabold tracking-tight ${pantalla ? "text-6xl" : "text-5xl"}`}>
-          {numero(hero.n)}
+          {numero(nAnimado)}
           <span className="ml-2 text-lg font-bold text-texto-2">{hero.n === 1 ? "bache" : "baches"}</span>
         </p>
         <p className={`num mt-2 font-semibold text-celeste ${pantalla ? "text-2xl" : "text-xl"}`}>
-          {numero(hero.m2)} m²
+          {numero(m2Animado)} m²
           <span className="ml-2 text-sm font-medium text-texto-2">
             · {numero(hero.toneladas)} t de mezcla
             {!empresaSel && ` · ${numero(hero.empresas)} ${hero.empresas === 1 ? "empresa" : "empresas"}`}
           </span>
         </p>
+        {!empresaSel && c.ventana.sinMedida > 0 && (
+          <p className="num mt-1 text-[11px] text-texto-3">
+            {numero(c.ventana.sinMedida)} de los {numero(c.ventana.n)} sin medida cargada: los m² reales son más.
+          </p>
+        )}
+        {c.ventana.vecinos > 0 && !empresaSel && (
+          <p className="num mt-2 text-sm font-semibold" style={{ color: "var(--color-hecho)" }}>
+            ✓ {numero(c.ventana.vecinos)} {c.ventana.vecinos === 1 ? "vecino" : "vecinos"} con su pedido cerrado
+          </p>
+        )}
         {hero.n === 0 && (
           <p className="mt-2 text-xs text-amarillo">
             {dias === 1 ? "Hoy todavía no hay trabajo cargado." : "Sin trabajo cargado en esta ventana."}
@@ -128,6 +169,8 @@ export function RailAvance({
 
       <Ritmo serie={datos.serie} desde={datos.ventana.desde} />
 
+      <DondeSeAvanzo datos={datos} alElegirTerritorio={alElegirTerritorio} />
+
       <QuienProdujo
         datos={datos}
         empresaSel={empresaSel}
@@ -139,7 +182,7 @@ export function RailAvance({
 
       {datos.fotos.length > 0 && (
         <section>
-          <Rotulo>Últimos trabajos, con foto · tocá una para ir al lugar</Rotulo>
+          <Rotulo>Últimos trabajos, con foto · pasá el cursor para ver el antes, tocá para ir</Rotulo>
           <div className="grid grid-cols-3 gap-2">
             {datos.fotos.map((f, i) => {
               const ir = f.lon != null && f.lat != null ? () => alEnfocar({ lon: f.lon!, lat: f.lat!, id: f.intervencionId }) : undefined;
@@ -149,22 +192,38 @@ export function RailAvance({
                   type="button"
                   onClick={ir}
                   disabled={!ir}
-                  title={[f.direccion, f.empresa].filter(Boolean).join(" · ") || undefined}
-                  className="group relative overflow-hidden rounded-lg border border-borde text-left transition hover:border-celeste/60 disabled:cursor-default"
+                  title={[f.direccion, f.empresa, f.urlAntes ? "con antes y después" : null].filter(Boolean).join(" · ") || undefined}
+                  className="group relative aspect-square overflow-hidden rounded-lg border border-borde bg-panel-3 text-left transition hover:border-celeste/60 focus:border-celeste disabled:cursor-default"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- fotos de Storage/externas */}
                   <img
                     src={f.url}
                     alt={f.direccion ?? "Trabajo terminado"}
-                    className="aspect-square w-full object-cover transition group-hover:scale-105"
+                    className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
                     loading="lazy"
                   />
+                  {f.urlAntes && (
+                    // eslint-disable-next-line @next/next/no-img-element -- fotos de Storage/externas
+                    <img
+                      src={f.urlAntes}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 h-full w-full object-cover opacity-0 transition duration-300 group-hover:opacity-100 group-focus:opacity-100"
+                      loading="lazy"
+                    />
+                  )}
                   {f.empresa && (
                     <span
                       className="absolute top-1 left-1 h-2.5 w-2.5 rounded-full border border-black/40"
                       style={{ background: colorDeEmpresa(f.empresa) }}
                       aria-hidden="true"
                     />
+                  )}
+                  {f.urlAntes && (
+                    <span className="absolute top-1 right-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-bold tracking-wider text-white uppercase">
+                      <span className="group-hover:hidden">después</span>
+                      <span className="hidden group-hover:inline">antes</span>
+                    </span>
                   )}
                   {f.direccion && (
                     <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1.5 py-0.5 text-[10px] text-white">
@@ -191,9 +250,45 @@ export function RailAvance({
 
       <p className="mt-auto pt-2 text-center text-[10px] text-texto-3">
         Actualizado a las {horaDe(datos.generadoEn)} · se renueva solo cada minuto · la fecha es la del trabajo, no la de la carga
+        {publico ? " · Municipalidad de San Miguel de Tucumán" : ""}
       </p>
     </aside>
   );
+}
+
+/**
+ * Los números SUBEN hasta su valor en vez de aparecer: al abrir (desde cero)
+ * y en cada cambio de ventana, recorte o empresa. Es lo que hace que la
+ * pantalla se sienta viva desde la otra punta de la oficina. Con movimiento
+ * reducido, aparecen directo.
+ */
+function useContador(valor: number): number {
+  const [mostrado, setMostrado] = useState(valor);
+  const anterior = useRef<number | null>(null);
+  useEffect(() => {
+    const desde = anterior.current ?? 0;
+    anterior.current = valor;
+    if (desde === valor) {
+      setMostrado(valor);
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setMostrado(valor);
+      return;
+    }
+    const t0 = performance.now();
+    const duracion = 900;
+    let raf = 0;
+    const paso = (t: number) => {
+      const k = Math.min(1, (t - t0) / duracion);
+      const suave = 1 - Math.pow(1 - k, 3);
+      setMostrado(Math.round(desde + (valor - desde) * suave));
+      if (k < 1) raf = requestAnimationFrame(paso);
+    };
+    raf = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(raf);
+  }, [valor]);
+  return mostrado;
 }
 
 const horaDe = (iso: string) => {
@@ -348,6 +443,47 @@ function Ritmo({ serie, desde }: { serie: DatosAvance["serie"]; desde: string | 
   );
 }
 
+/** DÓNDE SE AVANZÓ MÁS: los barrios con más trabajo en la ventana. Tocar uno recorta la pantalla a ese barrio. */
+function DondeSeAvanzo({
+  datos,
+  alElegirTerritorio,
+}: {
+  datos: DatosAvance;
+  alElegirTerritorio: (t: TerritorioRef | null) => void;
+}) {
+  const filas = datos.topBarrios;
+  if (filas.length === 0) return null;
+  const max = Math.max(1, ...filas.map((f) => f.n));
+  return (
+    <section>
+      <Rotulo>
+        Dónde se avanzó más · {datos.territorio?.tipo === "distrito" ? `barrios de ${datos.territorio.nombre}` : "barrios"} · tocá uno para verlo
+      </Rotulo>
+      <ul className="space-y-1">
+        {filas.map((b, i) => (
+          <li key={b.id}>
+            <button
+              type="button"
+              onClick={() => alElegirTerritorio({ tipo: "barrio", id: b.id })}
+              className="grid w-full grid-cols-[1.2rem_minmax(0,7.5rem)_1fr_auto] items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition hover:bg-panel-2"
+            >
+              <span className="num text-[10px] font-bold text-texto-3">{i + 1}</span>
+              <span className="truncate font-semibold text-texto-2">{b.nombre}</span>
+              <span className="h-1.5 overflow-hidden rounded-full bg-panel-3">
+                <span className="block h-full rounded-full bg-amarillo" style={{ width: `${Math.max(3, Math.round((b.n / max) * 100))}%` }} />
+              </span>
+              <span className="num text-right text-texto-2">
+                {numero(b.n)} {b.n === 1 ? "bache" : "baches"}
+                {b.m2 > 0 && <span className="block text-[10px] text-texto-3">{numero(b.m2)} m²</span>}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** Quién produjo en la ventana. Es también la leyenda del mapa: pasar el cursor resalta, tocar aísla. */
 function QuienProdujo({
   datos,
@@ -372,6 +508,10 @@ function QuienProdujo({
           const v = usaM2 ? f.m2 : f.n;
           const activa = empresaSel === f.empresa;
           const apagada = empresaSel != null && !activa;
+          /* La frescura: cuántos días hace que la empresa no carga nada. Más de
+             una semana se marca en ámbar; es la primera pregunta de Bacheo. */
+          const hace = f.ultimo ? diasEntre(f.ultimo, datos.hoy) : null;
+          const frescura = hace == null ? null : hace <= 0 ? "cargó hoy" : hace === 1 ? "cargó ayer" : `último dato hace ${numero(hace)} d`;
           return (
             <li key={f.empresa}>
               <button
@@ -381,7 +521,7 @@ function QuienProdujo({
                 onFocus={() => alResaltar(f.empresa)}
                 onBlur={() => alResaltar(null)}
                 aria-pressed={activa}
-                className={`grid w-full grid-cols-[12px_minmax(0,5.5rem)_1fr_auto] items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition hover:bg-panel-2 ${
+                className={`grid w-full grid-cols-[12px_minmax(0,6.5rem)_1fr_auto] items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition hover:bg-panel-2 ${
                   apagada ? "opacity-45" : ""
                 } ${activa ? "bg-panel-2" : ""}`}
               >
@@ -390,7 +530,14 @@ function QuienProdujo({
                   style={{ background: colorDeEmpresa(f.empresa) }}
                   aria-hidden="true"
                 />
-                <span className={`truncate ${activa ? "font-bold" : "font-semibold text-texto-2"}`}>{f.empresa}</span>
+                <span className="min-w-0">
+                  <span className={`block truncate ${activa ? "font-bold" : "font-semibold text-texto-2"}`}>{f.empresa}</span>
+                  {frescura && (
+                    <span className={`block truncate text-[10px] ${hace != null && hace > 7 ? "text-amarillo" : "text-texto-3"}`}>
+                      {frescura}
+                    </span>
+                  )}
+                </span>
                 <span className="h-1.5 overflow-hidden rounded-full bg-panel-3">
                   <span
                     className="block h-full rounded-full"

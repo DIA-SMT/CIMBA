@@ -18,6 +18,10 @@ const PUBLICAS = [
   "/_next",
   "/favicon",
   "/sw.js",
+  // Avance para afuera: la página y sus datos. Solo responden algo si la
+  // Dirección prendió AVANCE_PUBLICO; sin la llave dan 404 igual que hoy.
+  "/publico",
+  "/api/publico",
 ];
 
 /**

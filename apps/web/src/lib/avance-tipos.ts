@@ -31,6 +31,53 @@ export function ventanaValida(crudo: unknown): DiasVentana {
   return v ? v.dias : VENTANA_DEFAULT;
 }
 
+/**
+ * EL RECORTE TERRITORIAL: la misma pantalla, para un distrito o un barrio.
+ * "¿Qué se hizo en el distrito 9?" es la pregunta política concreta, y "¿qué
+ * se hizo en mi barrio?" la del vecino.
+ */
+export type TipoTerritorio = "distrito" | "barrio";
+export interface TerritorioRef {
+  tipo: TipoTerritorio;
+  id: number;
+}
+export interface Territorio extends TerritorioRef {
+  nombre: string;
+  /** El contorno simplificado, para dibujarlo y encuadrarlo. */
+  contorno: Polygon | MultiPolygon;
+}
+export interface OpcionTerritorio {
+  id: number;
+  nombre: string;
+}
+export interface ListasTerritorios {
+  distritos: OpcionTerritorio[];
+  barrios: OpcionTerritorio[];
+}
+
+/** `?distrito=9` o `?barrio=79`; el distrito manda si vienen los dos. */
+export function leerTerritorio(sp: { distrito?: string; barrio?: string }): TerritorioRef | null {
+  const d = Number(sp.distrito);
+  if (Number.isInteger(d) && d > 0 && d < 1000) return { tipo: "distrito", id: d };
+  const b = Number(sp.barrio);
+  if (Number.isInteger(b) && b > 0 && b < 100_000) return { tipo: "barrio", id: b };
+  return null;
+}
+
+/** La cámara del mapa en una URL compartida: `c=lat,lon,zoom`. */
+export interface Camara {
+  lat: number;
+  lon: number;
+  zoom: number;
+}
+export function leerCamara(crudo: string | undefined): Camara | null {
+  if (!crudo) return null;
+  const [lat, lon, zoom] = crudo.split(",").map(Number);
+  if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -27.2 || lat > -26.5 || lon < -65.6 || lon > -64.9) return null;
+  return { lat, lon, zoom: Math.min(19, Math.max(10, zoom ?? 13)) };
+}
+
 export interface HechoProps {
   id: number;
   /** Día del trabajo, YYYY-MM-DD en Tucumán. */
@@ -48,6 +95,8 @@ export interface HechoProps {
   direccion: string | null;
   /** La foto del "después", si la hay. */
   foto: string | null;
+  /** La foto del "antes", si la hay: con las dos se arma el comparador. */
+  fotoAntes: string | null;
   tipo: string | null;
   /** Cargado en las últimas 48 horas: late en el mapa. */
   reciente: boolean;
@@ -102,37 +151,11 @@ export interface PuntoSerie {
   m2: number;
 }
 
-export interface DatosAvance {
-  generadoEn: string;
-  /** Hoy en Tucumán, YYYY-MM-DD, y su índice de día. */
-  hoy: string;
-  hoyDia: number;
-  ventana: { dias: DiasVentana; desde: string | null; desdeDia: number | null };
-  hechos: FeatureCollection<Point, HechoProps>;
-  pendientes: FeatureCollection<Point, PendienteProps>;
-  /** Las obras empezadas y no terminadas, sin importar la ventana: son el "ahora". */
-  enCurso: FeatureCollection<Point, EnCursoProps>;
-  /** El área real de cada orden activa: la envolvente de sus items. */
-  areas: FeatureCollection<Polygon | MultiPolygon, OrdenActiva>;
-  ordenes: OrdenActiva[];
-  cifras: {
-    ventana: Cifra & { empresas: number };
-    hoy: Cifra;
-    ayer: Cifra;
-    semana: Cifra;
-    mes: Cifra;
-    total: Cifra & { desde: string | null };
-    /** Lo que está pasando: obras en curso y órdenes activas. */
-    ahora: { obras: number; m2: number; ordenesActivas: number };
-    /** Lo que falta: pedidos en cola, baches en agenda, obras asignadas sin empezar. */
-    pendientes: { pedidos: number; incidentes: number; asignadas: number; asignadasM2: number };
-  };
-  porEmpresa: FilaEmpresa[];
-  serie: PuntoSerie[];
-  /** Los últimos movimientos de trabajo, redactados. Vacío para los roles que no ven el feed. */
-  feed: EventoAvance[];
-  /** Las últimas fotos del "después". */
-  fotos: FotoAvance[];
+export interface TopBarrio {
+  id: number;
+  nombre: string;
+  n: number;
+  m2: number;
 }
 
 /**
@@ -167,6 +190,8 @@ export interface EventoAvance {
 /** Una de las últimas fotos de trabajo terminado, con su lugar para ir al mapa. */
 export interface FotoAvance {
   url: string;
+  /** La del antes, si la hay: al pasar el cursor se ve cómo estaba. */
+  urlAntes: string | null;
   direccion: string | null;
   empresa: string | null;
   lon: number | null;
@@ -182,6 +207,51 @@ export interface Foco {
   id: number | null;
   /** Cambia en cada pedido para que ir dos veces al mismo lugar también vuele. */
   clave: number;
+}
+
+export interface DatosAvance {
+  generadoEn: string;
+  /** Hoy en Tucumán, YYYY-MM-DD, y su índice de día. */
+  hoy: string;
+  hoyDia: number;
+  ventana: { dias: DiasVentana; desde: string | null; desdeDia: number | null };
+  /** El recorte aplicado, con su contorno; null = toda la ciudad. */
+  territorio: Territorio | null;
+  /** Versión pública: sin nombres de personas, sin direcciones de pedidos, sin feed. */
+  publico: boolean;
+  hechos: FeatureCollection<Point, HechoProps>;
+  pendientes: FeatureCollection<Point, PendienteProps>;
+  /** Las obras empezadas y no terminadas, sin importar la ventana: son el "ahora". */
+  enCurso: FeatureCollection<Point, EnCursoProps>;
+  /** El área real de cada orden activa: la envolvente de sus items. */
+  areas: FeatureCollection<Polygon | MultiPolygon, OrdenActiva>;
+  ordenes: OrdenActiva[];
+  cifras: {
+    ventana: Cifra & {
+      empresas: number;
+      /** Trabajos de la ventana sin superficie cargada: los m² los subestiman. */
+      sinMedida: number;
+      /** Pedidos de vecinos cerrados en la ventana. */
+      vecinos: number;
+    };
+    hoy: Cifra;
+    ayer: Cifra;
+    semana: Cifra;
+    mes: Cifra;
+    total: Cifra & { desde: string | null };
+    /** Lo que está pasando: obras en curso y órdenes activas. */
+    ahora: { obras: number; m2: number; ordenesActivas: number };
+    /** Lo que falta: pedidos en cola, baches en agenda, obras asignadas sin empezar. */
+    pendientes: { pedidos: number; incidentes: number; asignadas: number; asignadasM2: number };
+  };
+  porEmpresa: FilaEmpresa[];
+  serie: PuntoSerie[];
+  /** Los barrios con más trabajo en la ventana (dentro del recorte, si es un distrito). */
+  topBarrios: TopBarrio[];
+  /** Los últimos movimientos de trabajo, redactados. Vacío para los roles que no ven el feed. */
+  feed: EventoAvance[];
+  /** Las últimas fotos del "después". */
+  fotos: FotoAvance[];
 }
 
 const DIA_CERO = Date.UTC(2026, 0, 1, 12);
@@ -212,9 +282,23 @@ export function fechaLarga(iso: string, conAnio = false): string {
   }).format(d);
 }
 
+/** Días entre dos fechas YYYY-MM-DD (hoy − entonces). */
+export function diasEntre(desde: string, hasta: string): number {
+  const a = Date.parse(`${desde}T12:00:00Z`);
+  const b = Date.parse(`${hasta}T12:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
+}
+
 /** El título de lo que se está mirando: "Últimos 30 días", "Hoy", "Desde el 15 de marzo". */
 export function etiquetaVentana(dias: DiasVentana, desdeTotal: string | null): string {
   if (dias === 1) return "Hoy";
   if (dias === 0) return desdeTotal ? `Desde el ${fechaLarga(desdeTotal)}` : "Todo lo cargado";
   return `Últimos ${dias} días`;
+}
+
+/** "Distrito 9" / "Barrio Villa 9 de Julio" / "Toda la ciudad". */
+export function nombreRecorte(t: Territorio | null): string {
+  if (!t) return "Toda la ciudad";
+  return t.tipo === "barrio" ? `Barrio ${t.nombre}` : t.nombre;
 }
