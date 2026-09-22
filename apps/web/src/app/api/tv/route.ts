@@ -7,9 +7,9 @@ import { urlFoto } from "@/lib/fotos";
 export const maxDuration = 60;
 
 /**
- * Los datos vivos de la pantalla de comando (/tv): cuatro cifras grandes,
- * los últimos movimientos y las últimas fotos de trabajo. La pantalla los
- * pide cada minuto — todo agregado, nada personal.
+ * Lo vivo de Avance y de la pantalla /tv: cuatro cifras, los últimos
+ * movimientos y las últimas fotos de trabajo terminado. Se pide cada minuto —
+ * todo agregado, nada personal.
  */
 export async function GET() {
   const sesion = await leerSesion();
@@ -52,7 +52,7 @@ export async function GET() {
     left join incidentes i on i.id = iv.incidente_id
     where fo.intervencion_id is not null and fo.momento = 'despues'
     order by fo.tomada_en desc nulls last
-    limit 3
+    limit 6
   `)) as unknown as Array<Record<string, unknown>>;
 
   return NextResponse.json({
