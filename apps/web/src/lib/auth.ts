@@ -51,17 +51,22 @@ export async function borrarCookieSesion(): Promise<void> {
   jar.delete(COOKIE_SESION);
 }
 
-/** Lee y verifica la sesión desde la cookie. Cacheada por request. */
-export const leerSesion = cache(async (): Promise<Sesion | null> => {
-  const jar = await cookies();
-  const token = jar.get(COOKIE_SESION)?.value;
-  if (!token) return null;
+/** Verifica un token suelto. Devuelve null si no es válido, nunca lanza. */
+export async function leerSesionDeToken(token: string): Promise<Sesion | null> {
   try {
     const { payload } = await jwtVerify(token, secreto(), { issuer: "cimba" });
     return sesionSchema.parse(payload);
   } catch {
     return null;
   }
+}
+
+/** Lee y verifica la sesión desde la cookie. Cacheada por request. */
+export const leerSesion = cache(async (): Promise<Sesion | null> => {
+  const jar = await cookies();
+  const token = jar.get(COOKIE_SESION)?.value;
+  if (!token) return null;
+  return leerSesionDeToken(token);
 });
 
 export async function requerirSesion(): Promise<Sesion> {
@@ -70,12 +75,24 @@ export async function requerirSesion(): Promise<Sesion> {
   return sesion;
 }
 
-export async function requerirRol(...roles: RolUsuario[]): Promise<Sesion> {
-  const sesion = await requerirSesion();
+/**
+ * El chequeo de rol, sobre una sesión que ya se tiene en la mano.
+ *
+ * Existe aparte de requerirRol porque el bot de Telegram no trae cookie: su
+ * sesión se arma en el servidor a partir del chat que escribió, y sin esto no
+ * habría forma de aplicarle el mismo control que a una pantalla. La condición
+ * es la misma, bypass de admin incluido: si alguna vez divergen, el bot y la
+ * web dejan de coincidir en quién puede qué, que es la peor falla posible acá.
+ */
+export function exigirRol(sesion: Sesion, ...roles: RolUsuario[]): Sesion {
   if (sesion.rol_cimba !== "admin" && !roles.includes(sesion.rol_cimba)) {
     throw new Error(`Rol ${sesion.rol_cimba} sin permiso para esta acción`);
   }
   return sesion;
+}
+
+export async function requerirRol(...roles: RolUsuario[]): Promise<Sesion> {
+  return exigirRol(await requerirSesion(), ...roles);
 }
 
 /** Roles que pueden ver datos de contacto del vecino. */
