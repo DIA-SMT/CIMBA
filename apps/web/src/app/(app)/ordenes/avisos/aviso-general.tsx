@@ -8,7 +8,23 @@ import { mensajeDeError } from "@/lib/errores";
 interface Resultado {
   push: number;
   emails: number;
+  telegram: number;
   saltados: string[];
+}
+
+const llegoAAlguien = (r: Resultado) => r.push > 0 || r.emails > 0 || r.telegram > 0;
+
+/**
+ * "por push a 3 dispositivos, por Telegram a 1 chat". Solo nombra los canales
+ * por los que efectivamente llegó: un "y por email a 0 direcciones" suena a
+ * que algo falló cuando en realidad nadie lo tenía configurado.
+ */
+function comoLlego(r: Resultado): string {
+  const partes: string[] = [];
+  if (r.push > 0) partes.push(`por push a ${r.push} dispositivo${r.push === 1 ? "" : "s"}`);
+  if (r.emails > 0) partes.push(`por email a ${r.emails} dirección${r.emails === 1 ? "" : "es"}`);
+  if (r.telegram > 0) partes.push(`por Telegram a ${r.telegram} chat${r.telegram === 1 ? "" : "s"}`);
+  return partes.join(", ");
 }
 
 /**
@@ -38,8 +54,8 @@ export function AvisoGeneral({ hayDestinatariosActivos }: { hayDestinatariosActi
     startTransition(async () => {
       try {
         const r = await enviarAvisoGeneral({ asunto: asunto.trim(), mensaje: mensaje.trim() });
-        setResultado({ push: r.push, emails: r.emails, saltados: r.saltados });
-        if (r.push > 0 || r.emails > 0) {
+        setResultado({ push: r.push, emails: r.emails, telegram: r.telegram, saltados: r.saltados });
+        if (r.push > 0 || r.emails > 0 || r.telegram > 0) {
           setAsunto("");
           setMensaje("");
         }
@@ -101,16 +117,11 @@ export function AvisoGeneral({ hayDestinatariosActivos }: { hayDestinatariosActi
       {resultado && (
         <div
           className={`rounded-lg border px-3 py-2.5 text-sm ${
-            resultado.push > 0 || resultado.emails > 0
-              ? "border-ok/40 bg-ok/10"
-              : "border-amarillo/40 bg-amarillo/10"
+            llegoAAlguien(resultado) ? "border-ok/40 bg-ok/10" : "border-amarillo/40 bg-amarillo/10"
           }`}
         >
-          {resultado.push > 0 || resultado.emails > 0 ? (
-            <p style={{ color: "var(--color-ok)" }}>
-              Llegó por push a {resultado.push} dispositivo{resultado.push === 1 ? "" : "s"} y por email a{" "}
-              {resultado.emails} dirección{resultado.emails === 1 ? "" : "es"}.
-            </p>
+          {llegoAAlguien(resultado) ? (
+            <p style={{ color: "var(--color-ok)" }}>Llegó {comoLlego(resultado)}.</p>
           ) : (
             <p className="text-amarillo">El aviso no llegó a nadie.</p>
           )}

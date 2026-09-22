@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, BellRing, Mail, Megaphone } from "lucide-react";
+import { ArrowLeft, BellRing, Mail, Megaphone, Send } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarDestinatarios } from "@/lib/acciones-avisos";
 import { Panel, TituloPagina } from "@/components/ui";
@@ -21,9 +21,13 @@ export default async function PaginaAvisos() {
 
   // Server-side, y solo el booleano: la key jamás baja al cliente.
   const emailActivo = Boolean(process.env.RESEND_API_KEY);
+  const telegramActivo = Boolean(process.env.CIMBA_TELEGRAM_BOT_TOKEN);
+
+  const canalEncendido = (canal: string) =>
+    canal === "push" || (canal === "email" && emailActivo) || (canal === "telegram" && telegramActivo);
 
   const hayAvisoGeneralActivo = destinatarios.some(
-    (d) => d.evento === "aviso_general" && d.activo && (d.canal === "push" || emailActivo),
+    (d) => d.evento === "aviso_general" && d.activo && canalEncendido(d.canal),
   );
 
   return (
@@ -37,7 +41,7 @@ export default async function PaginaAvisos() {
 
       <TituloPagina
         titulo="Avisos — quién se entera de qué"
-        sub="Cada evento del bacheo le avisa a las áreas que definas acá: por push al celular o por email."
+        sub="Cada evento del bacheo le avisa a las áreas que definas acá: por push, por email o por Telegram."
       />
 
       {/* Estado real de los canales */}
@@ -50,12 +54,24 @@ export default async function PaginaAvisos() {
             <Mail size={12} /> Email: encendido
           </span>
         )}
+        {telegramActivo && (
+          <span className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium text-ok" style={{ borderColor: "color-mix(in srgb, var(--color-ok) 40%, transparent)", background: "color-mix(in srgb, var(--color-ok) 10%, transparent)" }}>
+            <Send size={12} /> Telegram: encendido
+          </span>
+        )}
       </div>
 
       {!emailActivo && (
         <div className="mb-5 rounded-lg border border-amarillo/50 bg-amarillo/10 px-4 py-3 text-sm text-amarillo">
           <b>El canal de email está apagado: falta RESEND_API_KEY.</b> Los push andan igual. Los emails
           que configures quedan guardados y arrancan solos cuando el canal se encienda.
+        </div>
+      )}
+
+      {!telegramActivo && (
+        <div className="mb-5 rounded-lg border border-amarillo/50 bg-amarillo/10 px-4 py-3 text-sm text-amarillo">
+          <b>El canal de Telegram está apagado: falta CIMBA_TELEGRAM_BOT_TOKEN.</b> Los chats que
+          configures quedan guardados y arrancan solos cuando el canal se encienda.
         </div>
       )}
 
@@ -76,6 +92,7 @@ export default async function PaginaAvisos() {
               destinatarios={destinatarios.filter((d) => d.evento === evento)}
               puedeGestionar={puedeGestionar}
               emailActivo={emailActivo}
+              telegramActivo={telegramActivo}
             />
           </Panel>
         ))}

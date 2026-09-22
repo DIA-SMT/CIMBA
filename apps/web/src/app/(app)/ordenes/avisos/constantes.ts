@@ -18,7 +18,7 @@ export type EventoAviso =
 export interface Destinatario {
   id: number;
   evento: EventoAviso;
-  canal: "push" | "email";
+  canal: "push" | "email" | "telegram";
   destino: string;
   etiqueta: string | null;
   activo: boolean;

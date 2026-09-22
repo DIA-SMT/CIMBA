@@ -15,11 +15,27 @@ import { ErrorVisible } from "./errores";
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
 
-const eventoSchema = z.enum(["orden_emitida", "orden_vencida", "item_propuesto", "aviso_general"]);
+/* La lista completa de EventoAviso (lib/notificar.ts). Se quedó en los cuatro
+   originales mientras los eventos crecían a diez, así que el tablero mostraba
+   tarjetas —"Reclamos listos para cerrar", "El pulso de las 7:00"— en las que
+   agregar un destinatario fallaba siempre. Igual que el CHECK de la migración
+   0033, se escribe entera para que se vea qué acepta. */
+const eventoSchema = z.enum([
+  "orden_emitida",
+  "orden_vencida",
+  "item_propuesto",
+  "aviso_general",
+  "cierres_pendientes",
+  "pulso_diario",
+  "item_validado",
+  "item_rechazado",
+  "orden_reasignada",
+  "orden_cerrada",
+]);
 
 export async function agregarDestinatario(entrada: {
   evento: string;
-  canal: "push" | "email";
+  canal: "push" | "email" | "telegram";
   destino: string;
   etiqueta?: string;
 }) {
@@ -27,7 +43,7 @@ export async function agregarDestinatario(entrada: {
   const datos = z
     .object({
       evento: eventoSchema,
-      canal: z.enum(["push", "email"]),
+      canal: z.enum(["push", "email", "telegram"]),
       destino: z.string().min(2).max(200),
       etiqueta: z.string().max(100).optional(),
     })
@@ -39,6 +55,12 @@ export async function agregarDestinatario(entrada: {
       }
       if (v.canal === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.destino)) {
         ctx.addIssue({ code: "custom", message: "Ese email no parece válido" });
+      }
+      // El id de chat de Telegram es un entero; el de un grupo es negativo.
+      // No hay forma de validar que exista sin escribirle: eso lo dice el
+      // resultado del envío, no esta validación.
+      if (v.canal === "telegram" && !/^-?\d{1,20}$/.test(v.destino)) {
+        ctx.addIssue({ code: "custom", message: "El id de chat de Telegram es un número (el del grupo empieza con -)" });
       }
     })
     .parse(entrada);
