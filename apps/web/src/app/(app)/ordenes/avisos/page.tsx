@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, BellRing, Mail, Megaphone } from "lucide-react";
+import { ArrowLeft, BellRing, Mail, Megaphone, Send } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarDestinatarios } from "@/lib/acciones-avisos";
 import { Panel, TituloPagina } from "@/components/ui";
@@ -41,7 +41,7 @@ export default async function PaginaAvisos() {
 
       <TituloPagina
         titulo="Avisos — quién se entera de qué"
-        sub="Cada evento del bacheo le avisa a las áreas que definas acá: por push al celular o por email."
+        sub="Cada evento del bacheo le avisa a las áreas que definas acá: por push, por email o por Telegram."
       />
 
       {/* Estado real de los canales */}
@@ -52,6 +52,11 @@ export default async function PaginaAvisos() {
         {emailActivo && (
           <span className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium text-ok" style={{ borderColor: "color-mix(in srgb, var(--color-ok) 40%, transparent)", background: "color-mix(in srgb, var(--color-ok) 10%, transparent)" }}>
             <Mail size={12} /> Email: encendido
+          </span>
+        )}
+        {telegramActivo && (
+          <span className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium text-ok" style={{ borderColor: "color-mix(in srgb, var(--color-ok) 40%, transparent)", background: "color-mix(in srgb, var(--color-ok) 10%, transparent)" }}>
+            <Send size={12} /> Telegram: encendido
           </span>
         )}
       </div>

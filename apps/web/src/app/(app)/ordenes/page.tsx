@@ -117,7 +117,7 @@ export default async function PaginaOrdenes({
                 </Link>
                 <Link href="/ordenes/avisos" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Avisos
-                  <span className="block text-[11px] font-normal text-texto-3">Quién se entera de qué, por push o email</span>
+                  <span className="block text-[11px] font-normal text-texto-3">Quién se entera de qué, y por dónde</span>
                 </Link>
                 <Link href="/ordenes/empresas" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Empresas y accesos
