@@ -11,10 +11,10 @@ import {
   HardHat,
   Inbox,
   Map as MapIcon,
-  Radar,
   Settings,
   ShieldCheck,
   Smartphone,
+  TrendingUp,
   Upload,
   UserRound,
 } from "lucide-react";
@@ -51,6 +51,9 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
   {
     etiqueta: null,
     items: [
+      /* La portada: la ciudad contada desde lo hecho —el trabajo del mes, quién
+         lo hizo y qué se está haciendo ahora—, con lo pendiente de fondo. */
+      { href: "/avance", etiqueta: "Avance", icono: TrendingUp },
       { href: "/mapa", etiqueta: "Mapa", icono: MapIcon },
       { href: "/brecha", etiqueta: "Brecha", icono: GitCompareArrows },
     ],
@@ -59,15 +62,8 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
     etiqueta: "El trabajo",
     items: [
       { href: "/ordenes", etiqueta: "Órdenes", icono: FileSignature },
-      /* La pregunta de la mañana, que es diaria y no mensual: qué se está
-         haciendo hoy y de quién es cada cuadra. Vivía dentro de Órdenes,
-         detrás de un botón y con "últimos 30 días" por defecto. */
-      {
-        href: "/trabajando",
-        etiqueta: "Trabajando",
-        icono: Radar,
-        roles: ["admin", "planificacion", "supervision"],
-      },
+      /* "Dónde se está trabajando hoy" pasó a ser la ventana "Hoy" de Avance;
+         /trabajando sigue redirigiendo ahí. */
       { href: "/incidentes", etiqueta: "Incidentes", icono: ClipboardList },
       { href: "/intervenciones", etiqueta: "Intervenciones", icono: HardHat },
       { href: "/campo", etiqueta: "Campo", icono: Smartphone },

@@ -18,7 +18,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="z-30 flex h-14 shrink-0 items-center justify-between border-b border-borde bg-panel px-4">
-        <Link href="/mapa" aria-label="CIMBA — inicio">
+        <Link href="/avance" aria-label="CIMBA — inicio">
           <LogoCimba />
         </Link>
         <div className="flex items-center gap-4">
