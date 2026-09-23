@@ -1,6 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import { Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExpressionSpecification, FilterSpecification, Map as MapaLibre } from "maplibre-gl";
@@ -25,27 +26,33 @@ import {
   type PendienteProps,
   type Territorio,
 } from "@/lib/avance-tipos";
-import { colorDeEmpresa } from "@/lib/color-empresa";
+import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
 import { AntesDespues } from "@/components/antes-despues";
+import type { ParAntesDespues } from "@/components/visor-antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 
 /**
- * EL MAPA DE AVANCE: cinco fuentes, siete capas, en este orden de abajo hacia
- * arriba —contorno del recorte, áreas de órdenes, pedidos pendientes, trabajo
- * hecho, el latido de lo reciente, obras en curso, rótulos de las órdenes—
- * para que lo hecho tape lo pendiente y no al revés.
+ * EL MAPA DE AVANCE, de abajo hacia arriba: contorno del recorte, áreas de
+ * órdenes, pedidos pendientes, celdas agrupadas (lejos), trabajo hecho
+ * (cerca), el latido de lo reciente y de lo que acaba de entrar, obras en
+ * curso, el resalte de la empresa señalada, rótulos de las órdenes. Lo hecho
+ * tapa lo pendiente y no al revés.
+ *
+ * LEJOS Y CERCA. A escala ciudad, 3.000 círculos encimados son una mancha:
+ * por debajo del zoom 13 el trabajo se junta en celdas de una o dos manzanas,
+ * cada una del color de la empresa que más hizo ahí y con la cantidad adentro.
+ * Al acercar, las celdas se desvanecen y aparecen los puntos. La agrupación
+ * se calcula acá, en el cliente, y respeta la línea de tiempo y la empresa
+ * aislada: cambiar de día no vuelve a subir nada al servidor.
  *
  * El color de la empresa se resuelve acá y viaja como propiedad: MapLibre no
- * puede hashear el nombre adentro de una expresión de pintado. La línea de
- * tiempo, el filtro por empresa y el resaltado son FILTROS y expresiones de
- * pintado, no datos nuevos: cambiar de día no vuelve a subir 3.000 puntos.
+ * puede hashear el nombre adentro de una expresión de pintado. En tema claro
+ * se usa la variante oscurecida de los colores que se lavan sobre blanco.
  *
- * Al pasar el cursor, una etiqueta chica dice qué es eso (empresa, lugar,
- * fecha, medida). El clic abre la ficha completa, con el antes y el después.
- *
- * `preserveDrawingBuffer` está prendido para poder copiar el canvas a la
- * imagen que se comparte; cuesta un poco de memoria de video y nada más.
+ * Al pasar el cursor, una etiqueta chica dice qué es eso. El clic abre la
+ * ficha completa, con el antes y el después, que se puede ampliar a pantalla
+ * completa.
  */
 
 const CENTRO_SMT: [number, number] = [-65.2226, -26.8241];
@@ -56,6 +63,13 @@ const ETIQUETA_TIPO: Record<string, string> = {
   carpeta: "carpeta asfáltica",
   enripiado: "enripiado",
 };
+
+/** Tamaño de la celda de agrupación: ~275 m, una o dos manzanas. */
+const CELDA_LAT = 0.0025;
+const CELDA_LON = 0.0028;
+/** Entre estos dos zooms las celdas se van y llegan los puntos. */
+const ZOOM_LEJOS = 12.8;
+const ZOOM_CERCA = 13.6;
 
 /**
  * El radio: 3 px de piso para que un bache sin medida exista igual, más la
@@ -75,8 +89,27 @@ const RADIO: ExpressionSpecification = [
   13, ["*", 0.75, RADIO_BASE],
   16, ["*", 1.3, RADIO_BASE],
 ];
+/** El radio de una celda, por cantidad de baches. */
+const RADIO_CELDA: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["get", "n"],
+  1, 6,
+  5, 10,
+  20, 15,
+  80, 22,
+  300, 32,
+];
 
 const ES_RECIENTE: ExpressionSpecification = ["==", ["get", "reciente"], true];
+
+/** Lo que se ve de cerca aparece entre los dos zooms; lo de lejos, al revés. */
+const deCerca = (valor: ExpressionSpecification | number): ExpressionSpecification => [
+  "interpolate", ["linear"], ["zoom"], ZOOM_LEJOS, 0, ZOOM_CERCA, valor,
+];
+const deLejos = (valor: ExpressionSpecification | number): ExpressionSpecification => [
+  "interpolate", ["linear"], ["zoom"], ZOOM_LEJOS, valor, ZOOM_CERCA, 0,
+];
 
 type Seleccion =
   | { tipo: "hecho"; props: HechoProps; lngLat: [number, number] }
@@ -114,10 +147,12 @@ export function MapaAvance({
   resaltada,
   ordenResaltada,
   cursor,
+  nuevos,
   verPendientes,
   foco,
   camaraInicial,
   alListo,
+  alAmpliar,
   pantalla,
   publico,
 }: {
@@ -128,15 +163,19 @@ export function MapaAvance({
   resaltada: string | null;
   /** Orden bajo el cursor en la columna: su área se engrosa. */
   ordenResaltada: number | null;
-  /** Día hasta el que se muestra (reproducción); null = todo. */
+  /** Día hasta el que se muestra (línea de tiempo); null = todo. */
   cursor: number | null;
+  /** Los trabajos que entraron en el último refresco: laten en amarillo. */
+  nuevos: ReadonlySet<number>;
   verPendientes: boolean;
-  /** A dónde ir (una foto, una línea del feed). */
+  /** A dónde ir (una foto, una línea del feed, una dirección). */
   foco: Foco | null;
   /** La cámara con la que abre (de un link compartido). */
   camaraInicial: Camara | null;
   /** El mapa ya cargó: quien lo necesite (compartir) se lo guarda. */
   alListo?: (mapa: MapaLibre) => void;
+  /** Abrir el antes y el después a pantalla completa. */
+  alAmpliar?: (par: ParAntesDespues) => void;
   pantalla: boolean;
   publico: boolean;
 }) {
@@ -148,17 +187,18 @@ export function MapaAvance({
   const [sobre, setSobre] = useState<Sobrevuelo | null>(null);
   const [marcador, setMarcador] = useState<{ lon: number; lat: number } | null>(null);
   const sinLinks = pantalla || publico;
+  const color = (empresa: string) => colorDeEmpresaEn(empresa, tema);
 
   const conColor = <T extends { properties: { empresa: string } }>(fc: { type: "FeatureCollection"; features: T[] }) => ({
     type: "FeatureCollection" as const,
-    features: fc.features.map((f) => ({
-      ...f,
-      properties: { ...f.properties, color: colorDeEmpresa(f.properties.empresa) },
-    })),
+    features: fc.features.map((f) => ({ ...f, properties: { ...f.properties, color: color(f.properties.empresa) } })),
   });
-  const hechos = useMemo(() => conColor(datos.hechos), [datos.hechos]);
-  const areas = useMemo(() => conColor(datos.areas), [datos.areas]);
-  const enCurso = useMemo(() => conColor(datos.enCurso), [datos.enCurso]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const hechos = useMemo(() => conColor(datos.hechos), [datos.hechos, tema]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const areas = useMemo(() => conColor(datos.areas), [datos.areas, tema]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const enCurso = useMemo(() => conColor(datos.enCurso), [datos.enCurso, tema]);
   const contorno = useMemo(
     () => ({
       type: "FeatureCollection" as const,
@@ -168,6 +208,57 @@ export function MapaAvance({
     }),
     [datos.territorio],
   );
+
+  /**
+   * LAS CELDAS: lo hecho agrupado en cuadrículas de una o dos manzanas, para
+   * verlo de lejos. Respetan la línea de tiempo y la empresa aislada.
+   */
+  const celdas = useMemo(() => {
+    const acumulado = new Map<string, { n: number; m2: number; lon: number; lat: number; por: Map<string, number> }>();
+    for (const f of datos.hechos.features) {
+      const p = f.properties;
+      if (cursor != null && p.dia > cursor) continue;
+      if (empresaSel && p.empresa !== empresaSel) continue;
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const clave = `${Math.floor(lat / CELDA_LAT)}:${Math.floor(lon / CELDA_LON)}`;
+      let c = acumulado.get(clave);
+      if (!c) {
+        c = { n: 0, m2: 0, lon: 0, lat: 0, por: new Map() };
+        acumulado.set(clave, c);
+      }
+      c.n++;
+      c.m2 += p.m2 ?? 0;
+      c.lon += lon;
+      c.lat += lat;
+      c.por.set(p.empresa, (c.por.get(p.empresa) ?? 0) + 1);
+    }
+    return {
+      type: "FeatureCollection" as const,
+      features: [...acumulado.values()].map((c) => {
+        let empresa = "Otros";
+        let max = -1;
+        for (const [e, n] of c.por) {
+          if (n > max) {
+            max = n;
+            empresa = e;
+          }
+        }
+        return {
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: [c.lon / c.n, c.lat / c.n] },
+          properties: {
+            n: c.n,
+            m2: Math.round(c.m2),
+            empresa,
+            otras: c.por.size - 1,
+            color: color(empresa),
+            etiqueta: c.n > 1 ? numero(c.n) : "",
+          },
+        };
+      }),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datos.hechos, cursor, empresaSel, tema]);
 
   /* Los filtros: la línea de tiempo y la empresa aislada. ["all"] vacío es verdadero. */
   const partes = useMemo(() => {
@@ -181,15 +272,20 @@ export function MapaAvance({
   const filtroPorEmpresa = (
     empresaSel ? ["all", ["==", ["get", "empresa"], empresaSel]] : ["all"]
   ) as unknown as FilterSpecification;
-
-  /* El resaltado desde la columna: lo de la empresa señalada a pleno, el resto atenuado. */
-  const atenuar = (normal: ExpressionSpecification | number, tenue: number): ExpressionSpecification | number =>
-    resaltada ? ["case", ["==", ["get", "empresa"], resaltada], normal, tenue] : normal;
+  const idsNuevos = useMemo(() => [...nuevos], [nuevos]);
+  const filtroNuevos = ["all", ["in", ["get", "id"], ["literal", idsNuevos]], ...partes] as unknown as FilterSpecification;
+  /* El resalte desde la columna: una capa aparte que dibuja solo la empresa
+     señalada a pleno, mientras las capas base bajan a un fondo. Cambiar de
+     empresa cambia un filtro, que es instantáneo. */
+  const filtroResalte = ["all", ["==", ["get", "empresa"], resaltada ?? ""], ...partes] as unknown as FilterSpecification;
+  const filtroResalteEmpresa = ["all", ["==", ["get", "empresa"], resaltada ?? ""]] as unknown as FilterSpecification;
+  const hayResalte = resaltada != null;
 
   /**
-   * EL LATIDO de lo cargado en las últimas 48 horas: un anillo que crece y se
-   * desvanece cada 1,8 s. Se anima cambiando dos propiedades de pintado por
-   * cuadro; con movimiento reducido queda un anillo fijo.
+   * LOS LATIDOS: lo cargado en las últimas 48 horas late en celeste; lo que
+   * acaba de entrar en este refresco, en amarillo y más grande. Se animan
+   * cambiando dos propiedades de pintado por cuadro; con movimiento reducido
+   * quedan anillos fijos.
    */
   useEffect(() => {
     if (!cargado) return;
@@ -199,10 +295,17 @@ export function MapaAvance({
     let raf = 0;
     const inicio = performance.now();
     const paso = (t: number) => {
+      /* El primer cuadro puede traer un tiempo anterior al del arranque; la
+         fase se acota a [0, 1) para que la opacidad nunca pase de 1, que
+         MapLibre rechaza con un error. */
+      const fase = Math.min(0.999, Math.max(0, ((((t - inicio) % 1800) + 1800) % 1800) / 1800));
       if (mapa.getLayer("av-hechos-pulso")) {
-        const fase = ((t - inicio) % 1800) / 1800;
         mapa.setPaintProperty("av-hechos-pulso", "circle-radius", reducido ? 11 : 6 + fase * 18);
         mapa.setPaintProperty("av-hechos-pulso", "circle-stroke-opacity", reducido ? 0.6 : 0.9 * (1 - fase));
+      }
+      if (mapa.getLayer("av-hechos-nuevo")) {
+        mapa.setPaintProperty("av-hechos-nuevo", "circle-radius", reducido ? 16 : 8 + fase * 30);
+        mapa.setPaintProperty("av-hechos-nuevo", "circle-stroke-opacity", reducido ? 0.8 : 1 - fase);
       }
       if (!reducido) raf = requestAnimationFrame(paso);
     };
@@ -255,8 +358,8 @@ export function MapaAvance({
     }
   }, [datos.territorio, cargado]);
 
-  /* Ir a un lugar (una foto, una línea del feed): vuela, marca, y si el
-     trabajo está en la ventana abre su ficha. */
+  /* Ir a un lugar (una foto, una línea del feed, una dirección): vuela, marca,
+     y si el trabajo está en la ventana abre su ficha. */
   useEffect(() => {
     if (!foco || !cargado) return;
     const mapa = mapRef.current?.getMap();
@@ -288,7 +391,17 @@ export function MapaAvance({
     }
     const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
     const props = f.properties as Record<string, unknown>;
-    if (f.layer.id === "av-hechos-punto") setSel({ tipo: "hecho", props: props as unknown as HechoProps, lngLat });
+    if (f.layer.id === "av-celda") {
+      /* Una celda se abre: la cámara se acerca hasta donde se ven los puntos. */
+      const mapa = mapRef.current?.getMap();
+      const g = f.geometry;
+      if (mapa && g.type === "Point") {
+        mapa.easeTo({ center: g.coordinates as [number, number], zoom: Math.max(mapa.getZoom() + 1.6, ZOOM_CERCA + 0.6), duration: 700 });
+      }
+      setSobre(null);
+      return;
+    }
+    if (f.layer.id === "av-hechos-punto" || f.layer.id === "av-hechos-resalte") setSel({ tipo: "hecho", props: props as unknown as HechoProps, lngLat });
     else if (f.layer.id === "av-encurso-punto") setSel({ tipo: "encurso", props: props as unknown as EnCursoProps, lngLat });
     else if (f.layer.id === "av-pend-punto") setSel({ tipo: "pendiente", props: props as unknown as PendienteProps, lngLat });
     else if (f.layer.id === "av-areas-relleno") setSel({ tipo: "orden", props: props as unknown as OrdenActiva, lngLat });
@@ -311,7 +424,7 @@ export function MapaAvance({
       maxZoom={19.5}
       canvasContextAttributes={{ preserveDrawingBuffer: true }}
       attributionControl={{ compact: true }}
-      interactiveLayerIds={["av-hechos-punto", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
+      interactiveLayerIds={["av-celda", "av-hechos-punto", "av-hechos-resalte", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
       onLoad={(e) => {
         setCargado(true);
         alListo?.(e.target);
@@ -326,11 +439,7 @@ export function MapaAvance({
       {/* 0. El contorno del recorte, en el amarillo de la marca */}
       <Source key="av-terr" id="av-terr" type="geojson" data={contorno}>
         <Layer id="av-terr-relleno" type="fill" paint={{ "fill-color": "#f4dc00", "fill-opacity": 0.04 }} />
-        <Layer
-          id="av-terr-borde"
-          type="line"
-          paint={{ "line-color": "#f4dc00", "line-width": 2.2, "line-opacity": 0.9 }}
-        />
+        <Layer id="av-terr-borde" type="line" paint={{ "line-color": "#f4dc00", "line-width": 2.2, "line-opacity": 0.9 }} />
       </Source>
 
       {/* 1. El área real de cada orden activa */}
@@ -339,7 +448,7 @@ export function MapaAvance({
           id="av-areas-relleno"
           type="fill"
           filter={filtroPorEmpresa}
-          paint={{ "fill-color": ["get", "color"], "fill-opacity": atenuar(0.08, 0.02) }}
+          paint={{ "fill-color": ["get", "color"], "fill-opacity": hayResalte ? 0.02 : 0.08 }}
         />
         <Layer
           id="av-areas-borde"
@@ -348,9 +457,16 @@ export function MapaAvance({
           paint={{
             "line-color": ["get", "color"],
             "line-width": ordenResaltada != null ? ["case", ["==", ["get", "id"], ordenResaltada], 3.4, 1.6] : 1.6,
-            "line-opacity": atenuar(0.9, 0.25),
+            "line-opacity": hayResalte ? 0.25 : 0.9,
             "line-dasharray": [2.2, 1.6],
           }}
+        />
+        <Layer
+          id="av-areas-resalte"
+          type="line"
+          filter={filtroResalteEmpresa}
+          layout={{ visibility: hayResalte ? "visible" : "none" }}
+          paint={{ "line-color": ["get", "color"], "line-width": 2.4, "line-opacity": 0.95, "line-dasharray": [2.2, 1.6] }}
         />
       </Source>
 
@@ -362,25 +478,61 @@ export function MapaAvance({
           layout={{ visibility: verPendientes ? "visible" : "none" }}
           paint={{
             "circle-color": oscuro ? "#9aa3b2" : "#6b7280",
-            "circle-opacity": resaltada ? 0.2 : 0.5,
+            "circle-opacity": hayResalte ? 0.2 : 0.5,
             "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.6, 17, 4.5],
           }}
         />
       </Source>
 
-      {/* 3 y 4. Lo hecho, y el latido de lo reciente */}
+      {/* 3. De lejos: las celdas, con la cantidad adentro */}
+      <Source key="av-celdas" id="av-celdas" type="geojson" data={celdas}>
+        <Layer
+          id="av-celda"
+          type="circle"
+          maxzoom={ZOOM_CERCA + 0.01}
+          paint={{
+            "circle-color": ["get", "color"],
+            "circle-radius": RADIO_CELDA,
+            "circle-opacity": deLejos(hayResalte ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 0.9, 0.12] : 0.88),
+            "circle-stroke-color": trazo,
+            "circle-stroke-width": 1.2,
+            "circle-stroke-opacity": deLejos(0.7),
+          }}
+        />
+        <Layer
+          id="av-celda-n"
+          type="symbol"
+          maxzoom={ZOOM_CERCA + 0.01}
+          layout={{
+            "text-field": ["get", "etiqueta"],
+            "text-font": ["Open Sans Bold"],
+            "text-size": ["interpolate", ["linear"], ["get", "n"], 2, 10, 80, 13],
+            "text-allow-overlap": true,
+            "text-ignore-placement": true,
+          }}
+          paint={{
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0,0,0,0.55)",
+            "text-halo-width": 1,
+            "text-opacity": deLejos(hayResalte ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 1, 0.15] : 1),
+          }}
+        />
+      </Source>
+
+      {/* 4 a 6. De cerca: lo hecho, el latido de lo reciente, el de lo nuevo */}
       <Source key="av-hechos" id="av-hechos" type="geojson" data={hechos}>
         <Layer
           id="av-hechos-punto"
           type="circle"
           filter={filtroHechos}
+          minzoom={ZOOM_LEJOS - 0.01}
           paint={{
             "circle-color": ["get", "color"],
             "circle-radius": RADIO,
-            "circle-opacity": atenuar(["case", ES_RECIENTE, 0.95, 0.78], 0.12),
+            "circle-opacity": deCerca(hayResalte ? 0.12 : ["case", ES_RECIENTE, 0.95, 0.78]),
             "circle-stroke-width": ["case", ES_RECIENTE, 2.2, oscuro ? 0.6 : 0.9],
             "circle-stroke-color": ["case", ES_RECIENTE, "#2eb1ff", trazo],
-            "circle-stroke-opacity": atenuar(["case", ES_RECIENTE, 1, 0.6], 0.1),
+            "circle-stroke-opacity": deCerca(hayResalte ? 0.1 : ["case", ES_RECIENTE, 1, 0.6]),
           }}
         />
         <Layer
@@ -396,9 +548,38 @@ export function MapaAvance({
             "circle-stroke-opacity": 0.6,
           }}
         />
+        <Layer
+          id="av-hechos-nuevo"
+          type="circle"
+          filter={filtroNuevos}
+          layout={{ visibility: idsNuevos.length > 0 ? "visible" : "none" }}
+          paint={{
+            "circle-color": "#f4dc00",
+            "circle-opacity": 0,
+            "circle-radius": 16,
+            "circle-stroke-color": "#f4dc00",
+            "circle-stroke-width": 2.5,
+            "circle-stroke-opacity": 0.8,
+          }}
+        />
+        <Layer
+          id="av-hechos-resalte"
+          type="circle"
+          filter={filtroResalte}
+          minzoom={ZOOM_LEJOS - 0.01}
+          layout={{ visibility: hayResalte ? "visible" : "none" }}
+          paint={{
+            "circle-color": ["get", "color"],
+            "circle-radius": RADIO,
+            "circle-opacity": deCerca(0.98),
+            "circle-stroke-width": 1.2,
+            "circle-stroke-color": trazo,
+            "circle-stroke-opacity": deCerca(0.9),
+          }}
+        />
       </Source>
 
-      {/* 5. Las obras en curso: un anillo del color de la empresa, del tamaño
+      {/* 7. Las obras en curso: un anillo del color de la empresa, del tamaño
           de la obra. No dependen de la ventana ni de la línea de tiempo. */}
       <Source key="av-encurso" id="av-encurso" type="geojson" data={enCurso}>
         <Layer
@@ -407,16 +588,30 @@ export function MapaAvance({
           filter={filtroPorEmpresa}
           paint={{
             "circle-color": ["get", "color"],
-            "circle-opacity": atenuar(0.18, 0.04),
+            "circle-opacity": hayResalte ? 0.04 : 0.18,
             "circle-radius": RADIO,
             "circle-stroke-color": ["get", "color"],
             "circle-stroke-width": 2.4,
-            "circle-stroke-opacity": atenuar(0.95, 0.15),
+            "circle-stroke-opacity": hayResalte ? 0.15 : 0.95,
+          }}
+        />
+        <Layer
+          id="av-encurso-resalte"
+          type="circle"
+          filter={filtroResalteEmpresa}
+          layout={{ visibility: hayResalte ? "visible" : "none" }}
+          paint={{
+            "circle-color": ["get", "color"],
+            "circle-opacity": 0.22,
+            "circle-radius": RADIO,
+            "circle-stroke-color": ["get", "color"],
+            "circle-stroke-width": 2.6,
+            "circle-stroke-opacity": 1,
           }}
         />
       </Source>
 
-      {/* 6. El número de cada orden, cuando hay zoom para leerlo */}
+      {/* 8. El número de cada orden, cuando hay zoom para leerlo */}
       <Source key="av-areas-rotulo" id="av-areas-rotulo" type="geojson" data={areas}>
         <Layer
           id="av-areas-texto"
@@ -458,7 +653,7 @@ export function MapaAvance({
               : { left: etiqueta.x + 14, top: etiqueta.y + 14 }
           }
         >
-          <Etiqueta capa={etiqueta.capa} props={etiqueta.props} />
+          <Etiqueta capa={etiqueta.capa} props={etiqueta.props} color={color} />
         </div>
       )}
 
@@ -486,10 +681,30 @@ export function MapaAvance({
             >
               ×
             </button>
-            {sel.tipo === "hecho" && <FichaHecho p={sel.props} sinLinks={sinLinks} />}
-            {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} />}
+            {sel.tipo === "hecho" && (
+              <FichaHecho
+                p={sel.props}
+                sinLinks={sinLinks}
+                color={color}
+                alAmpliar={
+                  alAmpliar && sel.props.foto
+                    ? () =>
+                        alAmpliar({
+                          antes: sel.props.fotoAntes,
+                          despues: sel.props.foto!,
+                          titulo: sel.props.direccion ?? "Sin dirección",
+                          sub: `${sel.props.empresa} · ${fechaLarga(sel.props.fecha, true)} · ${medida(sel.props.m2)}`,
+                          lon: sel.lngLat[0],
+                          lat: sel.lngLat[1],
+                          id: sel.props.id,
+                        })
+                    : undefined
+                }
+              />
+            )}
+            {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} color={color} />}
             {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} />}
-            {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} />}
+            {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} color={color} />}
           </div>
         </Popup>
       )}
@@ -498,14 +713,33 @@ export function MapaAvance({
 }
 
 /** La etiqueta flotante, por capa. Una línea de título y una de datos: nada más. */
-function Etiqueta({ capa, props }: { capa: string; props: Record<string, unknown> }) {
+function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, unknown>; color: (e: string) => string }) {
   const empresa = typeof props.empresa === "string" ? props.empresa : null;
   const direccion = typeof props.direccion === "string" ? props.direccion : null;
   const chip = empresa ? (
-    <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorDeEmpresa(empresa) }} aria-hidden="true" />
+    <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color(empresa) }} aria-hidden="true" />
   ) : null;
 
-  if (capa === "av-hechos-punto") {
+  if (capa === "av-celda") {
+    const n = Number(props.n ?? 0);
+    const otras = Number(props.otras ?? 0);
+    return (
+      <>
+        <p className="flex items-center gap-1.5 font-bold">
+          {chip}
+          <span className="num">
+            {numero(n)} {n === 1 ? "bache" : "baches"}
+          </span>
+          <span className="ml-auto shrink-0 font-normal text-texto-3">{medida(props.m2)}</span>
+        </p>
+        <p className="text-texto-2">
+          {otras > 0 ? `La mayoría de ${empresa}, y ${numero(otras)} ${otras === 1 ? "empresa más" : "empresas más"}` : `Todos de ${empresa}`}
+        </p>
+        <p className="text-texto-3">Tocá para acercarte y ver cada punto.</p>
+      </>
+    );
+  }
+  if (capa === "av-hechos-punto" || capa === "av-hechos-resalte") {
     return (
       <>
         <p className="flex items-center gap-1.5 font-bold">
@@ -561,15 +795,21 @@ function Etiqueta({ capa, props }: { capa: string; props: Record<string, unknown
   );
 }
 
-function FichaHecho({ p, sinLinks }: { p: HechoProps; sinLinks: boolean }) {
+function FichaHecho({
+  p,
+  sinLinks,
+  color,
+  alAmpliar,
+}: {
+  p: HechoProps;
+  sinLinks: boolean;
+  color: (e: string) => string;
+  alAmpliar?: () => void;
+}) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
-        <span
-          className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full"
-          style={{ background: colorDeEmpresa(p.empresa) }}
-          aria-hidden="true"
-        />
+        <span className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: color(p.empresa) }} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="truncate font-bold">{p.direccion ?? "Sin dirección"}</p>
           <p className="text-xs text-texto-2">
@@ -599,24 +839,28 @@ function FichaHecho({ p, sinLinks }: { p: HechoProps; sinLinks: boolean }) {
           loading="lazy"
         />
       ) : null}
-      {!sinLinks && p.ordenId != null && (
-        <Link href={`/ordenes/${p.ordenId}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
-          Ver la orden →
-        </Link>
-      )}
+      <div className="mt-2 flex items-center gap-3">
+        {alAmpliar && (
+          <button type="button" onClick={alAmpliar} className="flex items-center gap-1 text-xs font-semibold text-celeste">
+            <Maximize2 size={12} />
+            Ver grande
+          </button>
+        )}
+        {!sinLinks && p.ordenId != null && (
+          <Link href={`/ordenes/${p.ordenId}`} className="text-xs font-semibold text-celeste">
+            Ver la orden →
+          </Link>
+        )}
+      </div>
     </>
   );
 }
 
-function FichaEnCurso({ p }: { p: EnCursoProps }) {
+function FichaEnCurso({ p, color }: { p: EnCursoProps; color: (e: string) => string }) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
-        <span
-          className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full border-2"
-          style={{ borderColor: colorDeEmpresa(p.empresa) }}
-          aria-hidden="true"
-        />
+        <span className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full border-2" style={{ borderColor: color(p.empresa) }} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="truncate font-bold">{p.direccion ?? "Sin dirección"}</p>
           <p className="text-xs text-texto-2">
@@ -651,15 +895,11 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
   );
 }
 
-function FichaOrden({ p, sinLinks }: { p: OrdenActiva; sinLinks: boolean }) {
+function FichaOrden({ p, sinLinks, color }: { p: OrdenActiva; sinLinks: boolean; color: (e: string) => string }) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
-        <span
-          className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full"
-          style={{ background: colorDeEmpresa(p.empresa) }}
-          aria-hidden="true"
-        />
+        <span className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: color(p.empresa) }} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="num font-bold">{p.numero}</p>
           <p className="text-xs text-texto-2">

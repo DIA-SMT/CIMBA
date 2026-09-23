@@ -41,6 +41,20 @@ export type { DatosAvance, DiasVentana, TerritorioRef } from "./avance-tipos";
  * Se puede RECORTAR a un distrito o a un barrio: todo —puntos, cifras,
  * ranking, ritmo— pasa a ser del recorte. Y tiene una versión PÚBLICA, sin
  * nombres de personas ni direcciones de pedidos, para mostrar afuera.
+ *
+ * DOS VELOCIDADES. Lo que depende de la ventana de tiempo (los puntos, las
+ * cifras, el ranking, el ritmo) se consulta en vivo. Lo que no (los pedidos
+ * pendientes, las órdenes activas, las obras en curso, el feed, las fotos, el
+ * contorno del recorte) se guarda un minuto en memoria del servidor: es lo
+ * más pesado de la pantalla, cambia despacio, y así la portada abre en menos
+ * de un segundo aunque la miren diez personas y el televisor a la vez.
+ *
+ * TODO ADENTRO DE TRANSACCIONES, Y EN ORDEN. La primera versión corría la
+ * mitad cacheada como consultas sueltas sobre el pool, en paralelo con la
+ * transacción de la otra mitad: con cinco conexiones y catorce consultas a la
+ * vez, postgres.js dejó dos transacciones abiertas con un "begin" huérfano y
+ * los pedidos siguientes esperaron un minuto y medio. Cada mitad va en su
+ * transacción (una conexión, consultas encadenadas) y una después de la otra.
  */
 
 const TZ = "America/Argentina/Tucuman";
@@ -64,6 +78,9 @@ function geomDe(t: TerritorioRef): SQL {
     ? sql`(select d.geom from distritos d where d.id = ${t.id})`
     : sql`(select ba.geom from barrios ba where ba.id = ${t.id})`;
 }
+
+/** `and st_intersects(recorte, columna)`, o nada si no hay recorte. */
+const enTerr = (t: TerritorioRef | null, col: SQL): SQL => (t ? sql`and st_intersects(${geomDe(t)}, ${col})` : sql``);
 
 /**
  * LA BASE: cada intervención con ubicación en un estado dado, atribuida a su
@@ -105,7 +122,7 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null) => s
    and e_md.slug = lower(public.unaccent(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1)))
   where iv.estado = ${estado}
     and iv.geom_ejecucion is not null
-    ${t ? sql`and st_intersects(${geomDe(t)}, st_centroid(iv.geom_ejecucion))` : sql``}
+    ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
 `;
 
 /** El nombre corto con el que se muestra la empresa: la primera palabra del canónico. */
@@ -381,81 +398,44 @@ export async function listarTerritorios(): Promise<ListasTerritorios> {
   return { distritos: distritos.map(opcion), barrios: barrios.map(opcion) };
 }
 
-export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvance): Promise<DatosAvance> {
-  const { dias } = opciones;
-  const t = opciones.territorio ?? null;
-  const publico = opciones.publico === true;
-  const desde = desdeDe(dias);
-  const enVentana = desde ? sql`b.fecha >= ${desde}` : sql`true`;
-  const diaLocal = sql`(b.fecha at time zone ${TZ})::date`;
-  const BASE = baseDe("finalizada", t);
-  // El feed nombra a quien hizo cada cosa: misma regla que /actividad, y nunca en público.
-  const conFeed = !publico && sesion != null && ["admin", "planificacion"].includes(sesion.rol_cimba);
+/* ── La mitad lenta, cacheada un minuto ─────────────────────────────────── */
 
-  /* Con sesión, por la transacción con claims como todo el sistema; sin sesión
-     (la vista pública), directo por el pool. La RLS no se aplica hoy, pero el
-     día que se aplique la vista pública tiene que seguir siendo agregada. */
-  const correr = <T>(fn: (tx: Ejecutor) => Promise<T>): Promise<T> =>
-    sesion ? conRls(claims(sesion), fn) : fn(getDb());
+interface BundleLento {
+  pendientes: Fila[];
+  ordenes: Fila[];
+  enCurso: Fila[];
+  resto: Fila;
+  terr: Fila | null;
+  fotos: Fila[];
+  feedCrudo: Fila[];
+  sync: Fila[];
+}
 
-  /**
-   * Las consultas se despachan JUNTAS: postgres.js las encadena por la misma
-   * conexión (pipelining) y se ahorra las idas y vueltas al servidor. En serie
-   * tardaban ~2,8 s desde la oficina; es la portada, y la portada no puede
-   * hacer esperar tres segundos.
-   */
-  return correr(async (tx) => {
-    const qHechos = tx.execute(sql`
-      select b.id,
-             to_char(b.fecha at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
-             (${diaLocal} - date '2026-01-01')::int as dia,
-             ${EMPRESA_CORTA} as empresa,
-             b.superficie_m2::float as m2,
-             round(b.volumen_m3 * 2.4, 2)::float as toneladas,
-             case when b.orden_id is null then 'archivo' else 'orden' end as fuente,
-             b.numero as orden, b.orden_id, i.direccion, b.tipo,
-             (b.fecha >= now() - interval '48 hours') as reciente,
-             fo.storage_path, fo.url_externa,
-             fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
-             st_x(st_centroid(b.geom_ejecucion))::float as lon,
-             st_y(st_centroid(b.geom_ejecucion))::float as lat
-      from (${BASE}) b
-      left join incidentes i on i.id = b.incidente_id
-      left join lateral (
-        select f.storage_path, f.url_externa
-        from fotografias f
-        where f.intervencion_id = b.id and f.momento = 'despues'
-        order by f.tomada_en desc nulls last
-        limit 1
-      ) fo on true
-      left join lateral (
-        select f.storage_path, f.url_externa
-        from fotografias f
-        where f.intervencion_id = b.id and f.momento = 'antes'
-        order by f.tomada_en asc nulls last
-        limit 1
-      ) fa on true
-      where ${enVentana}
-      order by b.fecha
-    `);
+const CACHE_MS = 60_000;
+const cacheLento = new Map<string, { en: number; promesa: Promise<BundleLento> }>();
 
-    /**
-     * EL AHORA: las obras empezadas y no terminadas —paños de hormigón,
-     * carpetas— vengan de donde vengan. No dependen de la ventana: una obra en
-     * curso está en curso hoy, la hayan empezado ayer o hace un mes (y si hace
-     * un mes que figura así, que se vea es justamente el punto).
-     */
-    const qEnCurso = tx.execute(sql`
-      select b.id, ${EMPRESA_CORTA} as empresa,
-             b.superficie_m2::float as m2, b.tipo,
-             to_char(b.iniciada_en at time zone ${TZ}, 'YYYY-MM-DD') as iniciada,
-             i.direccion,
-             st_x(st_centroid(b.geom_ejecucion))::float as lon,
-             st_y(st_centroid(b.geom_ejecucion))::float as lat
-      from (${baseDe("en_curso", t)}) b
-      left join incidentes i on i.id = b.incidente_id
-      order by b.superficie_m2 desc nulls last
-    `);
+/**
+ * Lo que NO depende de la ventana de tiempo, guardado 60 segundos en memoria
+ * por recorte (y por si es público y si lleva feed). Es la parte pesada —1.500
+ * pedidos, 17 envolventes, la auditoría de la semana— y la que menos cambia.
+ * Se cachea la PROMESA: diez pedidos en el mismo segundo comparten una sola
+ * consulta. En Vercel el caché vive por instancia tibia, que es lo que alcanza.
+ */
+function lentoCacheado(t: TerritorioRef | null, publico: boolean, conFeed: boolean): Promise<BundleLento> {
+  const clave = `${t ? `${t.tipo}:${t.id}` : "ciudad"}|${publico ? "pub" : "int"}|${conFeed ? "feed" : "sin"}`;
+  const ahora = Date.now();
+  const hit = cacheLento.get(clave);
+  if (hit && ahora - hit.en < CACHE_MS) return hit.promesa;
+  const promesa = consultarLento(t, publico, conFeed).catch((e: unknown) => {
+    cacheLento.delete(clave);
+    throw e;
+  });
+  cacheLento.set(clave, { en: ahora, promesa });
+  return promesa;
+}
+
+async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed: boolean): Promise<BundleLento> {
+  return getDb().transaction(async (db) => {
 
     /**
      * EL FONDO QUE NO SE APAGA: los pedidos de bacheo que esperan, con
@@ -463,7 +443,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
      * como "en cola", así que el número de acá y el de allá son el mismo. En
      * público van sin dirección: el punto en el mapa alcanza.
      */
-    const qPendientes = tx.execute(sql`
+    const qPendientes = db.execute(sql`
       select d.id,
              to_char(d.creado_en at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
              ${publico ? sql`null::text` : sql`coalesce(d.direccion_normalizada, d.direccion_texto)`} as direccion,
@@ -473,7 +453,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
       where d.estado in ('recibida', 'en_validacion')
         and d.geom is not null
         and coalesce(d.destino::text, 'bacheo') = 'bacheo'
-        ${t ? sql`and st_intersects(${geomDe(t)}, d.geom)` : sql``}
+        ${enTerr(t, sql`d.geom`)}
     `);
 
     /**
@@ -484,7 +464,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
      * con un solo item queda como un círculo de 50 m. Con recorte, las que
      * tienen al menos un bache adentro.
      */
-    const qOrdenes = tx.execute(sql`
+    const qOrdenes = db.execute(sql`
       select ot.id, ot.numero, ot.estado::text as estado, ot.tipo::text as tipo,
              initcap(split_part(e.nombre, ' ', 1)) as empresa,
              count(oi.id)::int as items,
@@ -505,117 +485,75 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
     `);
 
     /**
-     * Las cifras de lo hecho, todas en una pasada sobre la misma base. `ref`
-     * va a la izquierda del join para que, aun con la base vacía, salga una
-     * fila con ceros y no ninguna. "Otros" no cuenta como empresa.
+     * EL AHORA: las obras empezadas y no terminadas —paños de hormigón,
+     * carpetas— vengan de donde vengan. No dependen de la ventana: una obra en
+     * curso está en curso hoy, la hayan empezado ayer o hace un mes (y si hace
+     * un mes que figura así, que se vea es justamente el punto).
      */
-    const qCifras = tx.execute(sql`
-      with b as (${BASE}),
-           ref as (select (now() at time zone ${TZ})::date as hoy)
-      select
-        count(b.id) filter (where ${enVentana})::int as v_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${enVentana}), 0))::int as v_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${enVentana}), 0) * 2.4)::int as v_t,
-        count(distinct b.slug) filter (where ${enVentana} and b.slug <> 'otros')::int as v_empresas,
-        count(b.id) filter (where ${enVentana} and coalesce(b.superficie_m2, 0) = 0)::int as v_sin_medida,
-
-        count(b.id) filter (where ${diaLocal} = ref.hoy)::int as h_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy), 0))::int as h_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy), 0) * 2.4)::int as h_t,
-
-        count(b.id) filter (where ${diaLocal} = ref.hoy - 1)::int as a_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy - 1), 0))::int as a_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy - 1), 0) * 2.4)::int as a_t,
-
-        count(b.id) filter (where b.fecha >= now() - interval '7 days')::int as s_n,
-        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '7 days'), 0))::int as s_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '7 days'), 0) * 2.4)::int as s_t,
-
-        count(b.id) filter (where b.fecha >= now() - interval '30 days')::int as m_n,
-        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '30 days'), 0))::int as m_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '30 days'), 0) * 2.4)::int as m_t,
-
-        count(b.id)::int as t_n,
-        round(coalesce(sum(b.superficie_m2), 0))::int as t_m2,
-        round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as t_t,
-        to_char(min(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as t_desde,
-
-        to_char(ref.hoy, 'YYYY-MM-DD') as hoy,
-        (ref.hoy - date '2026-01-01')::int as hoy_dia,
-        ${desde ? sql`to_char(${desde} at time zone ${TZ}, 'YYYY-MM-DD')` : sql`null::text`} as v_desde,
-        ${desde ? sql`((${desde} at time zone ${TZ})::date - date '2026-01-01')::int` : sql`null::int`} as v_desde_dia
-      from ref
-      left join b on true
-      group by ref.hoy
+    const qEnCurso = db.execute(sql`
+      select b.id, ${EMPRESA_CORTA} as empresa,
+             b.superficie_m2::float as m2, b.tipo,
+             to_char(b.iniciada_en at time zone ${TZ}, 'YYYY-MM-DD') as iniciada,
+             i.direccion,
+             st_x(st_centroid(b.geom_ejecucion))::float as lon,
+             st_y(st_centroid(b.geom_ejecucion))::float as lat
+      from (${baseDe("en_curso", t)}) b
+      left join incidentes i on i.id = b.incidente_id
+      order by b.superficie_m2 desc nulls last
     `);
 
-    /* Lo que pasa ahora, lo que falta y los vecinos respondidos: números
-       chicos, consultas directas, dentro del recorte si lo hay. */
-    const enTerr = (col: SQL) => (t ? sql`and st_intersects(${geomDe(t)}, ${col})` : sql``);
-    const qResto = tx.execute(sql`
+    /* Lo que pasa ahora y lo que falta: números chicos, dentro del recorte si lo hay. */
+    const qResto = db.execute(sql`
       select
-        (select count(*) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_n,
-        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_m2,
+        (select count(*) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_n,
+        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_m2,
         (select count(*) from ordenes_trabajo ot where ot.estado in ('emitida', 'en_ejecucion')
           ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``})::int as ordenes_activas,
         (select count(*) from demandas d
           where d.estado in ('recibida', 'en_validacion') and d.geom is not null
-            and coalesce(d.destino::text, 'bacheo') = 'bacheo' ${enTerr(sql`d.geom`)})::int as pedidos,
+            and coalesce(d.destino::text, 'bacheo') = 'bacheo' ${enTerr(t, sql`d.geom`)})::int as pedidos,
         (select count(*) from incidentes i
-          where i.estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion') ${enTerr(sql`i.geom`)})::int as incidentes,
-        (select count(*) from intervenciones iv where iv.estado = 'asignada' ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as as_n,
-        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'asignada' ${enTerr(sql`st_centroid(iv.geom_ejecucion)`)})::int as as_m2,
-        (select count(*) from demandas d where d.estado = 'cerrada'
-          ${desde ? sql`and d.actualizado_en >= ${desde}` : sql``} ${enTerr(sql`d.geom`)})::int as vecinos
-    `);
-
-    const qPorEmpresa = tx.execute(sql`
-      select ${EMPRESA_CORTA} as empresa,
-             count(*)::int as n,
-             round(coalesce(sum(b.superficie_m2), 0))::int as m2,
-             round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as toneladas,
-             to_char(max(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as ultimo
-      from (${BASE}) b
-      where ${enVentana}
-      group by 1
-      order by 3 desc, 2 desc
-    `);
-
-    /* El ritmo: m² por semana en las últimas 26, siempre las mismas 26 sin
-       importar la ventana, para que el contexto no se mueva con el filtro. */
-    const qSerie = tx.execute(sql`
-      select to_char(date_trunc('week', b.fecha at time zone ${TZ})::date, 'YYYY-MM-DD') as semana,
-             count(*)::int as n,
-             round(coalesce(sum(b.superficie_m2), 0))::int as m2
-      from (${BASE}) b
-      where b.fecha >= (date_trunc('week', now() at time zone ${TZ}) - interval '25 weeks') at time zone ${TZ}
-      group by 1
-      order by 1
-    `);
-
-    /* DÓNDE SE AVANZÓ MÁS: los barrios con más trabajo en la ventana. Con un
-       distrito recortado, sus barrios; con un barrio recortado no tiene sentido. */
-    const qTopBarrios =
-      t?.tipo === "barrio"
-        ? Promise.resolve([] as unknown[])
-        : tx.execute(sql`
-      select ba.id, ba.nombre, count(*)::int as n, round(coalesce(sum(b.superficie_m2), 0))::int as m2
-      from (${BASE}) b
-      join barrios ba on st_intersects(ba.geom, st_centroid(b.geom_ejecucion))
-      where ${enVentana}
-      group by ba.id, ba.nombre
-      order by 3 desc, 4 desc
-      limit 6
+          where i.estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion') ${enTerr(t, sql`i.geom`)})::int as incidentes,
+        (select count(*) from intervenciones iv where iv.estado = 'asignada' ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as as_n,
+        (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'asignada' ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as as_m2
     `);
 
     /* El recorte, con su contorno simplificado para dibujarlo y encuadrarlo. */
     const qTerritorio = t
-      ? tx.execute(
+      ? db.execute(
           t.tipo === "distrito"
             ? sql`select id, nombre, st_asgeojson(st_simplify(geom, 0.0002))::json as contorno from distritos where id = ${t.id}`
             : sql`select id, nombre, st_asgeojson(st_simplify(geom, 0.0002))::json as contorno from barrios where id = ${t.id}`,
         )
       : Promise.resolve([] as unknown[]);
+
+    /* Las últimas fotos del "después" (y su "antes", si lo hay), con su lugar:
+       la prueba, y un atajo al mapa. */
+    const qFotos = db.execute(sql`
+      select fo.url_externa, fo.storage_path, i.direccion, iv.id as intervencion_id,
+             fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
+             nullif(coalesce(initcap(split_part(e.nombre, ' ', 1)),
+                             initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))), '') as empresa,
+             st_x(st_centroid(iv.geom_ejecucion))::float as lon,
+             st_y(st_centroid(iv.geom_ejecucion))::float as lat
+      from fotografias fo
+      join intervenciones iv on iv.id = fo.intervencion_id
+      left join incidentes i on i.id = iv.incidente_id
+      left join lateral (
+        select f.storage_path, f.url_externa from fotografias f
+        where f.intervencion_id = iv.id and f.momento = 'antes'
+        order by f.tomada_en asc nulls last limit 1
+      ) fa on true
+      left join lateral (
+        select ot.empresa_id from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+        where oi.intervencion_id = iv.id limit 1
+      ) it on true
+      left join empresas e on e.id = it.empresa_id
+      where fo.momento = 'despues'
+        ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
+      order by fo.tomada_en desc nulls last
+      limit 6
+    `);
 
     /**
      * PASANDO AHORA, materia prima: los movimientos de la última semana sobre
@@ -626,7 +564,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
      * interpretar(), por eso se piden más filas de las que se muestran.
      */
     const qFeed = conFeed
-      ? tx.execute(sql`
+      ? db.execute(sql`
       select a.id, a.entidad, a.entidad_id, a.accion,
              to_char(a.ocurrido_en at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as en,
              p.nombre as actor_nombre, p.rol::text as actor_rol,
@@ -677,7 +615,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
      * de 231 baches es una noticia de avance; 231 líneas no lo son.
      */
     const qSync = conFeed
-      ? tx.execute(sql`
+      ? db.execute(sql`
       select to_char(max(a.ocurrido_en) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as en,
              count(*)::int as n,
              mode() within group (order by initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))) as empresa
@@ -691,224 +629,369 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
     `)
       : Promise.resolve([] as unknown[]);
 
-    /* Las últimas fotos del "después" (y su "antes", si lo hay), con su lugar:
-       la prueba, y un atajo al mapa. */
-    const qFotos = tx.execute(sql`
-      select fo.url_externa, fo.storage_path, i.direccion, iv.id as intervencion_id,
+    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync] = (await Promise.all([
+      qPendientes,
+      qOrdenes,
+      qEnCurso,
+      qResto,
+      qTerritorio,
+      qFotos,
+      qFeed,
+      qSync,
+    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+
+    return {
+      pendientes,
+      ordenes,
+      enCurso,
+      resto: filasResto[0] ?? {},
+      terr: filasTerr[0] ?? null,
+      fotos,
+      feedCrudo,
+      sync,
+    };
+  });
+}
+
+/* ── La consulta principal ──────────────────────────────────────────────── */
+
+export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvance): Promise<DatosAvance> {
+  const { dias } = opciones;
+  const t = opciones.territorio ?? null;
+  const publico = opciones.publico === true;
+  const desde = desdeDe(dias);
+  const enVentana = desde ? sql`b.fecha >= ${desde}` : sql`true`;
+  const diaLocal = sql`(b.fecha at time zone ${TZ})::date`;
+  const BASE = baseDe("finalizada", t);
+  // El feed nombra a quien hizo cada cosa: misma regla que /actividad, y nunca en público.
+  const conFeed = !publico && sesion != null && ["admin", "planificacion"].includes(sesion.rol_cimba);
+
+  /* Con sesión, por la transacción con claims como todo el sistema; sin sesión
+     (la vista pública), en una transacción sin claims. Siempre una transacción:
+     una conexión, consultas encadenadas. La RLS no se aplica hoy, pero el día
+     que se aplique la vista pública tiene que seguir siendo agregada. */
+  const correr = <T>(fn: (tx: Ejecutor) => Promise<T>): Promise<T> =>
+    sesion ? conRls(claims(sesion), fn) : getDb().transaction((tx) => fn(tx));
+
+  /* Primero la mitad lenta (casi siempre está en caché y vuelve al instante),
+     después la rápida. En orden, no en paralelo: ver la nota de arriba. */
+  const lento = await lentoCacheado(t, publico, conFeed);
+
+  /**
+   * La mitad rápida —todo lo que depende de la ventana— se despacha JUNTA:
+   * postgres.js encadena las consultas por la misma conexión y se ahorra las
+   * idas y vueltas al servidor.
+   */
+  const rapido = await correr(async (tx) => {
+    const qHechos = tx.execute(sql`
+      select b.id,
+             to_char(b.fecha at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
+             (${diaLocal} - date '2026-01-01')::int as dia,
+             ${EMPRESA_CORTA} as empresa,
+             b.superficie_m2::float as m2,
+             round(b.volumen_m3 * 2.4, 2)::float as toneladas,
+             case when b.orden_id is null then 'archivo' else 'orden' end as fuente,
+             b.numero as orden, b.orden_id, i.direccion, b.tipo,
+             (b.fecha >= now() - interval '48 hours') as reciente,
+             fo.storage_path, fo.url_externa,
              fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
-             nullif(coalesce(initcap(split_part(e.nombre, ' ', 1)),
-                             initcap(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))), '') as empresa,
-             st_x(st_centroid(iv.geom_ejecucion))::float as lon,
-             st_y(st_centroid(iv.geom_ejecucion))::float as lat
-      from fotografias fo
-      join intervenciones iv on iv.id = fo.intervencion_id
-      left join incidentes i on i.id = iv.incidente_id
+             st_x(st_centroid(b.geom_ejecucion))::float as lon,
+             st_y(st_centroid(b.geom_ejecucion))::float as lat
+      from (${BASE}) b
+      left join incidentes i on i.id = b.incidente_id
       left join lateral (
-        select f.storage_path, f.url_externa from fotografias f
-        where f.intervencion_id = iv.id and f.momento = 'antes'
-        order by f.tomada_en asc nulls last limit 1
+        select f.storage_path, f.url_externa
+        from fotografias f
+        where f.intervencion_id = b.id and f.momento = 'despues'
+        order by f.tomada_en desc nulls last
+        limit 1
+      ) fo on true
+      left join lateral (
+        select f.storage_path, f.url_externa
+        from fotografias f
+        where f.intervencion_id = b.id and f.momento = 'antes'
+        order by f.tomada_en asc nulls last
+        limit 1
       ) fa on true
-      left join lateral (
-        select ot.empresa_id from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
-        where oi.intervencion_id = iv.id limit 1
-      ) it on true
-      left join empresas e on e.id = it.empresa_id
-      where fo.momento = 'despues'
-        ${t ? sql`and st_intersects(${geomDe(t)}, st_centroid(iv.geom_ejecucion))` : sql``}
-      order by fo.tomada_en desc nulls last
+      where ${enVentana}
+      order by b.fecha
+    `);
+
+    /**
+     * Las cifras de lo hecho, todas en una pasada sobre la misma base. `ref`
+     * va a la izquierda del join para que, aun con la base vacía, salga una
+     * fila con ceros y no ninguna. "Otros" no cuenta como empresa.
+     */
+    const qCifras = tx.execute(sql`
+      with b as (${BASE}),
+           ref as (select (now() at time zone ${TZ})::date as hoy)
+      select
+        count(b.id) filter (where ${enVentana})::int as v_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${enVentana}), 0))::int as v_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${enVentana}), 0) * 2.4)::int as v_t,
+        count(distinct b.slug) filter (where ${enVentana} and b.slug <> 'otros')::int as v_empresas,
+        count(b.id) filter (where ${enVentana} and coalesce(b.superficie_m2, 0) = 0)::int as v_sin_medida,
+
+        count(b.id) filter (where ${diaLocal} = ref.hoy)::int as h_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy), 0))::int as h_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy), 0) * 2.4)::int as h_t,
+
+        count(b.id) filter (where ${diaLocal} = ref.hoy - 1)::int as a_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy - 1), 0))::int as a_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy - 1), 0) * 2.4)::int as a_t,
+
+        count(b.id) filter (where b.fecha >= now() - interval '7 days')::int as s_n,
+        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '7 days'), 0))::int as s_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '7 days'), 0) * 2.4)::int as s_t,
+
+        count(b.id) filter (where b.fecha >= now() - interval '30 days')::int as m_n,
+        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '30 days'), 0))::int as m_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '30 days'), 0) * 2.4)::int as m_t,
+
+        count(b.id)::int as t_n,
+        round(coalesce(sum(b.superficie_m2), 0))::int as t_m2,
+        round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as t_t,
+        to_char(min(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as t_desde,
+
+        to_char(ref.hoy, 'YYYY-MM-DD') as hoy,
+        (ref.hoy - date '2026-01-01')::int as hoy_dia,
+        ${desde ? sql`to_char(${desde} at time zone ${TZ}, 'YYYY-MM-DD')` : sql`null::text`} as v_desde,
+        ${desde ? sql`((${desde} at time zone ${TZ})::date - date '2026-01-01')::int` : sql`null::int`} as v_desde_dia
+      from ref
+      left join b on true
+      group by ref.hoy
+    `);
+
+    /* Los vecinos a los que se les cerró el pedido en la ventana. */
+    const qVecinos = tx.execute(sql`
+      select count(*)::int as vecinos from demandas d
+      where d.estado = 'cerrada'
+        ${desde ? sql`and d.actualizado_en >= ${desde}` : sql``}
+        ${enTerr(t, sql`d.geom`)}
+    `);
+
+    const qPorEmpresa = tx.execute(sql`
+      select ${EMPRESA_CORTA} as empresa,
+             count(*)::int as n,
+             round(coalesce(sum(b.superficie_m2), 0))::int as m2,
+             round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as toneladas,
+             to_char(max(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as ultimo
+      from (${BASE}) b
+      where ${enVentana}
+      group by 1
+      order by 3 desc, 2 desc
+    `);
+
+    /* El ritmo: m² por semana en las últimas 26, siempre las mismas 26 sin
+       importar la ventana, para que el contexto no se mueva con el filtro. */
+    const qSerie = tx.execute(sql`
+      select to_char(date_trunc('week', b.fecha at time zone ${TZ})::date, 'YYYY-MM-DD') as semana,
+             count(*)::int as n,
+             round(coalesce(sum(b.superficie_m2), 0))::int as m2
+      from (${BASE}) b
+      where b.fecha >= (date_trunc('week', now() at time zone ${TZ}) - interval '25 weeks') at time zone ${TZ}
+      group by 1
+      order by 1
+    `);
+
+    /* DÓNDE SE AVANZÓ MÁS: los barrios con más trabajo en la ventana. Con un
+       distrito recortado, sus barrios; con un barrio recortado no tiene sentido. */
+    const qTopBarrios =
+      t?.tipo === "barrio"
+        ? Promise.resolve([] as unknown[])
+        : tx.execute(sql`
+      select ba.id, ba.nombre, count(*)::int as n, round(coalesce(sum(b.superficie_m2), 0))::int as m2
+      from (${BASE}) b
+      join barrios ba on st_intersects(ba.geom, st_centroid(b.geom_ejecucion))
+      where ${enVentana}
+      group by ba.id, ba.nombre
+      order by 3 desc, 4 desc
       limit 6
     `);
 
-    const [hechos, enCurso, pendientes, ordenes, filasCifras, filasResto, porEmpresa, serie, topBarrios, filasTerr, feedCrudo, sync, fotos] =
-      (await Promise.all([
-        qHechos,
-        qEnCurso,
-        qPendientes,
-        qOrdenes,
-        qCifras,
-        qResto,
-        qPorEmpresa,
-        qSerie,
-        qTopBarrios,
-        qTerritorio,
-        qFeed,
-        qSync,
-        qFotos,
-      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
-    const cifras = filasCifras[0] ?? {};
-    const resto = filasResto[0] ?? {};
-    const terr = filasTerr[0];
+    const [hechos, filasCifras, filasVecinos, porEmpresa, serie, topBarrios] = (await Promise.all([
+      qHechos,
+      qCifras,
+      qVecinos,
+      qPorEmpresa,
+      qSerie,
+      qTopBarrios,
+    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+    return { hechos, cifras: filasCifras[0] ?? {}, vecinos: Number(filasVecinos[0]?.vecinos ?? 0), porEmpresa, serie, topBarrios };
+  });
 
-    const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
+  const { hechos, cifras, porEmpresa, serie, topBarrios } = rapido;
+  const { pendientes, ordenes, enCurso, resto, terr, fotos, feedCrudo, sync } = lento;
 
-    const ordenesLista: OrdenActiva[] = ordenes.map((o) => ({
-      id: Number(o.id),
-      numero: String(o.numero),
-      estado: String(o.estado),
-      tipo: String(o.tipo),
-      empresa: String(o.empresa),
-      items: Number(o.items),
-      hechos: Number(o.hechos),
-      ultimo: texto(o.ultimo),
-    }));
+  const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
 
-    const feed: EventoAvance[] = [
-      ...agrupar(feedCrudo.map(interpretar).filter((m): m is Movimiento => m != null)).map(redactar),
-      ...sync.map(
-        (s, i): EventoAvance => ({
-          id: `sync-${i}`,
-          en: String(s.en),
-          tipo: "sync",
-          frase: `Entraron ${numero(Number(s.n))} trabajos ${texto(s.empresa) ? `de ${String(s.empresa)}` : "de las planillas"} por sincronización`,
-          empresa: texto(s.empresa),
-          lugar: null,
-          lon: null,
-          lat: null,
-          ordenId: null,
-        }),
-      ),
-    ]
-      .sort((a, b) => (a.en < b.en ? 1 : a.en > b.en ? -1 : 0))
-      .slice(0, 12);
+  const ordenesLista: OrdenActiva[] = ordenes.map((o) => ({
+    id: Number(o.id),
+    numero: String(o.numero),
+    estado: String(o.estado),
+    tipo: String(o.tipo),
+    empresa: String(o.empresa),
+    items: Number(o.items),
+    hechos: Number(o.hechos),
+    ultimo: texto(o.ultimo),
+  }));
 
-    const territorio: Territorio | null =
-      t && terr
-        ? {
-            tipo: t.tipo,
-            id: Number(terr.id),
-            nombre: String(terr.nombre).replace(/\s+/g, " ").trim(),
-            contorno: terr.contorno as Territorio["contorno"],
-          }
-        : null;
+  const feed: EventoAvance[] = [
+    ...agrupar(feedCrudo.map(interpretar).filter((m): m is Movimiento => m != null)).map(redactar),
+    ...sync.map(
+      (s, i): EventoAvance => ({
+        id: `sync-${i}`,
+        en: String(s.en),
+        tipo: "sync",
+        frase: `Entraron ${numero(Number(s.n))} trabajos ${texto(s.empresa) ? `de ${String(s.empresa)}` : "de las planillas"} por sincronización`,
+        empresa: texto(s.empresa),
+        lugar: null,
+        lon: null,
+        lat: null,
+        ordenId: null,
+      }),
+    ),
+  ]
+    .sort((a, b) => (a.en < b.en ? 1 : a.en > b.en ? -1 : 0))
+    .slice(0, 12);
 
-    return {
-      generadoEn: new Date().toISOString(),
-      hoy,
-      hoyDia: Number(cifras.hoy_dia ?? 0),
+  const territorio: Territorio | null =
+    t && terr
+      ? {
+          tipo: t.tipo,
+          id: Number(terr.id),
+          nombre: String(terr.nombre).replace(/\s+/g, " ").trim(),
+          contorno: terr.contorno as Territorio["contorno"],
+        }
+      : null;
+
+  return {
+    generadoEn: new Date().toISOString(),
+    hoy,
+    hoyDia: Number(cifras.hoy_dia ?? 0),
+    ventana: {
+      dias,
+      desde: texto(cifras.v_desde),
+      desdeDia: cifras.v_desde_dia == null ? null : Number(cifras.v_desde_dia),
+    },
+    territorio,
+    publico,
+    hechos: {
+      type: "FeatureCollection",
+      features: hechos.map((f) => ({
+        type: "Feature" as const,
+        geometry: punto(f),
+        properties: {
+          id: Number(f.id),
+          fecha: String(f.fecha),
+          dia: Number(f.dia),
+          empresa: String(f.empresa),
+          m2: num(f.m2),
+          toneladas: num(f.toneladas),
+          fuente: f.fuente === "orden" ? "orden" : "archivo",
+          orden: texto(f.orden),
+          ordenId: num(f.orden_id),
+          direccion: texto(f.direccion),
+          foto: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }),
+          fotoAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
+          tipo: texto(f.tipo),
+          reciente: Boolean(f.reciente),
+        } satisfies HechoProps,
+      })),
+    },
+    enCurso: {
+      type: "FeatureCollection",
+      features: enCurso.map((f) => ({
+        type: "Feature" as const,
+        geometry: punto(f),
+        properties: {
+          id: Number(f.id),
+          empresa: String(f.empresa),
+          m2: num(f.m2),
+          tipo: texto(f.tipo),
+          iniciada: texto(f.iniciada),
+          direccion: texto(f.direccion),
+        } satisfies EnCursoProps,
+      })),
+    },
+    pendientes: {
+      type: "FeatureCollection",
+      features: pendientes.map((f) => ({
+        type: "Feature" as const,
+        geometry: punto(f),
+        properties: {
+          id: Number(f.id),
+          fecha: String(f.fecha),
+          direccion: texto(f.direccion),
+        } satisfies PendienteProps,
+      })),
+    },
+    areas: {
+      type: "FeatureCollection",
+      features: ordenes
+        .filter((o) => o.area != null)
+        .map((o, i) => ({
+          type: "Feature" as const,
+          geometry: o.area as DatosAvance["areas"]["features"][number]["geometry"],
+          properties: ordenesLista.find((x) => x.id === Number(o.id)) ?? ordenesLista[i]!,
+        })),
+    },
+    ordenes: ordenesLista,
+    cifras: {
       ventana: {
-        dias,
-        desde: texto(cifras.v_desde),
-        desdeDia: cifras.v_desde_dia == null ? null : Number(cifras.v_desde_dia),
+        ...cifraDe(cifras, "v"),
+        empresas: Number(cifras.v_empresas ?? 0),
+        sinMedida: Number(cifras.v_sin_medida ?? 0),
+        vecinos: rapido.vecinos,
       },
-      territorio,
-      publico,
-      hechos: {
-        type: "FeatureCollection",
-        features: hechos.map((f) => ({
-          type: "Feature" as const,
-          geometry: punto(f),
-          properties: {
-            id: Number(f.id),
-            fecha: String(f.fecha),
-            dia: Number(f.dia),
-            empresa: String(f.empresa),
-            m2: num(f.m2),
-            toneladas: num(f.toneladas),
-            fuente: f.fuente === "orden" ? "orden" : "archivo",
-            orden: texto(f.orden),
-            ordenId: num(f.orden_id),
-            direccion: texto(f.direccion),
-            foto: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }),
-            fotoAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
-            tipo: texto(f.tipo),
-            reciente: Boolean(f.reciente),
-          } satisfies HechoProps,
-        })),
-      },
-      enCurso: {
-        type: "FeatureCollection",
-        features: enCurso.map((f) => ({
-          type: "Feature" as const,
-          geometry: punto(f),
-          properties: {
-            id: Number(f.id),
-            empresa: String(f.empresa),
-            m2: num(f.m2),
-            tipo: texto(f.tipo),
-            iniciada: texto(f.iniciada),
-            direccion: texto(f.direccion),
-          } satisfies EnCursoProps,
-        })),
+      hoy: cifraDe(cifras, "h"),
+      ayer: cifraDe(cifras, "a"),
+      semana: cifraDe(cifras, "s"),
+      mes: cifraDe(cifras, "m"),
+      total: { ...cifraDe(cifras, "t"), desde: texto(cifras.t_desde) },
+      ahora: {
+        obras: Number(resto.ec_n ?? 0),
+        m2: Number(resto.ec_m2 ?? 0),
+        ordenesActivas: Number(resto.ordenes_activas ?? 0),
       },
       pendientes: {
-        type: "FeatureCollection",
-        features: pendientes.map((f) => ({
-          type: "Feature" as const,
-          geometry: punto(f),
-          properties: {
-            id: Number(f.id),
-            fecha: String(f.fecha),
-            direccion: texto(f.direccion),
-          } satisfies PendienteProps,
-        })),
+        pedidos: Number(resto.pedidos ?? 0),
+        incidentes: Number(resto.incidentes ?? 0),
+        asignadas: Number(resto.as_n ?? 0),
+        asignadasM2: Number(resto.as_m2 ?? 0),
       },
-      areas: {
-        type: "FeatureCollection",
-        features: ordenes
-          .filter((o) => o.area != null)
-          .map((o, i) => ({
-            type: "Feature" as const,
-            geometry: o.area as DatosAvance["areas"]["features"][number]["geometry"],
-            properties: ordenesLista.find((x) => x.id === Number(o.id)) ?? ordenesLista[i]!,
-          })),
-      },
-      ordenes: ordenesLista,
-      cifras: {
-        ventana: {
-          ...cifraDe(cifras, "v"),
-          empresas: Number(cifras.v_empresas ?? 0),
-          sinMedida: Number(cifras.v_sin_medida ?? 0),
-          vecinos: Number(resto.vecinos ?? 0),
-        },
-        hoy: cifraDe(cifras, "h"),
-        ayer: cifraDe(cifras, "a"),
-        semana: cifraDe(cifras, "s"),
-        mes: cifraDe(cifras, "m"),
-        total: { ...cifraDe(cifras, "t"), desde: texto(cifras.t_desde) },
-        ahora: {
-          obras: Number(resto.ec_n ?? 0),
-          m2: Number(resto.ec_m2 ?? 0),
-          ordenesActivas: Number(resto.ordenes_activas ?? 0),
-        },
-        pendientes: {
-          pedidos: Number(resto.pedidos ?? 0),
-          incidentes: Number(resto.incidentes ?? 0),
-          asignadas: Number(resto.as_n ?? 0),
-          asignadasM2: Number(resto.as_m2 ?? 0),
-        },
-      },
-      porEmpresa: porEmpresa.map(
-        (f): FilaEmpresa => ({
-          empresa: String(f.empresa),
-          n: Number(f.n),
-          m2: Number(f.m2),
-          toneladas: Number(f.toneladas),
-          ultimo: texto(f.ultimo),
+    },
+    porEmpresa: porEmpresa.map(
+      (f): FilaEmpresa => ({
+        empresa: String(f.empresa),
+        n: Number(f.n),
+        m2: Number(f.m2),
+        toneladas: Number(f.toneladas),
+        ultimo: texto(f.ultimo),
+      }),
+    ),
+    serie: completarSerie(serie, hoy),
+    topBarrios: topBarrios.map(
+      (f): TopBarrio => ({
+        id: Number(f.id),
+        nombre: String(f.nombre).replace(/\s+/g, " ").trim(),
+        n: Number(f.n),
+        m2: Number(f.m2),
+      }),
+    ),
+    feed,
+    fotos: fotos
+      .map(
+        (f): FotoAvance => ({
+          url: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }) ?? "",
+          urlAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
+          direccion: texto(f.direccion),
+          empresa: texto(f.empresa),
+          lon: num(f.lon),
+          lat: num(f.lat),
+          intervencionId: num(f.intervencion_id),
         }),
-      ),
-      serie: completarSerie(serie, hoy),
-      topBarrios: topBarrios.map(
-        (f): TopBarrio => ({
-          id: Number(f.id),
-          nombre: String(f.nombre).replace(/\s+/g, " ").trim(),
-          n: Number(f.n),
-          m2: Number(f.m2),
-        }),
-      ),
-      feed,
-      fotos: fotos
-        .map(
-          (f): FotoAvance => ({
-            url: urlFoto({ storagePath: texto(f.storage_path), urlExterna: texto(f.url_externa) }) ?? "",
-            urlAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
-            direccion: texto(f.direccion),
-            empresa: texto(f.empresa),
-            lon: num(f.lon),
-            lat: num(f.lat),
-            intervencionId: num(f.intervencion_id),
-          }),
-        )
-        .filter((f) => f.url !== ""),
-    };
-  });
+      )
+      .filter((f) => f.url !== ""),
+  };
 }

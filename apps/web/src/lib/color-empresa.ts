@@ -85,3 +85,26 @@ export function colorDeEmpresa(nombre: string): string {
   for (let i = 0; i < clave.length; i++) h = ((h << 5) + h + clave.charCodeAt(i)) | 0;
   return PALETA_EMPRESAS[Math.abs(h) % PALETA_EMPRESAS.length] ?? "#4f9cf9";
 }
+
+/**
+ * La paleta se eligió para el fondo oscuro. Sobre blanco (la columna en tema
+ * claro, el plano Voyager) el amarillo, el lima, el celeste claro y el caqui
+ * se lavan: el mismo color, un tono más oscuro, solo cuando el tema es claro.
+ * La identidad no cambia —sigue siendo "el amarillo de Administración"—, solo
+ * se lee.
+ */
+const EN_CLARO: Record<string, string> = {
+  "#f4dc00": "#a89400",
+  "#9ecf4a": "#5f8f1f",
+  "#6fd1e8": "#1f95b8",
+  "#c9b458": "#8a7a2a",
+  "#3ec9a7": "#17987a",
+  "#ff8fa3": "#d9506f",
+  "#d4a373": "#a3703f",
+  "#9aa3b2": "#6b7280",
+};
+
+export function colorDeEmpresaEn(nombre: string, tema: "claro" | "oscuro"): string {
+  const color = colorDeEmpresa(nombre);
+  return tema === "claro" ? (EN_CLARO[color] ?? color) : color;
+}

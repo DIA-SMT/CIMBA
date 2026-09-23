@@ -15,9 +15,10 @@ import {
   type EventoAvance,
   type TerritorioRef,
 } from "@/lib/avance-tipos";
-import { colorDeEmpresa } from "@/lib/color-empresa";
+import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
 import { LogoCimba } from "@/components/marca";
+import { usarTemaMapa } from "@/components/mapa/tema-mapa";
 
 /**
  * LA COLUMNA DE DATOS de Avance: las cifras de la ventana, el ritmo semanal,
@@ -45,6 +46,7 @@ export function RailAvance({
   alResaltarOrden,
   alEnfocar,
   alElegirTerritorio,
+  alAmpliarFotos,
   pantalla,
   publico,
   rol,
@@ -57,10 +59,14 @@ export function RailAvance({
   alResaltarOrden: (id: number | null) => void;
   alEnfocar: (lugar: Lugar) => void;
   alElegirTerritorio: (t: TerritorioRef | null) => void;
+  /** Abrir el antes y el después a pantalla completa, desde la foto tocada. */
+  alAmpliarFotos: (indice: number) => void;
   pantalla: boolean;
   publico: boolean;
   rol: RolUsuario;
 }) {
+  const tema = usarTemaMapa();
+  const color = (e: string) => colorDeEmpresaEn(e, tema);
   const c = datos.cifras;
   const filaSel = empresaSel ? datos.porEmpresa.find((e) => e.empresa === empresaSel) : null;
   /* Con una empresa elegida, la cifra grande es la de ESA empresa. */
@@ -102,7 +108,7 @@ export function RailAvance({
           {empresaSel && (
             <>
               <span aria-hidden="true">·</span>
-              <span className="normal-case tracking-normal" style={{ color: colorDeEmpresa(empresaSel) }}>
+              <span className="normal-case tracking-normal" style={{ color: color(empresaSel) }}>
                 {empresaSel}
               </span>
             </>
@@ -122,6 +128,14 @@ export function RailAvance({
         {!empresaSel && c.ventana.sinMedida > 0 && (
           <p className="num mt-1 text-[11px] text-texto-3">
             {numero(c.ventana.sinMedida)} de los {numero(c.ventana.n)} sin medida cargada: los m² reales son más.
+            {puedeNavegar && (
+              <>
+                {" "}
+                <Link href="/intervenciones?medida=sin" className="font-semibold text-celeste">
+                  Completarlos →
+                </Link>
+              </>
+            )}
           </p>
         )}
         {c.ventana.vecinos > 0 && !empresaSel && (
@@ -145,7 +159,7 @@ export function RailAvance({
         <Referencia etiqueta={c.total.desde ? `Desde ${fechaCorta(c.total.desde).slice(0, 5)}` : "Total"} cifra={c.total} />
       </dl>
 
-      <EnObraAhora datos={datos} recientes={recientes} alResaltarEmpresa={alResaltarEmpresa} alElegirEmpresa={alElegirEmpresa} />
+      <EnObraAhora datos={datos} recientes={recientes} alResaltarEmpresa={alResaltarEmpresa} alElegirEmpresa={alElegirEmpresa} color={color} />
 
       {/* Lo que falta, en neutro y con el mismo número que el mapa */}
       <section className="rounded-2xl border border-dashed border-borde-2 px-4 py-3">
@@ -176,22 +190,21 @@ export function RailAvance({
         empresaSel={empresaSel}
         alElegir={alElegirEmpresa}
         alResaltar={alResaltarEmpresa}
+        color={color}
       />
 
-      <OrdenesActivas ordenes={datos.ordenes} puedeNavegar={puedeNavegar} alResaltar={alResaltarOrden} />
+      <OrdenesActivas ordenes={datos.ordenes} puedeNavegar={puedeNavegar} alResaltar={alResaltarOrden} color={color} />
 
       {datos.fotos.length > 0 && (
         <section>
-          <Rotulo>Últimos trabajos, con foto · pasá el cursor para ver el antes, tocá para ir</Rotulo>
+          <Rotulo>Últimos trabajos, con foto · pasá el cursor para ver el antes, tocá para verlo grande</Rotulo>
           <div className="grid grid-cols-3 gap-2">
             {datos.fotos.map((f, i) => {
-              const ir = f.lon != null && f.lat != null ? () => alEnfocar({ lon: f.lon!, lat: f.lat!, id: f.intervencionId }) : undefined;
               return (
                 <button
                   key={`${f.url}-${i}`}
                   type="button"
-                  onClick={ir}
-                  disabled={!ir}
+                  onClick={() => alAmpliarFotos(i)}
                   title={[f.direccion, f.empresa, f.urlAntes ? "con antes y después" : null].filter(Boolean).join(" · ") || undefined}
                   className="group relative aspect-square overflow-hidden rounded-lg border border-borde bg-panel-3 text-left transition hover:border-celeste/60 focus:border-celeste disabled:cursor-default"
                 >
@@ -215,7 +228,7 @@ export function RailAvance({
                   {f.empresa && (
                     <span
                       className="absolute top-1 left-1 h-2.5 w-2.5 rounded-full border border-black/40"
-                      style={{ background: colorDeEmpresa(f.empresa) }}
+                      style={{ background: color(f.empresa) }}
                       aria-hidden="true"
                     />
                   )}
@@ -242,7 +255,7 @@ export function RailAvance({
           <Rotulo>Pasando ahora · última semana</Rotulo>
           <ul className="space-y-1">
             {datos.feed.map((e) => (
-              <Movimiento key={e.id} e={e} alEnfocar={alEnfocar} />
+              <Movimiento key={e.id} e={e} alEnfocar={alEnfocar} color={color} />
             ))}
           </ul>
         </section>
@@ -356,11 +369,13 @@ function EnObraAhora({
   recientes,
   alResaltarEmpresa,
   alElegirEmpresa,
+  color,
 }: {
   datos: DatosAvance;
   recientes: number;
   alResaltarEmpresa: (e: string | null) => void;
   alElegirEmpresa: (e: string) => void;
+  color: (e: string) => string;
 }) {
   const c = datos.cifras.ahora;
   const porEmpresa = new Map<string, number>();
@@ -390,7 +405,7 @@ function EnObraAhora({
               title={`${empresa}: ${numero(n)} ${n === 1 ? "orden activa" : "órdenes activas"}. Tocá para verla sola.`}
               className="flex items-center gap-1.5 rounded-full border border-borde bg-panel px-2 py-0.5 text-[11px] font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-texto"
             >
-              <span className="inline-block h-2 w-2 rounded-full" style={{ background: colorDeEmpresa(empresa) }} aria-hidden="true" />
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: color(empresa) }} aria-hidden="true" />
               {empresa}
               <span className="num text-texto-3">{n}</span>
             </button>
@@ -490,11 +505,13 @@ function QuienProdujo({
   empresaSel,
   alElegir,
   alResaltar,
+  color,
 }: {
   datos: DatosAvance;
   empresaSel: string | null;
   alElegir: (e: string) => void;
   alResaltar: (e: string | null) => void;
+  color: (e: string) => string;
 }) {
   const filas = datos.porEmpresa;
   if (filas.length === 0) return null;
@@ -527,7 +544,7 @@ function QuienProdujo({
               >
                 <span
                   className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ background: colorDeEmpresa(f.empresa) }}
+                  style={{ background: color(f.empresa) }}
                   aria-hidden="true"
                 />
                 <span className="min-w-0">
@@ -541,7 +558,7 @@ function QuienProdujo({
                 <span className="h-1.5 overflow-hidden rounded-full bg-panel-3">
                   <span
                     className="block h-full rounded-full"
-                    style={{ width: `${Math.max(2, Math.round((v / max) * 100))}%`, background: colorDeEmpresa(f.empresa) }}
+                    style={{ width: `${Math.max(2, Math.round((v / max) * 100))}%`, background: color(f.empresa) }}
                   />
                 </span>
                 <span className="num text-right text-texto-2">
@@ -561,10 +578,12 @@ function OrdenesActivas({
   ordenes,
   puedeNavegar,
   alResaltar,
+  color,
 }: {
   ordenes: DatosAvance["ordenes"];
   puedeNavegar: boolean;
   alResaltar: (id: number | null) => void;
+  color: (e: string) => string;
 }) {
   if (ordenes.length === 0) return null;
   const visibles = ordenes.slice(0, 8);
@@ -577,7 +596,7 @@ function OrdenesActivas({
             <>
               <span
                 className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: colorDeEmpresa(o.empresa) }}
+                style={{ background: color(o.empresa) }}
                 aria-hidden="true"
               />
               <span className="num shrink-0 font-bold">{o.numero}</span>
@@ -626,12 +645,20 @@ const COLOR_TIPO: Record<EventoAvance["tipo"], string> = {
   sync: "var(--color-texto-3)",
 };
 
-function Movimiento({ e, alEnfocar }: { e: EventoAvance; alEnfocar: (lugar: Lugar) => void }) {
+function Movimiento({
+  e,
+  alEnfocar,
+  color,
+}: {
+  e: EventoAvance;
+  alEnfocar: (lugar: Lugar) => void;
+  color: (empresa: string) => string;
+}) {
   const ir = e.lon != null && e.lat != null ? () => alEnfocar({ lon: e.lon!, lat: e.lat!, id: null }) : undefined;
-  const color = e.empresa ? colorDeEmpresa(e.empresa) : COLOR_TIPO[e.tipo];
+  const tono = e.empresa ? color(e.empresa) : COLOR_TIPO[e.tipo];
   const cuerpo = (
     <>
-      <span className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color }} aria-hidden="true" />
+      <span className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: tono }} aria-hidden="true" />
       <span className="min-w-0 flex-1">
         <span className="block leading-snug text-texto">{e.frase}</span>
         <span className="num block truncate text-[10px] text-texto-3">

@@ -18,24 +18,28 @@ export function AntesDespues({
   despues,
   alt,
   className = "",
+  ajuste = "cover",
 }: {
   antes: string;
   despues: string;
   alt: string;
   /** Tamaño y forma los pone quien lo usa (p. ej. `aspect-[4/3] w-full`). */
   className?: string;
+  /** "cover" llena el marco (fichas chicas); "contain" muestra la foto entera (pantalla completa). */
+  ajuste?: "cover" | "contain";
 }) {
   const [pos, setPos] = useState(50);
+  const encaje = ajuste === "contain" ? "object-contain" : "object-cover";
   return (
     <div className={`relative overflow-hidden rounded-lg border border-borde bg-panel-3 select-none ${className}`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- fotos de Storage/externas */}
-      <img src={despues} alt={alt} className="block h-full w-full object-cover" draggable={false} loading="lazy" />
+      <img src={despues} alt={alt} className={`block h-full w-full ${encaje}`} draggable={false} loading="lazy" />
       {/* eslint-disable-next-line @next/next/no-img-element -- fotos de Storage/externas */}
       <img
         src={antes}
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 h-full w-full object-cover"
+        className={`absolute inset-0 h-full w-full ${encaje}`}
         style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
         draggable={false}
         loading="lazy"
