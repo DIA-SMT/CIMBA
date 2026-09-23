@@ -241,6 +241,7 @@ export async function notificarEvento(
         // carga.url es una ruta (/ordenes/123): se completa con la base, igual
         // que hace htmlAviso, o el enlace llega inservible.
         url: carga.url ? `${basePublica()}${carga.url}` : undefined,
+        ...(carga.accionesTelegram?.length ? { botones: carga.accionesTelegram } : {}),
       });
       if (r.ok) resultado.telegram++;
       else resultado.saltados.push(`telegram ${d.destino}: ${r.motivo}`);
