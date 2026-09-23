@@ -1470,6 +1470,8 @@ function MapaInterno({
    * abierto la próxima vez, sin volver a abrirlo todos los días.
    */
   const [panelCapas, setPanelCapas] = useState(false);
+  /** En el teléfono, el selector de mapa y de vista vive plegado en una ficha. */
+  const [vistaAbiertaMovil, setVistaAbiertaMovil] = useState(false);
   useEffect(() => {
     try {
       if (localStorage.getItem("cimba-panel-capas") === "1") setPanelCapas(true);
@@ -4420,8 +4422,21 @@ function MapaInterno({
         {/* QUÉ MAPA: dos mundos que no se mezclan. El de bache y asfalto es el
             de todos los días; el pluvial es la red de desagües, que tiene otro
             dueño, otro trabajo y otra lectura. */}
+        {/* En el teléfono: una ficha con lo que se está viendo; al tocarla se
+            despliegan el selector de mapa y el de vista. */}
+        {!pantalla && !comparar && (
+          <button
+            type="button"
+            onClick={() => setVistaAbiertaMovil((v) => !v)}
+            aria-expanded={vistaAbiertaMovil}
+            className="panel-vidrio flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-texto sm:hidden"
+          >
+            {enPluvial ? "Sistema pluvial" : `${VISTAS[vista].etiqueta} · ${DESTINOS.filter((d) => destinos[d] === true).map((d) => ETIQUETA_DESTINO[d]).join(", ") || "sin filtro"}`}
+            <ChevronDown size={13} className={vistaAbiertaMovil ? "rotate-180 transition" : "transition"} />
+          </button>
+        )}
         {!pantalla && (
-          <div className="panel-vidrio flex rounded-xl p-1">
+          <div className={`panel-vidrio rounded-xl p-1 ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
             {([
               { clave: "bache" as const, etiqueta: "Bache y asfalto", desc: "Pedidos, incidentes y trabajo de bacheo" },
               { clave: "pluvial" as const, etiqueta: "Sistema pluvial", desc: "Imbornales, colectores y puntos de anegamiento" },
@@ -4458,7 +4473,7 @@ function MapaInterno({
            * donde se lo busca) y el ancho quedó topado: la barra de
            * herramientas no puede volver a comerse el mapa.
            */
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] flex-col rounded-xl p-1 sm:flex-row sm:items-center">
+          <div data-tour="vistas" className={`panel-vidrio max-w-[calc(100vw-24px)] flex-col rounded-xl p-1 sm:max-w-[calc(100vw-88px)] sm:flex-row sm:items-center ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
             <div className="flex shrink-0 overflow-x-auto">
               {(Object.keys(VISTAS) as Vista[]).map((v) => (
                 <button
@@ -5101,7 +5116,7 @@ function MapaInterno({
 
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
       {balance && !comparar && !despejado && !enPluvial && !sinDatos && (balance.pend > 0 || balance.m2 > 0) && (
-        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
+        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2 max-sm:bottom-[8.5rem] max-sm:left-3 max-sm:translate-x-0">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
                 "sin respuesta" sale de brecha === 'sin_atencion' (rojo) y los
