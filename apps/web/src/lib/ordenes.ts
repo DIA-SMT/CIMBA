@@ -1313,3 +1313,95 @@ export async function propuestoParaResolver(
     propuestoPor: metadata.propuesto?.por ?? null,
   };
 }
+
+export interface Pendientes {
+  /** Los que esperan una decisión suya, con lo necesario para tomarla. */
+  propuestos: PropuestoParaResolver[];
+  /** Cuántos hay en total: `propuestos` viene acotado. */
+  propuestosTotal: number;
+  ordenesVencidas: Array<{ numero: string; empresa: string; vence: string; itemsPendientes: number }>;
+  cierresPendientes: number;
+}
+
+/**
+ * Todo lo que está esperando una decisión de esta persona, en una consulta.
+ *
+ * Es la bandeja del Director: lo que hoy solo se ve entrando a tres pantallas
+ * distintas —los baches propuestos de cada orden, las órdenes vencidas, los
+ * reclamos listos para cerrar— junto y ordenado por cuán suya es la decisión.
+ *
+ * Los tres criterios son EXACTAMENTE los del control diario
+ * (api/cron/vencimientos): si la bandeja contara distinto que el aviso que
+ * llega a las 7, uno de los dos estaría mintiendo y nadie sabría cuál.
+ *
+ * `limite` acota los propuestos porque cada uno se muestra como un mensaje
+ * aparte con sus botones: veinte mensajes de golpe no son una bandeja, son una
+ * avalancha. El total va aparte para poder decir cuántos quedaron afuera.
+ */
+export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendientes> {
+  return conRls(claims(sesion), async (tx) => {
+    const propuestos = (await tx.execute(sql`
+      select oi.id, oi.direccion, oi.superficie_m2, oi.espesor_cm, oi.tipo_trabajo::text as tipo_trabajo,
+             oi.metadata, ot.id as orden_id, ot.numero, e.nombre as empresa
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.estado = 'propuesto'
+      order by oi.id desc
+      limit ${limite}
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    const total = (await tx.execute(sql`
+      select count(*)::int as n from orden_items where estado = 'propuesto'
+    `)) as unknown as Array<{ n: number }>;
+
+    const vencidas = (await tx.execute(sql`
+      select ot.numero, ot.vence_en::text as vence, e.nombre as empresa,
+        (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')::int as pendientes
+      from ordenes_trabajo ot
+      join empresas e on e.id = ot.empresa_id
+      where ot.estado in ('emitida', 'en_ejecucion')
+        and ot.vence_en is not null
+        and ot.vence_en <= current_date
+      order by ot.vence_en asc
+      limit 10
+    `)) as unknown as Array<{ numero: string; vence: string; empresa: string; pendientes: number }>;
+
+    const cerrables = (await tx.execute(sql`
+      select count(distinct d.id)::int as n
+      from demandas d
+      join demanda_incidente di on di.demanda_id = d.id
+      join incidentes i on i.id = di.incidente_id
+      where d.estado in ('recibida','en_validacion','vinculada')
+        and i.estado in ('reparado','verificado')
+    `)) as unknown as Array<{ n: number }>;
+
+    return {
+      propuestos: propuestos.map((f) => {
+        const metadata = (f.metadata ?? {}) as { propuesto?: { por?: string } };
+        const superficie = f.superficie_m2 != null ? Number(f.superficie_m2) : null;
+        const espesor = f.espesor_cm != null ? Number(f.espesor_cm) : null;
+        return {
+          itemId: Number(f.id),
+          direccion: (f.direccion as string | null) ?? null,
+          tipoTrabajo: (f.tipo_trabajo as string | null) ?? null,
+          superficieM2: superficie,
+          espesorCm: espesor,
+          habilitaCertificacion: superficie != null && espesor != null,
+          ordenId: Number(f.orden_id),
+          numero: String(f.numero),
+          empresa: String(f.empresa),
+          propuestoPor: metadata.propuesto?.por ?? null,
+        };
+      }),
+      propuestosTotal: Number(total[0]?.n ?? 0),
+      ordenesVencidas: vencidas.map((v) => ({
+        numero: v.numero,
+        empresa: v.empresa,
+        vence: v.vence,
+        itemsPendientes: Number(v.pendientes),
+      })),
+      cierresPendientes: Number(cerrables[0]?.n ?? 0),
+    };
+  });
+}
