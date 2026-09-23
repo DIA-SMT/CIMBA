@@ -170,6 +170,21 @@ export const HERRAMIENTAS_MIGUE = [
   {
     type: "function",
     function: {
+      name: "detalle_orden",
+      description:
+        "Una orden de trabajo concreta con TODOS sus items: dirección de cada uno, qué tipo de trabajo es, si está pendiente, propuesto, hecho o rechazado, los m² y el espesor reportados. Usala cuando pregunten por una orden por su número ('pasame la 0013', 'cómo viene la OT-2026-0006') o por qué le falta a una orden ('qué item me falta en la 13', 'cuáles quedaron sin reportar'). El número puede venir parcial: '13', '0013' o 'OT-2026-0013' encuentran la misma.",
+      parameters: {
+        type: "object",
+        properties: {
+          numero: { type: "string", description: "Número de la orden, entero o parcial" },
+        },
+        required: ["numero"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "pendientes",
       description:
         "Todo lo que está esperando una decisión de quien pregunta: baches propuestos por las cuadrillas sin validar, órdenes vencidas que siguen activas, y reclamos cuyo problema ya se reparó y falta cerrarle al vecino. Usala para '¿qué tengo pendiente?', '¿qué me falta resolver?', '¿qué está esperando por mí?', '¿qué tengo para hacer hoy?'.",
@@ -477,6 +492,48 @@ export async function ejecutarHerramientaMigue(
         return { circuito: mapear(uno) };
       }
       return { ranking_por_pendientes: filas.slice(0, 15).map(mapear), total_circuitos: filas.length };
+    }
+
+    case "detalle_orden": {
+      const buscado = String(args.numero ?? "").trim();
+      if (!buscado) return { error: "Decime el número de la orden." };
+      /* Se busca por coincidencia parcial y se prefiere la más nueva: quien
+         pregunta dice "la 13", no "OT-2026-0013". Si hay más de una, se
+         devuelven los números para que el modelo repregunte en vez de elegir
+         una al azar. */
+      const candidatas = await ejecutar(
+        sesion,
+        sql`select id, numero from ordenes_trabajo
+            where numero ilike ${"%" + buscado + "%"}
+            order by id desc limit 5`,
+      );
+      const filas = candidatas as Array<{ id: number; numero: string }>;
+      if (filas.length === 0) return { error: `No encontré ninguna orden que contenga "${buscado}".` };
+      if (filas.length > 1) {
+        return {
+          error: "Hay más de una orden con ese número. ¿Cuál?",
+          coinciden: filas.map((f) => f.numero),
+        };
+      }
+      const { obtenerOrden } = await import("./ordenes");
+      const o = await obtenerOrden(sesion, Number(filas[0]!.id));
+      if (!o) return { error: "No pude leer esa orden." };
+      return {
+        numero: o.numero,
+        empresa: o.empresaNombre,
+        estado: o.estado,
+        vence: o.venceEn,
+        // Los items resumidos: el detalle completo de cada uno no entra en una
+        // respuesta de chat y no es lo que se pregunta.
+        items: o.itemsDetalle.map((i) => ({
+          direccion: i.direccion,
+          tipo: i.tipoTrabajo,
+          estado: i.estado,
+          m2: i.superficieM2,
+          espesor_cm: i.espesorCm,
+          reportado_en: i.reportadoEn,
+        })),
+      };
     }
 
     case "pendientes": {
