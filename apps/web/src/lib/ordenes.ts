@@ -1319,7 +1319,7 @@ export interface Pendientes {
   propuestos: PropuestoParaResolver[];
   /** Cuántos hay en total: `propuestos` viene acotado. */
   propuestosTotal: number;
-  ordenesVencidas: Array<{ numero: string; empresa: string; vence: string; itemsPendientes: number }>;
+  ordenesVencidas: Array<{ ordenId: number; numero: string; empresa: string; vence: string; itemsPendientes: number }>;
   cierresPendientes: number;
 }
 
@@ -1356,7 +1356,7 @@ export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendient
     `)) as unknown as Array<{ n: number }>;
 
     const vencidas = (await tx.execute(sql`
-      select ot.numero, ot.vence_en::text as vence, e.nombre as empresa,
+      select ot.id, ot.numero, ot.vence_en::text as vence, e.nombre as empresa,
         (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')::int as pendientes
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
@@ -1365,7 +1365,7 @@ export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendient
         and ot.vence_en <= current_date
       order by ot.vence_en asc
       limit 10
-    `)) as unknown as Array<{ numero: string; vence: string; empresa: string; pendientes: number }>;
+    `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; pendientes: number }>;
 
     const cerrables = (await tx.execute(sql`
       select count(distinct d.id)::int as n
@@ -1396,6 +1396,7 @@ export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendient
       }),
       propuestosTotal: Number(total[0]?.n ?? 0),
       ordenesVencidas: vencidas.map((v) => ({
+        ordenId: Number(v.id),
         numero: v.numero,
         empresa: v.empresa,
         vence: v.vence,
@@ -1404,4 +1405,51 @@ export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendient
       cierresPendientes: Number(cerrables[0]?.n ?? 0),
     };
   });
+}
+
+export interface OrdenParaDecidir {
+  ordenId: number;
+  numero: string;
+  empresa: string;
+  estado: string;
+  vence: string | null;
+  itemsPendientes: number;
+  /** Las que pueden recibirla: respeta baja de empresa y límite de contrato. */
+  empresasPosibles: Array<{ id: number; nombre: string }>;
+}
+
+/**
+ * Una orden, con lo justo para decidir sobre ella desde un teléfono.
+ *
+ * Las empresas posibles salen de empresasParaTipo, que es la misma función que
+ * usa el alta: así la lista que se ofrece por Telegram no puede incluir a una
+ * empresa que después la acción va a rechazar. Ofrecer un botón que falla es
+ * peor que no ofrecerlo.
+ */
+export async function ordenParaDecidir(sesion: Sesion, ordenId: number): Promise<OrdenParaDecidir | null> {
+  const fila = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select ot.id, ot.numero, ot.estado::text as estado, ot.tipo::text as tipo,
+             ot.vence_en::text as vence, e.nombre as empresa, ot.empresa_id,
+        (select count(*) from orden_items oi
+          where oi.orden_id = ot.id and oi.estado in ('pendiente','propuesto'))::int as pendientes
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${ordenId}
+    `)) as unknown as Array<Record<string, unknown>>,
+  ))[0];
+  if (!fila) return null;
+
+  const posibles = await empresasParaTipo(sesion, String(fila.tipo));
+  return {
+    ordenId: Number(fila.id),
+    numero: String(fila.numero),
+    empresa: String(fila.empresa),
+    estado: String(fila.estado),
+    vence: (fila.vence as string | null) ?? null,
+    itemsPendientes: Number(fila.pendientes),
+    // La actual no se ofrece: reasignar a la misma empresa lo rechaza la acción.
+    empresasPosibles: posibles
+      .filter((e) => e.id !== Number(fila.empresa_id))
+      .map((e) => ({ id: e.id, nombre: e.nombre })),
+  };
 }

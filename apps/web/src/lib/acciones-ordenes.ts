@@ -371,13 +371,25 @@ export async function anularOrden(entrada: { ordenId: number; motivo: string }) 
  * la próxima orden. Si se quedara 'programado' desaparecería de la brecha sin
  * que nadie lo haya arreglado.
  */
+/** La versión para la pantalla: la sesión sale de la cookie. */
 export async function cerrarOrden(entrada: {
   ordenId: number;
   /** Día en que se terminó de trabajar, 'YYYY-MM-DD'. Sin esto, hoy. */
   fecha?: string;
   observacion?: string;
 }) {
-  const sesion = await requerirRol("planificacion");
+  return cerrarOrdenConSesion(await requerirRol("planificacion"), entrada);
+}
+
+/** La misma, con la sesión en la mano: el bot llega sin cookie. */
+export async function cerrarOrdenConSesion(
+  sesion: Sesion,
+  entrada: {
+    ordenId: number;
+    fecha?: string;
+    observacion?: string;
+  },
+) {
   const datos = z
     .object({
       ordenId: z.number().int().positive(),
@@ -501,12 +513,24 @@ export async function cerrarOrden(entrada: {
  * certificación y las métricas por empresa siguen contando ese trabajo para
  * quien lo hizo. Lo que cambia de manos es lo que falta.
  */
+/** La versión para la pantalla: la sesión sale de la cookie. */
 export async function reasignarOrden(entrada: {
   ordenId: number;
   empresaId: number;
   motivo?: string;
 }) {
-  const sesion = await requerirRol("planificacion");
+  return reasignarOrdenConSesion(await requerirRol("planificacion"), entrada);
+}
+
+/** La misma, con la sesión en la mano: el bot llega sin cookie. */
+export async function reasignarOrdenConSesion(
+  sesion: Sesion,
+  entrada: {
+    ordenId: number;
+    empresaId: number;
+    motivo?: string;
+  },
+) {
   const datos = z
     .object({
       ordenId: z.number().int().positive(),
