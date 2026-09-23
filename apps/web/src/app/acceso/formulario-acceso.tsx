@@ -3,8 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+/**
+ * Solo rutas internas: "/campo" sí; "//otro-sitio", "https://…" o volver al
+ * mismo acceso, no. El ?volver= lo escribe cualquiera en la URL.
+ */
+function volverSeguro(v: string | undefined): string | null {
+  if (!v || !v.startsWith("/") || v.startsWith("//") || v.startsWith("/\\")) return null;
+  if (v.startsWith("/acceso") || v.startsWith("/api")) return null;
+  return v;
+}
+
 /** Acceso simple temporal: un usuario y contraseña, mientras no está conectado el SSO. */
-export function FormularioAcceso() {
+export function FormularioAcceso({ volver }: { volver?: string } = {}) {
   const router = useRouter();
   const [usuario, setUsuario] = useState("");
   const [clave, setClave] = useState("");
@@ -26,7 +36,11 @@ export function FormularioAcceso() {
         // El destino depende de quién entró: el personal va al mapa,
         // las empresas contratistas a su portal de órdenes.
         const cuerpo = (await res.json().catch(() => null)) as { destino?: string } | null;
-        router.push(cuerpo?.destino ?? "/mapa");
+        // Si la sesión se había cerrado en medio del trabajo, se vuelve adonde
+        // estaba. La clave temporal manda igual: primero se cambia.
+        const destino = cuerpo?.destino ?? "/mapa";
+        const vuelta = volverSeguro(volver);
+        router.push(destino === "/clave" || !vuelta ? destino : vuelta);
         return;
       }
       const cuerpo = (await res.json().catch(() => null)) as { error?: string } | null;

@@ -5,6 +5,7 @@ import { LogoCimba } from "@/components/marca";
 import { BotonTema } from "@/components/boton-tema";
 import { BotonPush } from "@/components/boton-push";
 import { ColaPendiente } from "./cola-pendiente";
+import { AvisoSesion } from "@/components/aviso-sesion";
 
 /**
  * Layout del portal de empresas contratistas. Vive FUERA del route group
@@ -44,6 +45,7 @@ export default async function LayoutEmpresa({ children }: { children: React.Reac
       {/* Lo que espera señal: cuántos trabajos hay guardados en el teléfono y
           el botón para mandarlos. Es del teléfono, no de una orden: va acá. */}
       <ColaPendiente />
+      <AvisoSesion />
       {children}
     </div>
   );

@@ -7,6 +7,7 @@ import { BotonTema } from "@/components/boton-tema";
 import { MigueChat } from "@/components/migue-chat";
 import { BotonPush } from "@/components/boton-push";
 import { NavLateral } from "@/components/nav-lateral";
+import { AvisoSesion } from "@/components/aviso-sesion";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const sesion = await leerSesion();
@@ -47,6 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
 
       <MigueChat />
+      <AvisoSesion />
     </div>
   );
 }
