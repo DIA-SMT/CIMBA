@@ -1250,3 +1250,66 @@ export async function historialItem(
     });
   });
 }
+
+export interface PropuestoParaResolver {
+  itemId: number;
+  direccion: string | null;
+  tipoTrabajo: string | null;
+  superficieM2: number | null;
+  espesorCm: number | null;
+  /**
+   * El dato que cambia la decisión. Un propuesto SIN medidas se valida y va a
+   * la cola de pendientes. Uno CON medidas se da por hecho: crea el trabajo
+   * terminado y habilita la certificación a la empresa, y eso no se deshace
+   * desde CIMBA. Quien muestre un botón "Validar" tiene que decir cuál de las
+   * dos cosas va a pasar, o la decisión no es informada.
+   */
+  habilitaCertificacion: boolean;
+  ordenId: number;
+  numero: string;
+  empresa: string;
+  propuestoPor: string | null;
+}
+
+/**
+ * El bache propuesto, con lo que hace falta para decidir sobre él.
+ *
+ * Es la misma consulta que resolverPropuesto ya hace adentro de su transacción
+ * (para decidir si crea la intervención), expuesta para que quien vaya a
+ * ofrecer la decisión —la pantalla o un botón de Telegram— muestre lo mismo
+ * que la acción va a usar. Devuelve null si el item ya no está propuesto: lo
+ * resolvió otro, o el mensaje de Telegram quedó viejo.
+ */
+export async function propuestoParaResolver(
+  sesion: Sesion,
+  itemId: number,
+): Promise<PropuestoParaResolver | null> {
+  const filas = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.id, oi.direccion, oi.superficie_m2, oi.espesor_cm, oi.tipo_trabajo::text as tipo_trabajo,
+             oi.metadata, ot.id as orden_id, ot.numero, e.nombre as empresa
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.id = ${itemId} and oi.estado = 'propuesto'
+    `)) as unknown as Array<Record<string, unknown>>,
+  ))[0];
+  if (!filas) return null;
+
+  const metadata = (filas.metadata ?? {}) as { propuesto?: { por?: string } };
+  const superficie = filas.superficie_m2 != null ? Number(filas.superficie_m2) : null;
+  const espesor = filas.espesor_cm != null ? Number(filas.espesor_cm) : null;
+
+  return {
+    itemId: Number(filas.id),
+    direccion: (filas.direccion as string | null) ?? null,
+    tipoTrabajo: (filas.tipo_trabajo as string | null) ?? null,
+    superficieM2: superficie,
+    espesorCm: espesor,
+    habilitaCertificacion: superficie != null && espesor != null,
+    ordenId: Number(filas.orden_id),
+    numero: String(filas.numero),
+    empresa: String(filas.empresa),
+    propuestoPor: metadata.propuesto?.por ?? null,
+  };
+}

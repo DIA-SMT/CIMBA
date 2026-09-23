@@ -1382,14 +1382,17 @@ export async function proponerItem(formData: FormData) {
 
   let rutaFoto: string | null = null;
   let rutaDespues: string | null = null;
+  /* El id del item recién creado: es lo que necesitan los botones del aviso de
+     Telegram para saber sobre qué bache se está decidiendo. */
+  let itemId: number | null = null;
   try {
     if (foto instanceof File && foto.size > 0) rutaFoto = await subir(foto, "antes");
     if (fotoDespues instanceof File && fotoDespues.size > 0) {
       rutaDespues = await subir(fotoDespues, "despues");
     }
 
-    await conRls(claims(sesion), async (tx) => {
-      await tx.execute(sql`
+    itemId = await conRls(claims(sesion), async (tx) => {
+      const filas = (await tx.execute(sql`
         insert into orden_items (
           orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata,
           ancho_m, largo_m, espesor_cm, superficie_m2, tipo_obra
@@ -1417,7 +1420,9 @@ export async function proponerItem(formData: FormData) {
           ${medido?.espesorCm ?? null}, ${medido?.superficieM2 ?? null},
           ${medido ? (datos.tipoObra ?? "planificado") : null}::tipo_obra_bacheo
         )
-      `);
+        returning id
+      `)) as unknown as Array<{ id: number }>;
+      return filas[0] ? Number(filas[0].id) : null;
     });
   } catch (e) {
     if (subidas.length) await supabase.storage.from("fotografias").remove(subidas).catch(() => undefined);
@@ -1431,6 +1436,18 @@ export async function proponerItem(formData: FormData) {
       ? `${datos.direccion} — ${medido.superficieM2} m², espera validación de Bacheo`
       : `${datos.direccion} — espera validación de Bacheo`,
     url: `/ordenes/${datos.ordenId}`,
+    /* El aviso y la decisión, en el mismo mensaje: quien lo recibe resuelve con
+       el pulgar sin volver a la oficina. Solo para Telegram — el push y el
+       email no tienen dónde poner un botón. El dato va corto porque Telegram
+       corta el callback_data en 64 bytes y descarta el botón sin avisar. */
+    ...(itemId != null
+      ? {
+          accionesTelegram: [
+            { texto: "✓ Validar", dato: `p:${itemId}:v` },
+            { texto: "✗ Rechazar", dato: `p:${itemId}:r` },
+          ],
+        }
+      : {}),
   });
   revalidatePath("/empresa");
   revalidatePath("/ordenes");
@@ -1652,12 +1669,45 @@ export async function eliminarItemOrden(entrada: { itemId: number; motivo: strin
 }
 
 /** Bacheo decide sobre un item propuesto: validado entra al circuito normal. */
+export interface ResueltoPropuesto {
+  ok: true;
+  /**
+   * Qué pasó de verdad, porque el mismo "validar" hace dos cosas distintas:
+   *  - encolado:    se sumó a los pendientes de la orden, lo reportan cuando lo tapen.
+   *  - certificado: venía con medidas, quedó hecho y ya cuenta para la certificación.
+   *  - rechazado:   no entra a la orden.
+   * Sin esto, quien llama no puede escribir una confirmación veraz — y la
+   * diferencia entre "lo puse en la cola" y "habilité un pago" no es un matiz.
+   */
+  resultado: "encolado" | "certificado" | "rechazado";
+  numero: string | null;
+  direccion: string | null;
+}
+
+/** La versión para la pantalla: la sesión sale de la cookie. */
 export async function resolverPropuesto(entrada: {
   itemId: number;
   decision: "validar" | "rechazar";
   motivo?: string;
-}) {
-  const sesion = await requerirRol("planificacion", "supervision");
+}): Promise<ResueltoPropuesto> {
+  return resolverPropuestoConSesion(await requerirRol("planificacion", "supervision"), entrada);
+}
+
+/**
+ * La misma decisión, con la sesión en la mano.
+ *
+ * Existe aparte porque el bot de Telegram llega sin cookie: su sesión se arma
+ * en el servidor a partir del chat que escribió. El chequeo de rol es el mismo
+ * —lo hace quien llama, con exigirRol o requerirRol— y el cuerpo no se duplica.
+ */
+export async function resolverPropuestoConSesion(
+  sesion: Sesion,
+  entrada: {
+    itemId: number;
+    decision: "validar" | "rechazar";
+    motivo?: string;
+  },
+): Promise<ResueltoPropuesto> {
   const datos = z
     .object({
       itemId: z.number().int().positive(),
@@ -1806,14 +1856,18 @@ export async function resolverPropuesto(entrada: {
    * reportarlo— o rechazado —y había que dejarlo—, salvo entrando a mirar. El
    * aviso viaja después del commit y jamás rompe la decisión.
    */
+  /* Se lee fuera del try porque además del aviso arma lo que se devuelve: el
+     estado real con el que quedó el item es lo único que distingue "lo encolé"
+     de "habilité una certificación". */
+  const ctx = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.direccion, oi.estado::text as estado, ot.id as orden_id, ot.numero, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<{ direccion: string | null; estado: string; orden_id: number; numero: string; empresa_id: number }>,
+  ))[0];
+
   try {
-    const ctx = (await conRls(claims(sesion), async (tx) =>
-      (await tx.execute(sql`
-        select oi.direccion, oi.estado::text as estado, ot.id as orden_id, ot.numero, ot.empresa_id
-        from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
-        where oi.id = ${datos.itemId}
-      `)) as unknown as Array<{ direccion: string | null; estado: string; orden_id: number; numero: string; empresa_id: number }>,
-    ))[0];
     if (ctx) {
       const { notificarEvento } = await import("./notificar");
       const donde = ctx.direccion ?? "el bache propuesto";
@@ -1844,7 +1898,13 @@ export async function resolverPropuesto(entrada: {
 
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
-  return { ok: true };
+  return {
+    ok: true,
+    resultado:
+      datos.decision === "rechazar" ? "rechazado" : ctx?.estado === "hecho" ? "certificado" : "encolado",
+    numero: ctx?.numero ?? null,
+    direccion: ctx?.direccion ?? null,
+  };
 }
 
 /**

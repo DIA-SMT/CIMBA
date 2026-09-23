@@ -97,10 +97,17 @@ function explicarTelegram(estado: number, cuerpo: string): string {
  * es corto por definición, y si alguna vez se pasa, preferimos que llegue
  * cortado antes que que no llegue.
  */
+export interface BotonTelegram {
+  texto: string;
+  /** callback_data. Telegram corta en 64 BYTES y descarta el botón sin avisar. */
+  dato: string;
+}
+
 export async function enviarTelegram(datos: {
   chatId: string;
   texto: string;
   url?: string;
+  botones?: BotonTelegram[];
 }): Promise<{ ok: boolean; motivo?: string }> {
   const token = process.env.CIMBA_TELEGRAM_BOT_TOKEN;
   if (!token) return { ok: false, motivo: "falta CIMBA_TELEGRAM_BOT_TOKEN" };
@@ -113,6 +120,12 @@ export async function enviarTelegram(datos: {
         chat_id: datos.chatId,
         text: cuerpo.slice(0, 4096),
         link_preview_options: { is_disabled: true },
+        /* Un botón por fila: en un teléfono, dos botones juntos con el pulgar
+           en movimiento es cómo se toca el que no era. Y este mensaje decide
+           sobre trabajo de una cuadrilla. */
+        ...(datos.botones?.length
+          ? { reply_markup: { inline_keyboard: datos.botones.map((b) => [{ text: b.texto, callback_data: b.dato }]) } }
+          : {}),
       }),
     });
     if (!r.ok) {
@@ -153,7 +166,16 @@ const escapar = (s: string) =>
  */
 export async function notificarEvento(
   evento: EventoAviso,
-  carga: CargaPush & { cuerpoEmail?: string },
+  carga: CargaPush & {
+    cuerpoEmail?: string;
+    /**
+     * Botones para el canal de Telegram, y solo para ese: el push y el email no
+     * tienen dónde ponerlos. Es lo que permite que el aviso y la decisión sean
+     * el mismo mensaje — quien lo recibe resuelve con el pulgar, sin volver a
+     * la oficina.
+     */
+    accionesTelegram?: BotonTelegram[];
+  },
   /**
    * La empresa a la que le concierne el evento. Con esto, un destinatario
    * configurado como `empresa` en /ordenes/avisos se resuelve a LOS TELÉFONOS
