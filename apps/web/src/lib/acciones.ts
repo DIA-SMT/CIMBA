@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { conRls, getDb, sql, type SQL } from "@cimba/db";
 import { scorePriorizacion, tipoProblemaSchema, type TipoProblema } from "@cimba/domain";
-import { requerirRol, type Sesion } from "./auth";
+import { puedeVerContacto, requerirRol, type Sesion } from "./auth";
 import { notificarRoles } from "./push";
 import { ErrorVisible } from "./errores";
 import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
@@ -72,6 +72,103 @@ export async function vincularDemanda(entrada: { demandaId: number; incidenteId:
   revalidatePath("/demandas");
   revalidatePath("/incidentes");
   return { ok: true };
+}
+
+/**
+ * CIERRE DIRECTO DESDE EL MAPA: vincular el pedido al arreglo que lo resolvió
+ * y cerrarlo, en un solo paso, sin ir a la bandeja de Cierres.
+ *
+ * Las reglas son las MISMAS que las de Cierres, más las del cotejo del mapa:
+ *  - Solo Atención Ciudadana (o admin): son los que le responden al vecino.
+ *  - Solo pedidos de bacheo pendientes o vinculados. Los derivados a la SAT o
+ *    a Ingeniería no se cierran con un bache ("no cierres lo del vecino con el
+ *    reclamo derivado", Marcos).
+ *  - Solo contra un problema YA reparado o verificado: el botón no existe para
+ *    promesas.
+ *  - No contra un arreglo ANTERIOR al pedido: eso es el bache que volvió, no la
+ *    respuesta a este vecino.
+ *  - No contra un problema que alguien ya marcó como "no es el mismo".
+ *
+ * Devuelve el teléfono y el mail del vecino (solo a quien puede verlos) para
+ * abrir WhatsApp o el correo con la respuesta puesta. CIMBA no le manda nada
+ * solo: el que envía es el operador.
+ */
+export async function cerrarPedidoDesdeMapa(entrada: { demandaId: number; incidenteId: number; respuesta?: string }) {
+  const sesion = await requerirRol("atencion_ciudadana");
+  const datos = z
+    .object({
+      demandaId: z.number().int().positive(),
+      incidenteId: z.number().int().positive(),
+      respuesta: z.string().max(1000).optional(),
+    })
+    .parse(entrada);
+
+  const contacto = await conRls(claims(sesion), async (tx) => {
+    const pedidos = (await tx.execute(sql`
+      select d.estado::text as estado, coalesce(d.destino::text, 'bacheo') as destino,
+             d.creado_en, (d.metadata->>'sin_fecha' = 'true') as sin_fecha,
+             coalesce(d.metadata->'no_es_el_mismo', '[]'::jsonb) @> to_jsonb(${datos.incidenteId}::int) as descartado,
+             d.contacto
+      from demandas d where d.id = ${datos.demandaId}
+    `)) as unknown as Array<{
+      estado: string; destino: string; creado_en: string; sin_fecha: boolean | null;
+      descartado: boolean; contacto: Record<string, unknown> | null;
+    }>;
+    const p = pedidos[0];
+    if (!p) throw new ErrorVisible("El pedido no existe");
+    if (!["recibida", "en_validacion", "vinculada"].includes(p.estado)) {
+      throw new ErrorVisible("Este pedido ya no está abierto: alguien lo cerró o lo derivó");
+    }
+    if (p.destino !== "bacheo") {
+      throw new ErrorVisible("Los pedidos derivados a la SAT o a Ingeniería no se cierran con un arreglo de bacheo");
+    }
+    if (p.descartado) {
+      throw new ErrorVisible("Alguien ya marcó que ese arreglo no es el de este pedido");
+    }
+
+    const problemas = (await tx.execute(sql`
+      select estado::text as estado, cerrado_en from incidentes where id = ${datos.incidenteId}
+    `)) as unknown as Array<{ estado: string; cerrado_en: string | null }>;
+    const pr = problemas[0];
+    if (!pr) throw new ErrorVisible("El problema no existe");
+    if (!["reparado", "verificado"].includes(pr.estado)) {
+      throw new ErrorVisible("Solo se puede cerrar con un problema que ya esté reparado");
+    }
+    if (!p.sin_fecha && pr.cerrado_en && Date.parse(String(pr.cerrado_en)) < Date.parse(String(p.creado_en))) {
+      throw new ErrorVisible("Ese arreglo es anterior al pedido: puede ser el bache que volvió, no la respuesta a este vecino");
+    }
+
+    await tx.execute(sql`
+      insert into demanda_incidente (demanda_id, incidente_id, vinculado_por, automatico, confianza)
+      values (${datos.demandaId}, ${datos.incidenteId}, ${sesion.sub}, false, null)
+      on conflict do nothing
+    `);
+    await tx.execute(sql`
+      update demandas set estado = 'cerrada',
+        metadata = metadata || jsonb_build_object(
+          'cierre', jsonb_build_object(
+            'en', now()::text,
+            'por', ${sesion.nombre}::text,
+            'respuesta', ${datos.respuesta?.trim() || null}::text,
+            'via', 'mapa',
+            'incidente', ${datos.incidenteId}::int
+          )
+        )
+      where id = ${datos.demandaId}
+    `);
+    await recalcularScore(tx, datos.incidenteId);
+    return p.contacto;
+  });
+
+  revalidatePath("/cierres");
+  revalidatePath("/demandas");
+  revalidatePath("/incidentes");
+  const verContacto = puedeVerContacto(sesion.rol_cimba);
+  return {
+    ok: true,
+    telefono: verContacto && typeof contacto?.telefono === "string" ? contacto.telefono : null,
+    email: verContacto && typeof contacto?.email === "string" ? contacto.email : null,
+  };
 }
 
 /**

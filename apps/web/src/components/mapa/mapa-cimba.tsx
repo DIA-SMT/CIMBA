@@ -65,7 +65,8 @@ import { GLOSARIO } from "@/lib/glosario";
 import { colorDeEmpresa } from "@/lib/color-empresa";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
-import { vincularDemanda } from "@/lib/acciones";
+import { cerrarPedidoDesdeMapa, vincularDemanda } from "@/lib/acciones";
+import { whatsappDe } from "@/lib/contacto-vecino";
 import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
 import { AnalisisZona, puntoEnPoligono, type ZonaActiva } from "./analisis-zona";
@@ -1357,6 +1358,54 @@ interface CandidatoCotejo {
   cerradoEn: string | null;
   /** true si se cerró ANTES del pedido: es reincidencia, no la respuesta a este pedido. */
   posibleReincidencia: boolean;
+  /** La foto del trabajo (preferida la del después), para la respuesta al vecino. */
+  foto: string | null;
+  fotoMomento: string | null;
+}
+
+/**
+ * Lo que hay a menos de 60 m de un pedido, para el cotejo desde el mapa.
+ * Se excluyen los desestimados (macro inactivo): la gestión decidió no
+ * atenderlos, vincular ahí sería sacar un pedido real de la deuda sin que
+ * nadie lo haya resuelto.
+ */
+function armarCandidatos(
+  incidentes: Array<{ geometry: { coordinates: number[] }; properties: Record<string, unknown> }>,
+  props: Record<string, unknown>,
+  lngLat: [number, number],
+): CandidatoCotejo[] {
+  const creadoDemanda = props.sin_fecha ? null : Date.parse(String(props.creado_en));
+  return incidentes
+    .map((fi): CandidatoCotejo | null => {
+      if (fi.properties.macro === "inactivo") return null;
+      const ln = fi.geometry.coordinates[0];
+      const la = fi.geometry.coordinates[1];
+      if (ln == null || la == null) return null;
+      const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
+      if (dist > 60) return null;
+      const cerradoEn = (fi.properties.cerrado_en as string | null) ?? null;
+      const cierreMs = cerradoEn ? Date.parse(cerradoEn) : null;
+      return {
+        id: Number(fi.properties.id),
+        tipo: String(fi.properties.tipo ?? "otro"),
+        estado: String(fi.properties.estado ?? ""),
+        macro: String(fi.properties.macro ?? ""),
+        direccion: (fi.properties.direccion as string | null) ?? null,
+        dist: Math.round(dist),
+        lngLat: [ln, la],
+        cerradoEn,
+        // Se cerró ANTES de que este pedido existiera: es el problema
+        // volviendo (reincidencia), no la respuesta a ESTE pedido.
+        posibleReincidencia: Boolean(
+          cierreMs != null && creadoDemanda != null && Number.isFinite(cierreMs) && cierreMs < creadoDemanda,
+        ),
+        foto: (fi.properties.foto as string | null) ?? null,
+        fotoMomento: (fi.properties.foto_momento as string | null) ?? null,
+      };
+    })
+    .filter((c): c is CandidatoCotejo => c != null)
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 5);
 }
 
 interface CotejoActivo {
@@ -2080,6 +2129,17 @@ function MapaInterno({
   const [aviso, setAviso] = useState<string | null>(null);
   const [cotejo, setCotejo] = useState<CotejoActivo | null>(null);
   const [vinculando, setVinculando] = useState(false);
+  /** El cierre directo en curso: con qué arreglo y qué se le responde al vecino. */
+  const [cierreMapa, setCierreMapa] = useState<{ incidenteId: number; respuesta: string } | null>(null);
+  const [cerrandoPedido, setCerrandoPedido] = useState(false);
+  const [errorCierre, setErrorCierre] = useState<string | null>(null);
+  /** Ya cerrado: lo que hace falta para avisarle al vecino. */
+  const [cerradoMapa, setCerradoMapa] = useState<{
+    demandaId: number;
+    texto: string;
+    telefono: string | null;
+    email: string | null;
+  } | null>(null);
   const [balance, setBalance] = useState<{ pend: number; sinAt: number; m2: number } | null>(null);
   const [zonaA, setZonaA] = useState<{ centro: { lon: number; lat: number }; radio: number } | null>(null);
   const clienteQuery = useQueryClient();
@@ -3054,6 +3114,50 @@ function MapaInterno({
       .finally(() => setVinculando(false));
   };
 
+  /**
+   * La respuesta que se le propone al vecino: con lo que ya se sabe (dónde,
+   * cuándo se reparó y la foto del trabajo). La persona la revisa y la cambia
+   * si quiere; es la misma idea que la bandeja de Cierres.
+   */
+  const respuestaSugerida = (demanda: Record<string, unknown>, c: CandidatoCotejo) => {
+    const donde = demanda.direccion ? ` en ${String(demanda.direccion)}` : "";
+    const cuando = c.cerradoEn ? ` el ${fechaCorta(c.cerradoEn)}` : "";
+    let texto = `Su reclamo${donde} fue resuelto${cuando}.`;
+    if (c.foto && c.fotoMomento === "despues") texto += ` Foto del trabajo terminado: ${c.foto}.`;
+    texto += " Muchas gracias por avisarnos.";
+    return texto;
+  };
+
+  const cerrarDesdeMapa = (demandaId: number) => {
+    if (!cierreMapa) return;
+    setCerrandoPedido(true);
+    setErrorCierre(null);
+    const texto = cierreMapa.respuesta.trim();
+    void cerrarPedidoDesdeMapa({ demandaId, incidenteId: cierreMapa.incidenteId, respuesta: texto || undefined })
+      .then((r) => {
+        setCerradoMapa({ demandaId, texto, telefono: r.telefono, email: r.email });
+        setCierreMapa(null);
+        void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
+      })
+      .catch((e) => setErrorCierre(mensajeDeError(e, "No se pudo cerrar el pedido: probá de nuevo")))
+      .finally(() => setCerrandoPedido(false));
+  };
+
+  /* Otro pedido tocado: se olvida el cierre a medias del anterior. */
+  const pedidoCotejado = cotejo ? Number(cotejo.demanda.id) : null;
+  useEffect(() => {
+    setCierreMapa(null);
+    setErrorCierre(null);
+    setCerradoMapa(null);
+  }, [pedidoCotejado]);
+
+  /** Abrir el cotejo de un pedido desde su ficha, sin salir del mapa. */
+  const cotejarDesdeFicha = (props: Record<string, unknown>, lngLat: [number, number]) => {
+    const candidatos = armarCandidatos(dataRef.current?.incidentes.features ?? [], props, lngLat);
+    setCotejo({ demanda: props, lngLat, candidatos });
+    setSeleccion(null);
+  };
+
   /** Balance vivo de lo que se está viendo: recalcula al mover el mapa. */
   const recalcularBalance = useCallback(() => {
     const mapa = mapRef.current?.getMap();
@@ -3505,36 +3609,7 @@ function MapaInterno({
         // Se excluyen los desestimados (macro inactivo): la gestión decidió
         // no atenderlos, vincular ahí sería sacar un pedido real de la
         // deuda sin que nadie lo haya resuelto.
-        const creadoDemanda = props.sin_fecha ? null : Date.parse(String(props.creado_en));
-        const candidatos = (dataRef.current?.incidentes.features ?? [])
-          .map((fi): CandidatoCotejo | null => {
-            if (fi.properties.macro === "inactivo") return null;
-            const ln = fi.geometry.coordinates[0];
-            const la = fi.geometry.coordinates[1];
-            if (ln == null || la == null) return null;
-            const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
-            if (dist > 60) return null;
-            const cerradoEn = (fi.properties.cerrado_en as string | null) ?? null;
-            const cierreMs = cerradoEn ? Date.parse(cerradoEn) : null;
-            return {
-              id: Number(fi.properties.id),
-              tipo: String(fi.properties.tipo ?? "otro"),
-              estado: String(fi.properties.estado ?? ""),
-              macro: String(fi.properties.macro ?? ""),
-              direccion: (fi.properties.direccion as string | null) ?? null,
-              dist: Math.round(dist),
-              lngLat: [ln, la],
-              cerradoEn,
-              // Se cerró ANTES de que este pedido existiera: es el problema
-              // volviendo (reincidencia), no la respuesta a ESTE pedido.
-              posibleReincidencia: Boolean(
-                cierreMs != null && creadoDemanda != null && Number.isFinite(cierreMs) && cierreMs < creadoDemanda,
-              ),
-            };
-          })
-          .filter((c): c is CandidatoCotejo => c != null)
-          .sort((a, b) => a.dist - b.dist)
-          .slice(0, 5);
+        const candidatos = armarCandidatos(dataRef.current?.incidentes.features ?? [], props, lngLat);
         setCotejo({ demanda: props, lngLat, candidatos });
         setSeleccion(null);
       } else {
@@ -5169,7 +5244,52 @@ function MapaInterno({
                 {cotejo.demanda.sin_fecha ? "sin fecha" : fechaCorta(String(cotejo.demanda.creado_en))}
               </p>
             </div>
-            {cotejo.candidatos.length === 0 ? (
+            {cerradoMapa && cerradoMapa.demandaId === Number(cotejo.demanda.id) ? (
+              <div className="space-y-2 rounded-lg border border-hecho/50 bg-hecho/10 p-3">
+                <p className="text-[13px] font-bold" style={{ color: "var(--color-hecho)" }}>
+                  ✓ Pedido #{cerradoMapa.demandaId} cerrado
+                </p>
+                <p className="text-[11px] leading-snug text-texto-2">
+                  Quedó vinculado al arreglo y con la respuesta guardada. Ahora avisale al vecino: el mensaje ya va escrito,
+                  lo mandás vos.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {whatsappDe(cerradoMapa.telefono) && (
+                    <a
+                      href={`https://wa.me/${whatsappDe(cerradoMapa.telefono)}?text=${encodeURIComponent(cerradoMapa.texto)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md bg-resuelto px-2.5 py-1 text-[11px] font-bold text-white"
+                    >
+                      Avisar por WhatsApp
+                    </a>
+                  )}
+                  {cerradoMapa.email && (
+                    <a
+                      href={`mailto:${cerradoMapa.email}?subject=${encodeURIComponent("Su reclamo fue resuelto")}&body=${encodeURIComponent(cerradoMapa.texto)}`}
+                      className="rounded-md border border-borde-2 px-2.5 py-1 text-[11px] font-semibold text-texto-2"
+                    >
+                      Avisar por mail
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(cerradoMapa.texto).then(() => avisar("Respuesta copiada ✓"));
+                    }}
+                    className="rounded-md border border-borde-2 px-2.5 py-1 text-[11px] font-semibold text-texto-2"
+                  >
+                    Copiar el mensaje
+                  </button>
+                </div>
+                {!whatsappDe(cerradoMapa.telefono) && !cerradoMapa.email && (
+                  <p className="text-[10px] text-texto-3">Este pedido no trae teléfono ni mail del vecino.</p>
+                )}
+                <button type="button" onClick={() => setCotejo(null)} className="text-[11px] font-semibold text-celeste">
+                  Listo
+                </button>
+              </div>
+            ) : cotejo.candidatos.length === 0 ? (
               <p className="rounded-lg border border-encurso/40 bg-encurso/10 px-3 py-2.5 text-xs leading-relaxed text-encurso">
                 No hay incidentes ni reparaciones a menos de 60 m: <b>brecha real confirmada</b> — nadie tocó esto todavía.
               </p>
@@ -5211,14 +5331,72 @@ function MapaInterno({
                           {vinculando ? "Vinculando…" : "Vincular acá"}
                         </button>
                       )}
+                      {/* CIERRE DIRECTO: vincular y cerrar en un paso. Solo con un
+                          arreglo ya hecho, posterior al pedido, y para pedidos de
+                          bacheo (mismas reglas que la bandeja de Cierres). */}
+                      {puedeVincular &&
+                        c.macro === "resuelto" &&
+                        !c.posibleReincidencia &&
+                        destinoDe(cotejo.demanda.destino) === "bacheo" &&
+                        cierreMapa?.incidenteId !== c.id && (
+                          <button
+                            onClick={() => {
+                              setErrorCierre(null);
+                              setCierreMapa({ incidenteId: c.id, respuesta: respuestaSugerida(cotejo.demanda, c) });
+                            }}
+                            disabled={vinculando || cerrandoPedido}
+                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                            style={{ background: "var(--color-hecho)" }}
+                          >
+                            Vincular y cerrar
+                          </button>
+                        )}
                       <Link href={`/incidentes/${c.id}`} className="text-[11px] font-semibold text-celeste hover:underline">
                         Historia →
                       </Link>
                     </div>
+                    {cierreMapa?.incidenteId === c.id && (
+                      <div className="mt-2 space-y-1.5 border-t border-borde pt-2">
+                        <p className="text-[11px] font-semibold">Respuesta al vecino</p>
+                        <textarea
+                          value={cierreMapa.respuesta}
+                          onChange={(e) => setCierreMapa({ incidenteId: c.id, respuesta: e.target.value })}
+                          rows={4}
+                          maxLength={1000}
+                          className="w-full rounded-md border border-borde-2 bg-panel px-2 py-1.5 text-[12px] leading-snug outline-none focus:border-celeste"
+                        />
+                        <p className="text-[10px] leading-snug text-texto-3">
+                          Se guarda con el cierre. Después te dejo el WhatsApp o el mail del vecino con este texto: lo mandás vos.
+                        </p>
+                        {errorCierre && <p className="text-[11px] text-peligro">{errorCierre}</p>}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => cerrarDesdeMapa(Number(cotejo.demanda.id))}
+                            disabled={cerrandoPedido}
+                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                            style={{ background: "var(--color-hecho)" }}
+                          >
+                            {cerrandoPedido ? "Cerrando…" : "Cerrar el pedido"}
+                          </button>
+                          <button
+                            onClick={() => setCierreMapa(null)}
+                            disabled={cerrandoPedido}
+                            className="text-[11px] font-semibold text-texto-3 hover:text-texto"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {!puedeVincular && (
-                  <p className="text-[10px] text-texto-3">Vincular requiere el rol Atención Ciudadana (o admin).</p>
+                  <p className="text-[10px] text-texto-3">Vincular y cerrar requieren el rol Atención Ciudadana (o admin).</p>
+                )}
+                {puedeVincular && !cotejo.candidatos.some((c) => c.macro === "resuelto" && !c.posibleReincidencia) && (
+                  <p className="text-[10px] leading-snug text-texto-3">
+                    Para cerrar desde acá hace falta un arreglo ya hecho y posterior al pedido. Ninguno de estos lo es todavía.
+                  </p>
                 )}
               </>
             )}
@@ -6485,7 +6663,12 @@ function MapaInterno({
 
       {/* Panel de detalle */}
       {seleccion && (
-        <PanelDetalle seleccion={seleccion} alCerrar={() => setSeleccion(null)} topBarra={altoHerr} />
+        <PanelDetalle
+          seleccion={seleccion}
+          alCerrar={() => setSeleccion(null)}
+          topBarra={altoHerr}
+          alCotejar={puedeVincular ? () => cotejarDesdeFicha(seleccion.props, seleccion.lngLat) : undefined}
+        />
       )}
     </div>
   );
@@ -6553,9 +6736,12 @@ function PanelDetalle({
   seleccion,
   alCerrar,
   topBarra,
+  alCotejar,
 }: {
   seleccion: Seleccion;
   alCerrar: () => void;
+  /** Abrir el cotejo de este pedido en el mapa (vincular, o vincular y cerrar). */
+  alCotejar?: () => void;
   /** Alto real de la barra de herramientas, medido por el ResizeObserver del
    *  mapa. Con el top-28 fijo (112 px) la ficha abría DEBAJO de la barra en
    *  cuanto esta envolvía en más de dos filas — o sea en cualquier celular —
@@ -6699,16 +6885,29 @@ function PanelDetalle({
         />
       </div>
 
-      <div className="border-t border-borde p-3">
+      <div className="space-y-2 border-t border-borde p-3">
+        {/* CIERRE DIRECTO: el cotejo se abre acá mismo, en cualquier vista; ahí
+            se vincula al arreglo y, si ya está hecho, se cierra y se le avisa
+            al vecino. Antes este botón llevaba a otra pantalla. */}
+        {!esIncidente && alCotejar && ["recibida", "en_validacion", "vinculada"].includes(String(p.estado)) && (
+          <button
+            type="button"
+            onClick={alCotejar}
+            className="block w-full rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+            style={{ background: p.brecha === "posible_resuelta" ? "var(--color-hecho)" : "var(--color-azul)" }}
+          >
+            {p.brecha === "posible_resuelta" ? "Cotejar y cerrar acá" : "Cotejar acá"}
+          </button>
+        )}
         <Link
           href={esIncidente ? `/incidentes?foco=${String(p.id)}` : `/demandas/${String(p.id)}`}
-          className="block rounded-lg bg-azul px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+          className={
+            !esIncidente && alCotejar
+              ? "block text-center text-xs font-semibold text-celeste hover:underline"
+              : "block rounded-lg bg-azul px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+          }
         >
-          {esIncidente
-            ? "Gestionar incidente"
-            : p.brecha === "posible_resuelta"
-              ? "Revisar y cotejar →"
-              : "Abrir el pedido →"}
+          {esIncidente ? "Gestionar incidente" : "Abrir el pedido completo →"}
         </Link>
       </div>
     </aside>
