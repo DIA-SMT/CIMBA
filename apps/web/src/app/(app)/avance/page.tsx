@@ -1,5 +1,5 @@
 import { leerSesion } from "@/lib/auth";
-import { datosAvance, ventanaValida } from "@/lib/avance";
+import { datosAvance, leerCamara, leerTerritorio, listarTerritorios, ventanaValida } from "@/lib/avance";
 import { PantallaAvance } from "./pantalla-avance";
 
 export const dynamic = "force-dynamic";
@@ -14,18 +14,35 @@ export const maxDuration = 60;
  * tiene el mapa lleno y las cifras puestas, sin spinner. Después la pantalla
  * se mantiene sola, pidiendo /api/avance cada minuto.
  *
- * `?dias=` abre en otra ventana (1, 7, 30, 90, 0 = todo). El default es el mes.
+ * La URL describe la vista entera, así que se puede compartir:
+ *   ?dias=30            la ventana (1, 7, 30, 90, 0 = todo; default el mes)
+ *   ?distrito=9 / ?barrio=79   el recorte territorial
+ *   ?empresa=Calleri    una sola empresa
+ *   ?c=lat,lon,zoom     la cámara
  */
-export default async function PaginaAvance({ searchParams }: { searchParams: Promise<{ dias?: string }> }) {
+export default async function PaginaAvance({
+  searchParams,
+}: {
+  searchParams: Promise<{ dias?: string; distrito?: string; barrio?: string; empresa?: string; c?: string }>;
+}) {
   // El layout ya redirigió a quien no tiene sesión y al rol empresa.
   const sesion = (await leerSesion())!;
   const sp = await searchParams;
-  const dias = ventanaValida(sp.dias);
-  const datos = await datosAvance(sesion, dias);
+  const territorio = leerTerritorio(sp);
+  const [datos, territorios] = await Promise.all([
+    datosAvance(sesion, { dias: ventanaValida(sp.dias), territorio }),
+    listarTerritorios(),
+  ]);
 
   return (
     <div className="h-full">
-      <PantallaAvance inicial={datos} rol={sesion.rol_cimba} />
+      <PantallaAvance
+        inicial={datos}
+        rol={sesion.rol_cimba}
+        territorios={territorios}
+        empresaInicial={sp.empresa?.trim().slice(0, 40) || null}
+        camaraInicial={leerCamara(sp.c)}
+      />
     </div>
   );
 }

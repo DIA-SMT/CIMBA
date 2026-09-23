@@ -400,7 +400,16 @@ export interface IntervencionResumen {
 
 export async function listarIntervenciones(
   sesion: Sesion,
-  filtros: { estado?: string; ejecutor?: string; tipoIntervencion?: string; q?: string; limite?: number; pagina?: number },
+  filtros: {
+    estado?: string;
+    ejecutor?: string;
+    tipoIntervencion?: string;
+    q?: string;
+    /** Solo los trabajos sin superficie cargada: los que Avance cuenta como "sin medida". */
+    sinMedida?: boolean;
+    limite?: number;
+    pagina?: number;
+  },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
@@ -410,11 +419,13 @@ export async function listarIntervenciones(
   // URL no puede reventar el cast (22P02) — se ignora, como el resto de filtros.
   const tipoIntervencion = filtroEnum(filtros.tipoIntervencion, TIPOS_INTERVENCION);
   const q = filtro(filtros.q);
+  const sinMedida = filtros.sinMedida === true;
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${estado}::text is null or iv.estado = (${estado})::estado_intervencion)
         and (${tipoIntervencion}::text is null or iv.tipo_intervencion = (${tipoIntervencion})::tipo_intervencion)
         and (${q}::text is null or i.direccion ilike '%' || ${q ?? ""} || '%')
+        and (${sinMedida}::boolean is not true or coalesce(iv.superficie_m2, 0) = 0)
         and (${ejecutor}::text is null
              or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
                          iv.metadata->>'contratista',
