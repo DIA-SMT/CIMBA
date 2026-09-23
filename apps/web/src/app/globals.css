@@ -178,6 +178,12 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* En el mapa principal, el zoom, la brújula y la ubicación quedaban debajo de
+   Migue y de la pastilla del balance. Se suben por encima (23/9). */
+.mapa-principal .maplibregl-ctrl-bottom-right {
+  margin-bottom: 4.75rem;
+}
+
 /* Popups de MapLibre en tema oscuro */
 .maplibregl-popup-content {
   background: var(--color-panel-2) !important;

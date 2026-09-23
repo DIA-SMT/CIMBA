@@ -10,6 +10,20 @@ import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { mensajeDeError } from "@/lib/errores";
 import { mejorPosicion } from "@/lib/gps";
 import { hoyISO, minimoEjecucion } from "@/lib/formato";
+import { MENSAJE_SESION, avisarSesionVencida, sesionVigente } from "@/lib/sesion-cliente";
+
+/**
+ * El mensaje de un error, salvo que la causa sea la sesión cerrada: ahí se
+ * dice eso y se muestra el cartel para volver a entrar, en vez de un "Error"
+ * que no explica nada (lo que le pasaba a Leo el 23/9).
+ */
+async function mensajeOSesion(e: unknown, siNo: string): Promise<string> {
+  if (!(await sesionVigente())) {
+    avisarSesionVencida();
+    return MENSAJE_SESION;
+  }
+  return mensajeDeError(e, siNo);
+}
 
 export interface Trabajo {
   id: number;
@@ -56,7 +70,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
         await fn();
         router.refresh();
       } catch (e) {
-        setError(mensajeDeError(e, "Error"));
+        setError(await mensajeOSesion(e, "Error"));
       }
     });
   };
@@ -90,7 +104,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
       await subirFoto(fd);
       router.refresh();
     } catch (e) {
-      setError(mensajeDeError(e, "No se pudo subir la foto"));
+      setError(await mensajeOSesion(e, "No se pudo subir la foto"));
     } finally {
       setSubiendo(null);
     }

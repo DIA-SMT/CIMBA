@@ -5,9 +5,9 @@ import { FormularioAcceso } from "./formulario-acceso";
 export default async function Acceso({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; volver?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, volver } = await searchParams;
 
   return (
     <main className="fondo-grilla flex min-h-screen items-center justify-center p-6">
@@ -39,7 +39,13 @@ export default async function Acceso({
           </div>
         )}
 
-        <FormularioAcceso />
+        {volver && (
+          <div className="mb-4 rounded-lg border border-celeste/40 bg-celeste/10 px-4 py-3 text-sm text-texto-2">
+            Tu sesión se cerró. Entrá de nuevo y volvés a donde estabas.
+          </div>
+        )}
+
+        <FormularioAcceso volver={volver} />
 
         <p className="mt-6 text-center text-xs leading-relaxed text-texto-3">
           ¿Sos empresa contratista? Entrás por acá mismo, con el usuario y la clave que te da la

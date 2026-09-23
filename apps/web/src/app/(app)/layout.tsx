@@ -7,6 +7,8 @@ import { BotonTema } from "@/components/boton-tema";
 import { MigueChat } from "@/components/migue-chat";
 import { BotonPush } from "@/components/boton-push";
 import { NavLateral } from "@/components/nav-lateral";
+import { AvisoSesion } from "@/components/aviso-sesion";
+import { BotonMenuMovil } from "@/components/boton-menu-movil";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const sesion = await leerSesion();
@@ -18,9 +20,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="z-30 flex h-14 shrink-0 items-center justify-between border-b border-borde bg-panel px-4">
-        <Link href="/avance" aria-label="CIMBA — inicio">
-          <LogoCimba />
-        </Link>
+        <div className="flex items-center">
+          <BotonMenuMovil />
+          <Link href="/avance" aria-label="CIMBA — inicio">
+            <LogoCimba />
+          </Link>
+        </div>
         <div className="flex items-center gap-4">
           <BotonTema compacto />
           <BotonPush />
@@ -47,6 +52,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
 
       <MigueChat />
+      <AvisoSesion />
     </div>
   );
 }

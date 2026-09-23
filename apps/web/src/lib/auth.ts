@@ -2,10 +2,9 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { z } from "zod";
+import { getDb, sql } from "@cimba/db";
 import { rolUsuarioSchema, type RolUsuario } from "@cimba/domain";
-
-const COOKIE_SESION = "cimba_sesion";
-const DURACION_HORAS = 12;
+import { COOKIE_SESION, DURACION_SESION_S } from "./sesion-duracion";
 
 const sesionSchema = z.object({
   sub: z.string().uuid(), // perfiles.id
@@ -31,7 +30,7 @@ export async function firmarSesion(sesion: Sesion): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setIssuer("cimba")
-    .setExpirationTime(`${DURACION_HORAS}h`)
+    .setExpirationTime(`${DURACION_SESION_S}s`)
     .sign(secreto());
 }
 
@@ -41,7 +40,7 @@ export async function escribirCookieSesion(token: string): Promise<void> {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    maxAge: DURACION_HORAS * 3600,
+    maxAge: DURACION_SESION_S,
     path: "/",
   });
 }
@@ -55,7 +54,8 @@ export async function borrarCookieSesion(): Promise<void> {
 export async function leerSesionDeToken(token: string): Promise<Sesion | null> {
   try {
     const { payload } = await jwtVerify(token, secreto(), { issuer: "cimba" });
-    return sesionSchema.parse(payload);
+    const sesion = sesionSchema.parse(payload);
+    return (await perfilSigueActivo(sesion.sub)) ? sesion : null;
   } catch {
     return null;
   }
@@ -68,6 +68,28 @@ export const leerSesion = cache(async (): Promise<Sesion | null> => {
   if (!token) return null;
   return leerSesionDeToken(token);
 });
+
+/**
+ * La contracara de la sesión que se renueva sola (ver sesion-duracion.ts): un
+ * token puede vivir días, así que cada lectura confirma que el perfil existe y
+ * sigue activo. Suspender a alguien en Configuración lo saca en el próximo
+ * clic. Una consulta por clave primaria, una vez por pedido (leerSesion está
+ * cacheada por request).
+ *
+ * Si la base no contesta, se deja pasar: un corte de red de la base no puede
+ * echar a toda la Dirección. La acción que siga va a fallar igual por la base,
+ * con su propio mensaje.
+ */
+async function perfilSigueActivo(id: string): Promise<boolean> {
+  try {
+    const filas = (await getDb().execute(sql`
+      select activo from perfiles where id = ${id}::uuid
+    `)) as unknown as Array<{ activo: boolean }>;
+    return filas[0]?.activo === true;
+  } catch {
+    return true;
+  }
+}
 
 export async function requerirSesion(): Promise<Sesion> {
   const sesion = await leerSesion();

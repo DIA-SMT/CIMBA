@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Activity as ActivityIcon,
   CheckCheck,
@@ -99,11 +100,48 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
 const esActual = (pathname: string, href: string) =>
   pathname === href || pathname.startsWith(`${href}/`);
 
+/** El botón del encabezado le avisa al menú que se abra (en el teléfono, en el mapa). */
+export const EVENTO_MENU_MOVIL = "cimba:menu-movil";
+
+/**
+ * Las pantallas donde el mapa manda. En el teléfono el menú lateral le sacaba
+ * un sexto del ancho: ahí se esconde detrás del botón del encabezado.
+ */
+export const esPantallaDeMapa = (pathname: string) => pathname === "/mapa" || pathname.startsWith("/mapa/");
+
 export function NavLateral({ rol }: { rol: string }) {
   const pathname = usePathname();
+  const enMapa = esPantallaDeMapa(pathname);
+  const [abiertoMovil, setAbiertoMovil] = useState(false);
+
+  useEffect(() => {
+    const alternar = () => setAbiertoMovil((v) => !v);
+    window.addEventListener(EVENTO_MENU_MOVIL, alternar);
+    return () => window.removeEventListener(EVENTO_MENU_MOVIL, alternar);
+  }, []);
+  /* Al elegir una pantalla, el menú encima se cierra solo. */
+  useEffect(() => setAbiertoMovil(false), [pathname]);
+
+  /* En el mapa y en el teléfono: escondido, o abierto ENCIMA del mapa (no al
+     costado, que lo achicaría). En escritorio y en las demás pantallas, como
+     siempre. */
+  const claseMovil = !enMapa
+    ? "flex"
+    : abiertoMovil
+      ? "fixed top-14 bottom-0 left-0 z-40 flex shadow-2xl md:static md:z-20 md:shadow-none"
+      : "hidden md:flex";
 
   return (
-    <nav className="z-20 flex w-16 shrink-0 flex-col items-center gap-1 border-r border-borde bg-panel py-3 md:w-44 md:items-stretch md:px-3">
+    <>
+    {enMapa && abiertoMovil && (
+      <button
+        type="button"
+        aria-label="Cerrar el menú"
+        onClick={() => setAbiertoMovil(false)}
+        className="fixed inset-0 top-14 z-30 bg-black/30 md:hidden"
+      />
+    )}
+    <nav className={`z-20 w-16 shrink-0 flex-col items-center gap-1 border-r border-borde bg-panel py-3 md:w-44 md:items-stretch md:px-3 ${claseMovil}`}>
       {NAV_GRUPOS.map((grupo, gi) => {
         const items = grupo.items.filter((i) => !i.roles || i.roles.includes(rol));
         if (items.length === 0) return null;
@@ -165,5 +203,6 @@ export function NavLateral({ rol }: { rol: string }) {
         </p>
       </div>
     </nav>
+    </>
   );
 }

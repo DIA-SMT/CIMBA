@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { esFalloDeRed } from "./errores";
+import { avisarSesionVencida, sesionVigente } from "./sesion-cliente";
 
 /**
  * LA COLA DE ENVÍOS: cargar sin señal y que se mande solo después.
@@ -189,6 +190,13 @@ export async function enviarOEncolar(
     return { encolado: false };
   } catch (e) {
     if (esFalloDeRed(e)) return encolar();
+    /* SESIÓN CERRADA: no es culpa de lo cargado. Se guarda en el teléfono
+       igual que sin señal, y el cartel pide volver a entrar; al volver, la
+       cola lo manda sola. Antes se perdía con un error genérico. */
+    if (!(await sesionVigente())) {
+      avisarSesionVencida();
+      return encolar();
+    }
     throw e;
   }
 }
@@ -214,6 +222,12 @@ export async function procesarCola(ejecutores: Record<TipoEnvio, Ejecutor>): Pro
     } catch (e) {
       if (esFalloDeRed(e)) {
         r.sinRed = true;
+        break;
+      }
+      /* Sesión cerrada: se frena sin marcar nada como rechazado. Todo queda
+         en la cola y sale después de volver a entrar. */
+      if (!(await sesionVigente())) {
+        avisarSesionVencida();
         break;
       }
       const mensaje = e instanceof Error ? e.message : "El servidor no lo aceptó";

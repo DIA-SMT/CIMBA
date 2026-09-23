@@ -77,6 +77,7 @@ import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
+import { avisarSesionVencida } from "@/lib/sesion-cliente";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -946,6 +947,13 @@ const capaAnegamiento = (p: Paleta): LayerProps => ({
  * no cae en ninguno (desestimado) deja la burbuja gris, que es lo honesto: no
  * hay deuda ni trabajo que mostrar ahí.
  */
+/** Por debajo de este zoom el mapa principal muestra celdas; desde acá, los puntos. */
+const ZOOM_PUNTOS = 13;
+
+/** La misma capa, visible recién desde cierto zoom. (LayerProps incluye las capas
+ *  "custom", que no aceptan minzoom: por eso el cast.) */
+const desdeZoom = (capa: LayerProps, z: number): LayerProps => ({ ...capa, minzoom: z }) as LayerProps;
+
 const capaClusters = (p: Paleta): LayerProps => ({
   id: "clusters",
   type: "circle",
@@ -1462,6 +1470,8 @@ function MapaInterno({
    * abierto la próxima vez, sin volver a abrirlo todos los días.
    */
   const [panelCapas, setPanelCapas] = useState(false);
+  /** En el teléfono, el selector de mapa y de vista vive plegado en una ficha. */
+  const [vistaAbiertaMovil, setVistaAbiertaMovil] = useState(false);
   useEffect(() => {
     try {
       if (localStorage.getItem("cimba-panel-capas") === "1") setPanelCapas(true);
@@ -2202,10 +2212,17 @@ function MapaInterno({
     queryKey: ["geodata"],
     queryFn: async () => {
       const res = await fetch("/api/geodata");
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // Sin sesión: el cartel de "Tu sesión se cerró" lo dice en toda la app.
+        if (res.status === 401) avisarSesionVencida();
+        throw new Error(String(res.status));
+      }
       return res.json();
     },
     refetchInterval: 60_000,
+    /* Un 401 no se arregla reintentando: antes se reintentaba una docena de
+       veces seguidas antes de admitir que la sesión se había cerrado. */
+    retry: (intentos, err) => !(err instanceof Error && err.message === "401") && intentos < 2,
   });
   /**
    * NO HAY NINGÚN NÚMERO QUE MOSTRAR: o no llegó nunca, o falló el primer
@@ -2498,6 +2515,78 @@ function MapaInterno({
     });
     return { type: "FeatureCollection", features: conEdad };
   }, [demandasBase, destinos, filtroBrechaActivo, enPluvial, filtroFoto]);
+
+  /**
+   * LA CIUDAD DE LEJOS. A escala ciudad, miles de anillos finos encimados son
+   * ruido: se ve que hay mucho, no dónde está lo grave. Por debajo del zoom 13
+   * lo que se ve —pedidos y problemas, con los mismos filtros que los puntos—
+   * se junta en celdas de unos 600 m, con la cantidad adentro. Al acercar, las
+   * celdas se van y aparecen los puntos.
+   *
+   * El color es la MISMA regla que ya usaban las burbujas de problemas
+   * (capaClusters): rojo si "sin atención" domina o llega a un tercio; si no,
+   * ámbar si lo que está en cola u obra supera a lo resuelto; si no, verde.
+   * Así la leyenda del semáforo sigue diciendo lo mismo de cerca y de lejos.
+   *
+   * No se arman en Comparar, en el mapa pluvial, con el mapa de calor ni con
+   * Brecha pintada por antigüedad: ahí el color de un punto no es el semáforo.
+   */
+  const usarCeldas = !enPluvial && !comparar && !verCalor && !(vista === "brecha" && modoBrecha === "antiguedad");
+  const celdas = useMemo<FC>(() => {
+    if (!usarCeldas) return { type: "FeatureCollection", features: [] };
+    const acumulado = new Map<string, { lon: number; lat: number; ped: number; prob: number; sin: number; act: number; hecho: number }>();
+    const sumar = (lon: number, lat: number, paso: "sin" | "act" | "hecho" | null, esPedido: boolean) => {
+      const clave = `${Math.floor(lat / 0.0055)}:${Math.floor(lon / 0.0062)}`;
+      let c = acumulado.get(clave);
+      if (!c) {
+        c = { lon: 0, lat: 0, ped: 0, prob: 0, sin: 0, act: 0, hecho: 0 };
+        acumulado.set(clave, c);
+      }
+      c.lon += lon;
+      c.lat += lat;
+      if (esPedido) c.ped++;
+      else c.prob++;
+      if (paso) c[paso]++;
+    };
+    if (verDemandas) {
+      for (const f of demandasFiltradas.features) {
+        const [lon, lat] = f.geometry.coordinates as [number, number];
+        const b = String(f.properties.brecha);
+        sumar(lon, lat, b === "sin_atencion" ? "sin" : b === "en_cola" || b === "en_obra" ? "act" : b === "posible_resuelta" ? "hecho" : null, true);
+      }
+    }
+    for (const f of incidentesFiltrados.features) {
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const e = String(f.properties.estado);
+      sumar(
+        lon,
+        lat,
+        e === "detectado" || e === "priorizado" ? "sin" : e === "programado" || e === "en_ejecucion" ? "act" : e === "reparado" || e === "verificado" ? "hecho" : null,
+        false,
+      );
+    }
+    return {
+      type: "FeatureCollection",
+      features: [...acumulado.values()].map((c) => {
+        const n = c.ped + c.prob;
+        const color =
+          c.sin > 0 && ((c.sin >= c.act && c.sin >= c.hecho) || 3 * c.sin >= n)
+            ? pal.sinAtencion
+            : c.act > 0 && c.act >= c.hecho
+              ? pal.enObra
+              : c.hecho > 0
+                ? pal.resuelto
+                : pal.inactivo;
+        return {
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: [c.lon / n, c.lat / n] },
+          properties: { n, ped: c.ped, prob: c.prob, sin: c.sin, act: c.act, hecho: c.hecho, color, etiqueta: numero(n) },
+        };
+      }),
+    };
+  }, [usarCeldas, verDemandas, demandasFiltradas, incidentesFiltrados, pal]);
+  /** Desde qué zoom se ven los puntos: con celdas, 13; sin celdas, siempre. */
+  const zoomPuntos = usarCeldas ? ZOOM_PUNTOS : 0;
 
   /** Cuántos pedidos pendientes hay en cada categoría de brecha, para la
    *  leyenda de esa vista. Respeta el destino prendido (si no, el chip decía
@@ -3374,6 +3463,15 @@ function MapaInterno({
       setSectorSel(feature.properties ?? {});
       return;
     }
+    if (feature.layer.id === "celdas-ciudad") {
+      // Una celda se abre: la cámara se acerca hasta donde se ven los puntos.
+      const g = feature.geometry as { type: string; coordinates?: [number, number] };
+      const mapa = mapRef.current?.getMap();
+      if (mapa && g.coordinates) {
+        mapa.easeTo({ center: g.coordinates, zoom: Math.max(mapa.getZoom() + 1.5, ZOOM_PUNTOS + 0.8), duration: 600 });
+      }
+      return;
+    }
     if (feature.layer.id === "clusters" || feature.layer.id === "sat-cluster" || feature.layer.id === "ing-cluster") {
       const mapa = mapRef.current?.getMap();
       const idFuente =
@@ -3447,7 +3545,7 @@ function MapaInterno({
   }, []);
 
   return (
-    <div ref={contenedorRef} className="relative h-full w-full overflow-hidden">
+    <div ref={contenedorRef} className="mapa-principal relative h-full w-full overflow-hidden">
       <MapaGL
         ref={mapRef}
         initialViewState={{
@@ -3460,6 +3558,7 @@ function MapaInterno({
         interactiveLayerIds={[
           // Cada capa opcional entra solo cuando está montada: consultar una
           // capa inexistente haría fallar el query de features.
+          ...(usarCeldas ? ["celdas-ciudad"] : []),
           "clusters",
           "incidentes-punto",
           "demandas-punto",
@@ -3568,7 +3667,18 @@ function MapaInterno({
           }
           const p = f.properties ?? {};
           let lineas: string[];
-          if (f.layer.id === "clusters") {
+          if (f.layer.id === "celdas-ciudad") {
+            const ped = Number(p.ped ?? 0);
+            const prob = Number(p.prob ?? 0);
+            lineas = [
+              [ped > 0 ? numero(ped) + (ped === 1 ? " pedido" : " pedidos") : null, prob > 0 ? numero(prob) + (prob === 1 ? " problema" : " problemas") : null]
+                .filter(Boolean)
+                .join(" y "),
+              numero(Number(p.sin ?? 0)) + " sin atención · " + numero(Number(p.act ?? 0)) + " en cola u obra · " +
+                numero(Number(p.hecho ?? 0)) + " resueltos",
+              "clic para acercar",
+            ];
+          } else if (f.layer.id === "clusters") {
             lineas = [numero(Number(p.point_count)) + " incidentes", "clic para acercar"];
           } else if (f.layer.id === "incidentes-punto") {
             lineas = [
@@ -3908,14 +4018,16 @@ function MapaInterno({
                 antes "no se diferenciaba" (el Director, 7/9). Solo la rampa
                 de antigüedad de Brecha es otro código, y lo dice su leyenda. */}
             {verDemandas && (
-              <Layer {...(vista === "brecha" && modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha)} />
+              <Layer
+                {...desdeZoom(vista === "brecha" && modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha, zoomPuntos)}
+              />
             )}
             {/* El anillo de destino se monta encima del punto y solo si hay
                 alguna cola ajena prendida: con solo bacheo no dibuja nada. */}
             {/* Sin fragmento: <Source> clona a sus hijos para inyectarles el
                 source id, y un Fragment no acepta props. */}
             {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
-              <Layer {...capas.demandasDestino} />
+              <Layer {...desdeZoom(capas.demandasDestino, zoomPuntos)} />
             )}
             {/* El bache con su emoji recién en zoom de cuadra: de lejos su
                 identidad es el punto del semáforo. */}
@@ -4180,11 +4292,42 @@ function MapaInterno({
             n_hecho: ["+", ["case", ["match", ["get", "estado"], ["reparado", "verificado"], true, false], 1, 0]],
           }}
         >
-          <Layer {...capas.pulso} />
-          <Layer {...capas.incidentes} />
-          <Layer {...capas.clusters} />
-          <Layer {...capaClusterConteo} />
+          <Layer {...desdeZoom(capas.pulso, zoomPuntos)} />
+          <Layer {...desdeZoom(capas.incidentes, zoomPuntos)} />
+          <Layer {...desdeZoom(capas.clusters, zoomPuntos)} />
+          <Layer {...desdeZoom(capaClusterConteo, zoomPuntos)} />
         </Source>
+
+        {/* De lejos: las celdas, con la cantidad adentro (ver `celdas`). */}
+        {usarCeldas && (
+          <Source id="celdas-ciudad" type="geojson" data={celdas}>
+            <Layer
+              id="celdas-ciudad"
+              type="circle"
+              maxzoom={ZOOM_PUNTOS}
+              paint={{
+                "circle-color": ["get", "color"],
+                "circle-radius": ["interpolate", ["linear"], ["get", "n"], 1, 7, 5, 11, 20, 16, 60, 22, 200, 30],
+                "circle-opacity": 0.88,
+                "circle-stroke-color": pal.trazoCluster,
+                "circle-stroke-width": 1.5,
+              }}
+            />
+            <Layer
+              id="celdas-ciudad-n"
+              type="symbol"
+              maxzoom={ZOOM_PUNTOS}
+              layout={{
+                "text-field": ["case", [">", ["get", "n"], 1], ["get", "etiqueta"], ""],
+                "text-font": ["Open Sans Bold"],
+                "text-size": ["interpolate", ["linear"], ["get", "n"], 2, 10, 100, 13],
+                "text-allow-overlap": true,
+                "text-ignore-placement": true,
+              }}
+              paint={{ "text-color": "#ffffff", "text-halo-color": "rgba(11,15,22,0.7)", "text-halo-width": 1.2 }}
+            />
+          </Source>
+        )}
 
         <Source
           id="seleccion"
@@ -4279,8 +4422,21 @@ function MapaInterno({
         {/* QUÉ MAPA: dos mundos que no se mezclan. El de bache y asfalto es el
             de todos los días; el pluvial es la red de desagües, que tiene otro
             dueño, otro trabajo y otra lectura. */}
+        {/* En el teléfono: una ficha con lo que se está viendo; al tocarla se
+            despliegan el selector de mapa y el de vista. */}
+        {!pantalla && !comparar && (
+          <button
+            type="button"
+            onClick={() => setVistaAbiertaMovil((v) => !v)}
+            aria-expanded={vistaAbiertaMovil}
+            className="panel-vidrio flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-texto sm:hidden"
+          >
+            {enPluvial ? "Sistema pluvial" : `${VISTAS[vista].etiqueta} · ${DESTINOS.filter((d) => destinos[d] === true).map((d) => ETIQUETA_DESTINO[d]).join(", ") || "sin filtro"}`}
+            <ChevronDown size={13} className={vistaAbiertaMovil ? "rotate-180 transition" : "transition"} />
+          </button>
+        )}
         {!pantalla && (
-          <div className="panel-vidrio flex rounded-xl p-1">
+          <div className={`panel-vidrio rounded-xl p-1 ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
             {([
               { clave: "bache" as const, etiqueta: "Bache y asfalto", desc: "Pedidos, incidentes y trabajo de bacheo" },
               { clave: "pluvial" as const, etiqueta: "Sistema pluvial", desc: "Imbornales, colectores y puntos de anegamiento" },
@@ -4317,8 +4473,8 @@ function MapaInterno({
            * donde se lo busca) y el ancho quedó topado: la barra de
            * herramientas no puede volver a comerse el mapa.
            */
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[min(22rem,calc(100vw-88px))] flex-col rounded-xl p-1">
-            <div className="flex overflow-x-auto sm:flex-wrap sm:overflow-visible">
+          <div data-tour="vistas" className={`panel-vidrio max-w-[calc(100vw-24px)] flex-col rounded-xl p-1 sm:max-w-[calc(100vw-88px)] sm:flex-row sm:items-center ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
+            <div className="flex shrink-0 overflow-x-auto">
               {(Object.keys(VISTAS) as Vista[]).map((v) => (
                 <button
                   key={v}
@@ -4343,7 +4499,7 @@ function MapaInterno({
             <div
               data-tour="destinos"
               title={AYUDA_CUENTA_DESTINO}
-              className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1"
+              className="mt-1 flex flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto border-t border-borde pt-1 sm:mt-0 sm:ml-1 sm:overflow-visible sm:border-t-0 sm:border-l sm:pt-0 sm:pl-2"
             >
               <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Resuelve</span>
               {DESTINOS.map((d) => {
@@ -4410,9 +4566,12 @@ function MapaInterno({
           {/* Nivel de detalle: cuánto se muestra encima del mapa. "Limpio" es
               el mismo despejado del ojo de al lado — un solo estado para las
               dos afordancias. */}
+          {/* El nivel de detalle y el ojo de despejar se mudaron a Acciones →
+              "Cuánto se muestra": estaban repetidos acá y la barra ocupaba dos o
+              tres renglones encima del mapa (23/9). */}
           <div
-            data-tour="detalle"
-            className="panel-vidrio hidden items-center rounded-xl p-1 sm:flex"
+            data-tour="detalle-viejo"
+            className="hidden"
             title="Cuánta información se dibuja encima del mapa: Todo (los 6 números y las cifras de deuda por zona), Esencial (los 2 que importan en esta vista) o Limpio (solo el mapa)"
           >
             {(Object.keys(ETIQUETA_DETALLE) as Detalle[]).map((d) => (
@@ -4428,9 +4587,9 @@ function MapaInterno({
             ))}
           </div>
           <button
-            data-tour="despejar"
+            data-tour="despejar-viejo"
             onClick={alternarDespejado}
-            className={`panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:flex sm:px-3 sm:py-2.5 ${
+            className={`hidden ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title={
@@ -4562,6 +4721,7 @@ function MapaInterno({
                 menuAcciones ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2"
               }`}
               title="Todas las acciones del mapa"
+              data-tour="acciones"
             >
               <Menu size={15} />
               Acciones
@@ -4956,7 +5116,7 @@ function MapaInterno({
 
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
       {balance && !comparar && !despejado && !enPluvial && !sinDatos && (balance.pend > 0 || balance.m2 > 0) && (
-        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
+        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2 max-sm:bottom-[8.5rem] max-sm:left-3 max-sm:translate-x-0">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
                 "sin respuesta" sale de brecha === 'sin_atencion' (rojo) y los
@@ -6592,12 +6752,12 @@ function LeyendaSemaforo({
 }) {
   /** La clave de formas: se aprende una vez y después estorba. Arranca
    *  desplegada y quien la pliega no la vuelve a ver. */
-  const [verClave, setVerClave] = useState(true);
+  const [verClave, setVerClave] = useState(false);
   useEffect(() => {
     try {
-      if (localStorage.getItem("cimba-clave-formas") === "0") setVerClave(false);
+      if (localStorage.getItem("cimba-clave-formas") === "1") setVerClave(true);
     } catch {
-      /* modo privado: se muestra, que es el default seguro */
+      /* modo privado: plegada, que ocupa una sola línea */
     }
   }, []);
   const cambiarClave = (v: boolean) => {

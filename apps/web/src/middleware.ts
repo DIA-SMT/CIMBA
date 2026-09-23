@@ -1,5 +1,33 @@
-import { jwtVerify } from "jose";
+import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { NextResponse, type NextRequest } from "next/server";
+import { COOKIE_SESION, DURACION_SESION_S, RENOVAR_DESPUES_DE_S } from "@/lib/sesion-duracion";
+
+/**
+ * LA SESIÓN QUE SE RENUEVA SOLA. Si el token tiene más de una hora, se re-emite
+ * con los mismos datos por siete días más y viaja en la respuesta. Mientras la
+ * persona use CIMBA, no vence; vence tras siete días sin abrirla. Ver
+ * lib/sesion-duracion.ts para la historia (Leo, 23/9).
+ */
+async function renovar(res: NextResponse, payload: JWTPayload, secreto: Uint8Array): Promise<NextResponse> {
+  const ahora = Math.floor(Date.now() / 1000);
+  if (typeof payload.iat === "number" && ahora - payload.iat < RENOVAR_DESPUES_DE_S) return res;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { iat, exp, iss, nbf, jti, ...datos } = payload;
+  const token = await new SignJWT(datos)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setIssuer("cimba")
+    .setExpirationTime(`${DURACION_SESION_S}s`)
+    .sign(secreto);
+  res.cookies.set(COOKIE_SESION, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: DURACION_SESION_S,
+    path: "/",
+  });
+  return res;
+}
 
 /**
  * El manifest y los íconos van acá y no detrás de la sesión: el navegador los
@@ -62,7 +90,7 @@ export async function middleware(req: NextRequest) {
   // Cron: se autentica con CRON_SECRET, no con sesión
   if (pathname.startsWith("/api/sync") || pathname.startsWith("/api/cron")) return NextResponse.next();
 
-  const token = req.cookies.get("cimba_sesion")?.value;
+  const token = req.cookies.get(COOKIE_SESION)?.value;
   if (token) {
     try {
       const secreto = new TextEncoder().encode(process.env.CIMBA_JWT_SECRET ?? "");
@@ -101,15 +129,31 @@ export async function middleware(req: NextRequest) {
         url.search = "";
         return NextResponse.redirect(url);
       }
-      return NextResponse.next();
+      return renovar(NextResponse.next(), payload, secreto);
     } catch {
-      /* sesión inválida → acceso */
+      /* sesión inválida o vencida → acceso */
     }
   }
 
+  /**
+   * SIN SESIÓN. Los datos (/api) y las acciones del servidor contestan 401 en
+   * vez de redirigir: una redirección a la página de acceso le llegaba al
+   * código como un HTML incomprensible y el formulario de Campo mostraba un
+   * error genérico. Con el 401, el cliente sabe que es la sesión y lo dice.
+   *
+   * Las páginas sí van al acceso, pero con ?volver= para que después de entrar
+   * la persona vuelva exactamente adonde estaba —Campo, la orden, la ficha—,
+   * y no a la portada.
+   */
+  if (pathname.startsWith("/api") || req.headers.has("next-action")) {
+    return NextResponse.json({ error: "sesion_vencida" }, { status: 401 });
+  }
   const url = req.nextUrl.clone();
   url.pathname = "/acceso";
   url.search = "";
+  if (pathname !== "/" && req.method === "GET") {
+    url.searchParams.set("volver", `${pathname}${req.nextUrl.search}`);
+  }
   return NextResponse.redirect(url);
 }
 
