@@ -1177,19 +1177,20 @@ export async function geodata(sesion: Sesion) {
               * "¿cómo quedó?". Si todavía no hay, se muestra el antes, que al
               * menos dice qué se encontró.
               */
-             (select f.url_externa from fotografias f
-               join intervenciones iv on iv.id = f.intervencion_id
-               where iv.incidente_id = i.id and f.url_externa is not null
-               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
-                        f.tomada_en desc nulls last
-               limit 1) as foto,
-             (select f.momento::text from fotografias f
-               join intervenciones iv on iv.id = f.intervencion_id
-               where iv.incidente_id = i.id and f.url_externa is not null
-               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
-                        f.tomada_en desc nulls last
-               limit 1) as foto_momento
+             fi.url as foto, fi.momento as foto_momento
       from incidentes i
+      /* Una sola búsqueda de la foto por punto (antes eran dos subconsultas
+         idénticas, una para la URL y otra para el momento) y con el índice de
+         la 0036: el mapa tardaba 6 a 8 segundos en abrir por esto. */
+      left join lateral (
+        select f.url_externa as url, f.momento::text as momento
+        from intervenciones iv
+        join fotografias f on f.intervencion_id = iv.id
+        where iv.incidente_id = i.id and f.url_externa is not null
+        order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
+                 f.tomada_en desc nulls last
+        limit 1
+      ) fi on true
     `)) as unknown as Array<Record<string, unknown>>;
 
     const demandas = (await tx.execute(sql`
@@ -1216,15 +1217,9 @@ export async function geodata(sesion: Sesion) {
               * distancia y si fue antes o después: el rótulo lo explica en vez
               * de desmentir al color.
               */
-             coalesce(
-               (select f.url_externa from fotografias f
-                 where f.demanda_id = d.id and f.url_externa is not null limit 1),
-               rep.url
-             ) as foto,
+             coalesce(fr.url, rep.url) as foto,
              case
-               when exists (select 1 from fotografias f
-                            where f.demanda_id = d.id and f.url_externa is not null)
-                 then 'reclamo'
+               when fr.url is not null then 'reclamo'
                when rep.url is null then null
                when rep.posterior then 'reparacion_posterior'
                else 'reparacion_anterior'
@@ -1255,6 +1250,13 @@ export async function geodata(sesion: Sesion) {
                else 'sin_atencion'
              end as brecha
       from demandas d
+      /* La foto que mandó quien reclamó, buscada una sola vez (antes, una vez
+         para la URL y otra para saber si existía). */
+      left join lateral (
+        select f.url_externa as url from fotografias f
+        where f.demanda_id = d.id and f.url_externa is not null
+        limit 1
+      ) fr on true
       /* La reparación fotografiada más cercana, con su distancia y su fecha:
          se elige la MÁS CERCANA (no una cualquiera) para que el rótulo pueda
          decir "a X metros" sin mentir. */
