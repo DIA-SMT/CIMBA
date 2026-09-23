@@ -170,6 +170,15 @@ export const HERRAMIENTAS_MIGUE = [
   {
     type: "function",
     function: {
+      name: "pendientes",
+      description:
+        "Todo lo que está esperando una decisión de quien pregunta: baches propuestos por las cuadrillas sin validar, órdenes vencidas que siguen activas, y reclamos cuyo problema ya se reparó y falta cerrarle al vecino. Usala para '¿qué tengo pendiente?', '¿qué me falta resolver?', '¿qué está esperando por mí?', '¿qué tengo para hacer hoy?'.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "proyeccion_capacidad",
       description:
         "Proyecta cuánto cuesta un lote de trabajo con la regla del Director (10 baches por turno por cuadrilla, 2 turnos/día, 4 t de mezcla por turno, ~14 baches chicos o 4 carpetas por turno): devuelve turnos, toneladas y días. Usala para '¿cuánto tardamos en hacer 200 baches con 3 cuadrillas?', '¿cuántas toneladas hacen falta para el circuito 11A?'.",
@@ -468,6 +477,27 @@ export async function ejecutarHerramientaMigue(
         return { circuito: mapear(uno) };
       }
       return { ranking_por_pendientes: filas.slice(0, 15).map(mapear), total_circuitos: filas.length };
+    }
+
+    case "pendientes": {
+      const { pendientesDe } = await import("./ordenes");
+      const p = await pendientesDe(sesion);
+      /* Se devuelve resumido y no la lista entera: lo que el modelo tiene que
+         poder decir es CUÁNTO hay y de qué, no recitar cada bache. El detalle
+         con los botones lo arma el canal que corresponda. */
+      return {
+        baches_propuestos_sin_validar: p.propuestosTotal,
+        ordenes_vencidas: p.ordenesVencidas.length,
+        detalle_ordenes_vencidas: p.ordenesVencidas,
+        reclamos_listos_para_cerrar: p.cierresPendientes,
+        primeros_propuestos: p.propuestos.map((x) => ({
+          direccion: x.direccion,
+          orden: x.numero,
+          empresa: x.empresa,
+          m2: x.superficieM2,
+          ya_medido: x.habilitaCertificacion,
+        })),
+      };
     }
 
     case "proyeccion_capacidad": {
