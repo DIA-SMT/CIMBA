@@ -77,6 +77,7 @@ import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
+import { avisarSesionVencida } from "@/lib/sesion-cliente";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -2202,10 +2203,17 @@ function MapaInterno({
     queryKey: ["geodata"],
     queryFn: async () => {
       const res = await fetch("/api/geodata");
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // Sin sesión: el cartel de "Tu sesión se cerró" lo dice en toda la app.
+        if (res.status === 401) avisarSesionVencida();
+        throw new Error(String(res.status));
+      }
       return res.json();
     },
     refetchInterval: 60_000,
+    /* Un 401 no se arregla reintentando: antes se reintentaba una docena de
+       veces seguidas antes de admitir que la sesión se había cerrado. */
+    retry: (intentos, err) => !(err instanceof Error && err.message === "401") && intentos < 2,
   });
   /**
    * NO HAY NINGÚN NÚMERO QUE MOSTRAR: o no llegó nunca, o falló el primer
@@ -3447,7 +3455,7 @@ function MapaInterno({
   }, []);
 
   return (
-    <div ref={contenedorRef} className="relative h-full w-full overflow-hidden">
+    <div ref={contenedorRef} className="mapa-principal relative h-full w-full overflow-hidden">
       <MapaGL
         ref={mapRef}
         initialViewState={{
@@ -4317,8 +4325,8 @@ function MapaInterno({
            * donde se lo busca) y el ancho quedó topado: la barra de
            * herramientas no puede volver a comerse el mapa.
            */
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[min(22rem,calc(100vw-88px))] flex-col rounded-xl p-1">
-            <div className="flex overflow-x-auto sm:flex-wrap sm:overflow-visible">
+          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] flex-col rounded-xl p-1 sm:flex-row sm:items-center">
+            <div className="flex shrink-0 overflow-x-auto">
               {(Object.keys(VISTAS) as Vista[]).map((v) => (
                 <button
                   key={v}
@@ -4343,7 +4351,7 @@ function MapaInterno({
             <div
               data-tour="destinos"
               title={AYUDA_CUENTA_DESTINO}
-              className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1"
+              className="mt-1 flex flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto border-t border-borde pt-1 sm:mt-0 sm:ml-1 sm:overflow-visible sm:border-t-0 sm:border-l sm:pt-0 sm:pl-2"
             >
               <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Resuelve</span>
               {DESTINOS.map((d) => {
@@ -4410,9 +4418,12 @@ function MapaInterno({
           {/* Nivel de detalle: cuánto se muestra encima del mapa. "Limpio" es
               el mismo despejado del ojo de al lado — un solo estado para las
               dos afordancias. */}
+          {/* El nivel de detalle y el ojo de despejar se mudaron a Acciones →
+              "Cuánto se muestra": estaban repetidos acá y la barra ocupaba dos o
+              tres renglones encima del mapa (23/9). */}
           <div
-            data-tour="detalle"
-            className="panel-vidrio hidden items-center rounded-xl p-1 sm:flex"
+            data-tour="detalle-viejo"
+            className="hidden"
             title="Cuánta información se dibuja encima del mapa: Todo (los 6 números y las cifras de deuda por zona), Esencial (los 2 que importan en esta vista) o Limpio (solo el mapa)"
           >
             {(Object.keys(ETIQUETA_DETALLE) as Detalle[]).map((d) => (
@@ -4428,9 +4439,9 @@ function MapaInterno({
             ))}
           </div>
           <button
-            data-tour="despejar"
+            data-tour="despejar-viejo"
             onClick={alternarDespejado}
-            className={`panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:flex sm:px-3 sm:py-2.5 ${
+            className={`hidden ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title={
@@ -4562,6 +4573,7 @@ function MapaInterno({
                 menuAcciones ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2"
               }`}
               title="Todas las acciones del mapa"
+              data-tour="acciones"
             >
               <Menu size={15} />
               Acciones
@@ -6592,12 +6604,12 @@ function LeyendaSemaforo({
 }) {
   /** La clave de formas: se aprende una vez y después estorba. Arranca
    *  desplegada y quien la pliega no la vuelve a ver. */
-  const [verClave, setVerClave] = useState(true);
+  const [verClave, setVerClave] = useState(false);
   useEffect(() => {
     try {
-      if (localStorage.getItem("cimba-clave-formas") === "0") setVerClave(false);
+      if (localStorage.getItem("cimba-clave-formas") === "1") setVerClave(true);
     } catch {
-      /* modo privado: se muestra, que es el default seguro */
+      /* modo privado: plegada, que ocupa una sola línea */
     }
   }, []);
   const cambiarClave = (v: boolean) => {

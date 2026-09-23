@@ -54,8 +54,8 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
     id: "detalle",
     titulo: "Cuánto se muestra (nivel de detalle)",
     desc: "Tres escalones para limpiar la pantalla sin perder el mapa: TODO (las seis cifras de arriba y las cifras flotantes de deuda por zona), ESENCIAL (el valor de arranque: dos cifras elegidas según la vista y ninguna cifra flotante) y LIMPIO (solo el mapa, que es el viejo «Despejar» del ojo tachado). El balance de abajo y la leyenda del semáforo se mantienen salvo en Limpio. La elección queda guardada en este dispositivo.",
-    como: "Selector de tres posiciones al lado del ojo tachado (en el teléfono, en Acciones → «Cuánto se muestra»).",
-    tour: "detalle",
+    como: "En Acciones → «Cuánto se muestra», arriba a la derecha.",
+    tour: "acciones",
   },
   {
     id: "capas",
@@ -113,8 +113,8 @@ export const GUIA_FUNCIONES: FuncionMapa[] = [
   {
     id: "despejar",
     titulo: "Despejar la pantalla",
-    desc: "El botón del ojo tachado esconde todos los paneles y números de un golpe para ver el mapa limpio (es el escalón «Limpio» del nivel de detalle). Volvés a tocarlo —o tocás el chip «Mostrar paneles» que aparece arriba a la derecha— y reaparece todo como estaba.",
-    tour: "despejar",
+    desc: "Acciones → «Cuánto se muestra» → Limpio esconde todos los paneles y números de un golpe para ver el mapa limpio. Tocás el chip «Mostrar paneles» que aparece arriba a la derecha y reaparece todo como estaba.",
+    tour: "acciones",
   },
   {
     id: "arrastrar",
