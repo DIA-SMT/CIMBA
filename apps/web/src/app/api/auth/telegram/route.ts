@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { exigirRol, type Sesion } from "@/lib/auth";
+import { exigirRol } from "@/lib/auth";
 import { iaDisponible } from "@/lib/ia";
 import { conversarConMigue } from "@/lib/migue-conversar";
-import { marcarUsoTelegram, perfilPorChatTelegram } from "@/lib/perfiles";
+import { identificarChat } from "@/lib/bot-telegram";
+import { marcarUsoTelegram } from "@/lib/perfiles";
 import { mensajeDeError } from "@/lib/errores";
 
 export const maxDuration = 60;
@@ -43,35 +44,18 @@ const entradaSchema = z.object({
 const ROLES_BOT = ["planificacion", "supervision", "atencion_ciudadana", "informacion_estrategica"] as const;
 
 export async function POST(req: NextRequest) {
-  const secreto = process.env.CIMBA_BOT_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secreto || auth !== `Bearer ${secreto}`) {
-    return NextResponse.json({ error: "no autorizado" }, { status: 401 });
-  }
-
   const cuerpo = entradaSchema.safeParse(await req.json().catch(() => null));
   if (!cuerpo.success) return NextResponse.json({ error: "pedido inválido" }, { status: 400 });
 
-  const perfil = await perfilPorChatTelegram(cuerpo.data.chatId);
-  if (!perfil) {
-    return NextResponse.json(
-      { error: "Este chat no está habilitado en CIMBA. Pedile a la Dirección que lo vincule." },
-      { status: 403 },
-    );
-  }
-
-  const sesion: Sesion = {
-    sub: perfil.id,
-    rol_cimba: perfil.rol,
-    id_persona: perfil.id_persona,
-    nombre: perfil.nombre,
-  };
+  const quien = await identificarChat(req, cuerpo.data.chatId);
+  if (!quien.ok) return NextResponse.json({ error: quien.error }, { status: quien.status });
+  const sesion = quien.sesion;
 
   try {
     exigirRol(sesion, ...ROLES_BOT);
   } catch {
     return NextResponse.json(
-      { error: `Tu rol en CIMBA (${perfil.rol}) no tiene habilitado el bot.` },
+      { error: `Tu rol en CIMBA (${sesion.rol_cimba}) no tiene habilitado el bot.` },
       { status: 403 },
     );
   }
@@ -82,7 +66,7 @@ export async function POST(req: NextRequest) {
     const r = await conversarConMigue(sesion, cuerpo.data.mensajes);
     await marcarUsoTelegram(cuerpo.data.chatId);
     // accionMapa no significa nada en Telegram: no hay mapa del otro lado.
-    return NextResponse.json({ respuesta: r.respuesta, herramientas: r.herramientas, nombre: perfil.nombre });
+    return NextResponse.json({ respuesta: r.respuesta, herramientas: r.herramientas, nombre: sesion.nombre });
   } catch (e) {
     return NextResponse.json({ error: mensajeDeError(e, "No pude responder") }, { status: 502 });
   }
