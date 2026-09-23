@@ -21,20 +21,25 @@ import type { Map as MapaLibre } from "maplibre-gl";
 import type { RolUsuario } from "@cimba/domain";
 import {
   type Camara,
+  type CapasAvance,
   type DatosAvance,
   type DiasVentana,
   type Foco,
   type HechoProps,
   type ListasTerritorios,
+  type PaginaMuro,
   type TerritorioRef,
   VENTANAS,
   etiquetaVentana,
   fechaDeDia,
   nombreRecorte,
 } from "@/lib/avance-tipos";
+import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { numero } from "@/lib/formato";
 import { VisorAntesDespues, type ParAntesDespues } from "@/components/visor-antes-despues";
+import { usarTemaMapa } from "@/components/mapa/tema-mapa";
 import { MapaAvance } from "./mapa-avance";
+import { MuroAntesDespues, parDeMuro } from "./muro-antes-despues";
 import { RailAvance } from "./rail-avance";
 import {
   compartirArchivo,
@@ -73,12 +78,18 @@ import {
  * una empresa la aísla y la encuadra.
  *
  * La LÍNEA DE TIEMPO pinta la ciudad día por día desde el principio de la
- * ventana hasta hoy —nueve segundos que explican el trabajo de un mes— y se
- * puede recorrer con el dedo.
+ * ventana hasta hoy —nueve segundos que explican el trabajo de un mes; con
+ * "Todo", dieciocho segundos desde marzo— y se puede recorrer con el dedo.
+ * Mientras corre se encienden las cuadras arregladas, se llenan los barrios y
+ * el rótulo cuenta baches, cuadras y barrios alcanzados.
+ *
+ * EL MURO del antes y el después se abre desde las fotos de la columna: todos
+ * los trabajos con las dos fotos, y un modo en que pasan solas.
  *
  * Con `pantalla` (la ruta /tv) es la misma pantalla sin menú, con reloj, que
- * se recarga sola cada diez minutos y, con `rotar`, va pasando sola de vista,
- * distrito por distrito. Con `publico` (la ruta /publico) no hay links hacia
+ * se recarga sola cada diez minutos y, con `rotar`, va pasando sola de vista:
+ * el mes, su película, la película desde marzo, la semana, hoy, las fotos del
+ * antes y el después pasando solas, y un distrito distinto en cada vuelta. Con `publico` (la ruta /publico) no hay links hacia
  * adentro ni datos de personas: es para mostrar afuera.
  */
 
@@ -152,7 +163,12 @@ export function PantallaAvance({
   const [busqueda, setBusqueda] = useState("");
   const [aviso, setAviso] = useState<string | null>(null);
   const [armando, setArmando] = useState(false);
-  const [visor, setVisor] = useState<{ pares: ParAntesDespues[]; indice: number } | null>(null);
+  const [visor, setVisor] = useState<{ pares: ParAntesDespues[]; indice: number; pasar?: boolean } | null>(null);
+  const [muroAbierto, setMuroAbierto] = useState(false);
+  /** Barrios, cuadras arregladas y a qué cuadra y barrio va cada trabajo: llega aparte, una vez. */
+  const [capas, setCapas] = useState<CapasAvance | null>(null);
+  const tema = usarTemaMapa();
+  const colorEmpresa = useCallback((e: string) => colorDeEmpresaEn(e, tema), [tema]);
   const [llegada, setLlegada] = useState<Llegada | null>(null);
   const [direccion, setDireccion] = useState<Direccion | null>(null);
   const [busquedaDir, setBusquedaDir] = useState("");
@@ -164,6 +180,31 @@ export function PantallaAvance({
   const [reproduciendo, setReproduciendo] = useState(false);
 
   const rutaDatos = publico ? "/api/publico/avance" : "/api/avance";
+  const rutaFotos = publico ? "/api/publico/avance/fotos" : "/api/avance/fotos";
+
+  /* Las capas de alcance, una vez al abrir. Si no llegan, el mapa sigue con
+     los puntos: es un agregado, no una condición. */
+  useEffect(() => {
+    let vivo = true;
+    fetch(publico ? "/api/publico/avance/capas" : "/api/avance/capas")
+      .then((r) => (r.ok ? (r.json() as Promise<CapasAvance>) : null))
+      .then((c) => {
+        if (vivo && c) setCapas(c);
+      })
+      .catch(() => {
+        /* sin capas: quedan los puntos */
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [publico]);
+
+  /** A qué cuadra y a qué barrio va cada trabajo, para las cuentas de alcance. */
+  const asignacion = useMemo(() => {
+    const m = new Map<number, { cuadra: number | null; barrio: number | null }>();
+    for (const [id, , cuadra, barrio] of capas?.trabajos ?? []) m.set(id, { cuadra, barrio });
+    return m;
+  }, [capas]);
   const parametros = (d: DiasVentana, t: TerritorioRef | null) => {
     const p = new URLSearchParams();
     if (d !== 30) p.set("dias", String(d));
@@ -290,6 +331,16 @@ export function PantallaAvance({
   const elegirTerritorioRef = useRef(elegirTerritorio);
   elegirTerritorioRef.current = elegirTerritorio;
   const distritoTurno = useRef(0);
+  /** Reproducir apenas lleguen los datos de "Todo" (el televisor lo pide antes de tenerlos). */
+  const reproducirAlCargar = useRef(false);
+  useEffect(() => {
+    if (reproducirAlCargar.current && datos.ventana.dias === 0) {
+      reproducirAlCargar.current = false;
+      setReproduciendo(true);
+    }
+  }, [datos]);
+  const rutaFotosRef = useRef(rutaFotos);
+  rutaFotosRef.current = rutaFotos;
   useEffect(() => {
     if (!pantalla || !rotar) return;
     const pasos: Array<() => void> = [
@@ -298,8 +349,23 @@ export function PantallaAvance({
         elegirVentanaRef.current(30);
       },
       () => setReproduciendo(true),
+      () => {
+        reproducirAlCargar.current = true;
+        elegirVentanaRef.current(0);
+      },
       () => elegirVentanaRef.current(7),
       () => elegirVentanaRef.current(1),
+      () => {
+        /* Las fotos del antes y el después, pasando solas, de toda la ciudad. */
+        void fetch(`${rutaFotosRef.current}?pagina=0`)
+          .then((r) => (r.ok ? (r.json() as Promise<PaginaMuro>) : null))
+          .then((j) => {
+            if (j && j.pares.length > 0) setVisor({ pares: j.pares.slice(0, 8).map(parDeMuro), indice: 0, pasar: true });
+          })
+          .catch(() => {
+            /* sin fotos, se queda en el mapa */
+          });
+      },
       () => {
         const lista = territorios.distritos;
         if (lista.length === 0) return;
@@ -312,6 +378,7 @@ export function PantallaAvance({
     let i = 0;
     const id = window.setInterval(() => {
       i = (i + 1) % pasos.length;
+      setVisor(null);
       pasos[i]!();
     }, 50_000);
     return () => window.clearInterval(id);
@@ -334,7 +401,8 @@ export function PantallaAvance({
   useEffect(() => {
     if (!reproduciendo) return;
     const pasos = Math.max(1, finLinea - inicioLinea + 1);
-    const ms = Math.max(45, Math.round(9000 / pasos));
+    /* "Todo" son seis meses: el doble de tiempo, para que se lea. */
+    const ms = Math.max(45, Math.round((datos.ventana.dias === 0 ? 18_000 : 9000) / pasos));
     let actual = cursorRef.current == null || cursorRef.current >= finLinea ? inicioLinea : cursorRef.current;
     setCursor(actual);
     const id = window.setInterval(() => {
@@ -348,6 +416,7 @@ export function PantallaAvance({
       setCursor(actual);
     }, ms);
     return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reproduciendo, inicioLinea, finLinea]);
 
   /** Lo acumulado hasta el cursor, para el rótulo que acompaña la línea de tiempo. */
@@ -355,15 +424,44 @@ export function PantallaAvance({
     if (cursor == null) return null;
     let n = 0;
     let m2 = 0;
+    const cuadras = new Set<number>();
+    const barrios = new Set<number>();
     for (const f of datos.hechos.features) {
       const p = f.properties;
       if (p.dia <= cursor && (!empresaSel || p.empresa === empresaSel)) {
         n++;
         m2 += p.m2 ?? 0;
+        const a = asignacion.get(p.id);
+        if (a?.cuadra != null) cuadras.add(a.cuadra);
+        if (a?.barrio != null) barrios.add(a.barrio);
       }
     }
-    return { n, m2 };
-  }, [cursor, datos, empresaSel]);
+    return { n, m2, cuadras: cuadras.size, barrios: barrios.size };
+  }, [cursor, datos, empresaSel, asignacion]);
+
+  /**
+   * EL ALCANCE de lo que se mira: en cuántas cuadras distintas y en cuántos
+   * barrios hubo trabajo, contra el total de barrios del recorte. Sin capas,
+   * no se muestra (no se inventa).
+   */
+  const alcance = useMemo(() => {
+    if (!capas) return null;
+    const cuadras = new Set<number>();
+    const barrios = new Set<number>();
+    for (const f of datos.hechos.features) {
+      const p = f.properties;
+      if (empresaSel && p.empresa !== empresaSel) continue;
+      const a = asignacion.get(p.id);
+      if (a?.cuadra != null) cuadras.add(a.cuadra);
+      if (a?.barrio != null) barrios.add(a.barrio);
+    }
+    const t = datos.territorio;
+    const totalBarrios =
+      t?.tipo === "barrio"
+        ? null
+        : capas.barrios.features.filter((b) => !t || b.properties.distrito === t.id).length;
+    return { cuadras: cuadras.size, barrios: barrios.size, totalBarrios };
+  }, [capas, asignacion, datos.hechos, datos.territorio, empresaSel]);
 
   const alternarEmpresa = useCallback((e: string) => setEmpresaSel((s) => (s === e ? null : e)), []);
   const enfocar = useCallback(
@@ -525,6 +623,8 @@ export function PantallaAvance({
           verPendientes={verPendientes}
           foco={foco}
           camaraInicial={camaraInicial}
+          capas={capas}
+          alElegirTerritorio={elegirTerritorio}
           alListo={(m) => {
             mapaRef.current = m;
           }}
@@ -615,6 +715,12 @@ export function PantallaAvance({
                   <p className="text-sm font-bold">{fechaDeDia(cursor)}</p>
                   <p className="num text-xs text-texto-2">
                     {numero(acumulado.n)} baches · {numero(Math.round(acumulado.m2))} m²
+                    {capas && (
+                      <>
+                        {" "}· <b className="text-texto">{numero(acumulado.cuadras)}</b> {acumulado.cuadras === 1 ? "cuadra" : "cuadras"} ·{" "}
+                        <b className="text-texto">{numero(acumulado.barrios)}</b> {acumulado.barrios === 1 ? "barrio" : "barrios"}
+                      </>
+                    )}
                   </p>
                 </div>
                 <button type="button" onClick={cerrarLinea} aria-label="Cerrar la línea de tiempo" className="rounded-md p-1 text-texto-3 hover:text-texto">
@@ -876,7 +982,15 @@ export function PantallaAvance({
             <div className="pointer-events-auto rounded-xl border border-borde bg-panel/90 px-3 py-2 text-[11px] leading-relaxed text-texto-2 shadow-lg backdrop-blur">
               <p className="flex items-center gap-2">
                 <span className="inline-block h-3 w-3 rounded-full bg-celeste/80" aria-hidden="true" />
-                Trabajo hecho: tamaño según m², color según empresa. De lejos, celdas con la cantidad.
+                Trabajo hecho: tamaño según m², color según empresa.
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="inline-block h-0 w-3 border-t-[3px] border-celeste" aria-hidden="true" />
+                Cuadra arreglada, del color de la empresa que más hizo en ella
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="inline-block h-3 w-3 rounded-sm bg-celeste/30" aria-hidden="true" />
+                Barrio: más celeste, más trabajos. Punteado sin relleno: ninguno todavía
               </p>
               <p className="flex items-center gap-2">
                 <span className="inline-block h-3 w-3 rounded-full border-2 border-celeste" aria-hidden="true" />
@@ -957,17 +1071,37 @@ export function PantallaAvance({
         alEnfocar={enfocar}
         alElegirTerritorio={elegirTerritorio}
         alAmpliarFotos={ampliarFotos}
+        alAbrirMuro={() => setMuroAbierto(true)}
+        alcance={alcance}
         pantalla={pantalla}
         publico={publico}
         rol={rol}
       />
 
+      {muroAbierto && (
+        <MuroAntesDespues
+          ruta={rutaFotos}
+          territorio={territorio}
+          nombreRecorte={recorte}
+          empresaInicial={empresaSel}
+          color={colorEmpresa}
+          alCerrar={() => setMuroAbierto(false)}
+          alVer={(pares, indice, pasar) => setVisor({ pares, indice, pasar })}
+          tapado={visor != null}
+        />
+      )}
+
       {visor && (
         <VisorAntesDespues
+          key={`${visor.indice}-${visor.pasar ? "p" : "m"}-${visor.pares.length}`}
           pares={visor.pares}
           indiceInicial={visor.indice}
+          pasar={visor.pasar}
           alCerrar={() => setVisor(null)}
-          alIrAlMapa={enfocar}
+          alIrAlMapa={(lugar) => {
+            setMuroAbierto(false);
+            enfocar(lugar);
+          }}
         />
       )}
     </div>

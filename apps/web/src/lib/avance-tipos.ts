@@ -1,4 +1,4 @@
-import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
+import type { FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 
 /**
  * AVANCE — los tipos y las constantes que comparten el servidor y el cliente.
@@ -252,7 +252,61 @@ export interface DatosAvance {
   feed: EventoAvance[];
   /** Las últimas fotos del "después". */
   fotos: FotoAvance[];
+  /** Cuántos trabajos del recorte tienen foto del antes Y del después (todas las fechas). */
+  paresFotos: number;
 }
+
+/**
+ * LAS CAPAS DE ALCANCE: lo que no cambia con la ventana y pesa en geometría,
+ * pedido una sola vez al abrir la pantalla.
+ *
+ *  - Los 327 BARRIOS, con su distrito, para pintarlos según cuánto se trabajó.
+ *  - Las CUADRAS donde hubo al menos un trabajo, para pintar la calle en vez
+ *    del punto. Una cuadra común (hasta 250 m) se pinta entera; en las
+ *    avenidas de un kilómetro se pinta solo el tramo de 75 m alrededor de cada
+ *    trabajo: un bache no arregla la avenida entera.
+ *  - A qué cuadra y a qué barrio pertenece cada trabajo, para que el cliente
+ *    cuente con la ventana, la empresa y la línea de tiempo sin volver a
+ *    preguntarle nada al servidor.
+ */
+export interface BarrioProps {
+  id: number;
+  nombre: string;
+  distrito: number | null;
+}
+export interface CuadraProps {
+  /** "c123" para una cuadra entera, "l456" para el tramo alrededor del trabajo 456. */
+  clave: string;
+  /** La cuadra de la red vial (para contar cuadras distintas). */
+  cuadra: number;
+  direccion: string | null;
+}
+export interface CapasAvance {
+  barrios: FeatureCollection<Polygon | MultiPolygon, BarrioProps>;
+  cuadras: FeatureCollection<LineString | MultiLineString, CuadraProps>;
+  /** [trabajo, clave de cuadra, cuadra, barrio] para cada trabajo terminado. */
+  trabajos: Array<[number, string | null, number | null, number | null]>;
+}
+
+/** Un trabajo con foto del antes y del después, para el muro. */
+export interface ParMuro {
+  id: number;
+  fecha: string;
+  empresa: string;
+  direccion: string | null;
+  m2: number | null;
+  antes: string;
+  despues: string;
+  lon: number;
+  lat: number;
+}
+export interface PaginaMuro {
+  total: number;
+  pares: ParMuro[];
+  /** Solo en la primera página: cuántos pares tiene cada empresa, para los filtros. */
+  empresas: Array<{ empresa: string; n: number }> | null;
+}
+export const PARES_POR_PAGINA = 48;
 
 const DIA_CERO = Date.UTC(2026, 0, 1, 12);
 

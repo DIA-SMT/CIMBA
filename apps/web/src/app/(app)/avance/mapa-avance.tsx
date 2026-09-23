@@ -18,6 +18,7 @@ import {
 import {
   fechaLarga,
   type Camara,
+  type CapasAvance,
   type DatosAvance,
   type EnCursoProps,
   type Foco,
@@ -25,6 +26,7 @@ import {
   type OrdenActiva,
   type PendienteProps,
   type Territorio,
+  type TerritorioRef,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
@@ -33,18 +35,23 @@ import type { ParAntesDespues } from "@/components/visor-antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 
 /**
- * EL MAPA DE AVANCE, de abajo hacia arriba: contorno del recorte, áreas de
- * órdenes, pedidos pendientes, celdas agrupadas (lejos), trabajo hecho
- * (cerca), el latido de lo reciente y de lo que acaba de entrar, obras en
- * curso, el resalte de la empresa señalada, rótulos de las órdenes. Lo hecho
- * tapa lo pendiente y no al revés.
+ * EL MAPA DE AVANCE, de abajo hacia arriba: contorno del recorte, barrios
+ * pintados por trabajo, áreas de órdenes, pedidos pendientes, cuadras
+ * arregladas, trabajo hecho (cerca), el latido de lo reciente y de lo que
+ * acaba de entrar, obras en curso, el resalte de la empresa señalada, rótulos
+ * de las órdenes. Lo hecho tapa lo pendiente y no al revés.
  *
- * LEJOS Y CERCA. A escala ciudad, 3.000 círculos encimados son una mancha:
- * por debajo del zoom 13 el trabajo se junta en celdas de una o dos manzanas,
- * cada una del color de la empresa que más hizo ahí y con la cantidad adentro.
- * Al acercar, las celdas se desvanecen y aparecen los puntos. La agrupación
- * se calcula acá, en el cliente, y respeta la línea de tiempo y la empresa
- * aislada: cambiar de día no vuelve a subir nada al servidor.
+ * TRES DISTANCIAS, sin un botón. A escala ciudad, 3.000 círculos encimados
+ * son una mancha; lo que se ve en cambio es:
+ *  - LOS BARRIOS, de fondo, en celeste más intenso cuanto más se trabajó; los
+ *    que no tuvieron ningún trabajo quedan con borde punteado y sin relleno,
+ *    para que "dónde no llegamos" también se vea.
+ *  - LAS CUADRAS ARREGLADAS, pintadas del color de la empresa que más hizo en
+ *    cada una: de lejos se enciende la red de calles.
+ *  - LOS PUNTOS, al acercarse, cada trabajo con su tamaño y su ficha.
+ * Todo se cuenta acá, en el cliente, con la ventana, la empresa aislada y la
+ * línea de tiempo: al reproducir, las calles se van encendiendo y los barrios
+ * se van llenando día por día sin volver a pedirle nada al servidor.
  *
  * El color de la empresa se resuelve acá y viaja como propiedad: MapLibre no
  * puede hashear el nombre adentro de una expresión de pintado. En tema claro
@@ -64,12 +71,11 @@ const ETIQUETA_TIPO: Record<string, string> = {
   enripiado: "enripiado",
 };
 
-/** Tamaño de la celda de agrupación: ~275 m, una o dos manzanas. */
-const CELDA_LAT = 0.0025;
-const CELDA_LON = 0.0028;
-/** Entre estos dos zooms las celdas se van y llegan los puntos. */
+/** Entre estos dos zooms llegan los puntos. */
 const ZOOM_LEJOS = 12.8;
 const ZOOM_CERCA = 13.6;
+/** Desde acá el barrio ya no dice nada al pasar el cursor: se está mirando la cuadra. */
+const ZOOM_BARRIO = 14;
 
 /**
  * El radio: 3 px de piso para que un bache sin medida exista igual, más la
@@ -89,33 +95,65 @@ const RADIO: ExpressionSpecification = [
   13, ["*", 0.75, RADIO_BASE],
   16, ["*", 1.3, RADIO_BASE],
 ];
-/** El radio de una celda, por cantidad de baches. */
-const RADIO_CELDA: ExpressionSpecification = [
-  "interpolate",
-  ["linear"],
-  ["get", "n"],
-  1, 6,
-  5, 10,
-  20, 15,
-  80, 22,
-  300, 32,
-];
-
 const ES_RECIENTE: ExpressionSpecification = ["==", ["get", "reciente"], true];
 
 /** Lo que se ve de cerca aparece entre los dos zooms; lo de lejos, al revés. */
 const deCerca = (valor: ExpressionSpecification | number): ExpressionSpecification => [
   "interpolate", ["linear"], ["zoom"], ZOOM_LEJOS, 0, ZOOM_CERCA, valor,
 ];
-const deLejos = (valor: ExpressionSpecification | number): ExpressionSpecification => [
-  "interpolate", ["linear"], ["zoom"], ZOOM_LEJOS, valor, ZOOM_CERCA, 0,
+
+/**
+ * El celeste del barrio según cuántos trabajos tuvo. Los cortes están puestos
+ * sobre lo que hay: en un mes, la mitad de los barrios con trabajo tiene menos
+ * de cinco y unos pocos pasan de cuarenta.
+ */
+const N_BARRIO: ExpressionSpecification = ["coalesce", ["feature-state", "n"], 0];
+const RELLENO_BARRIO: ExpressionSpecification = [
+  "step", N_BARRIO,
+  "rgba(46,177,255,0)",
+  1, "rgba(46,177,255,0.10)",
+  5, "rgba(46,177,255,0.19)",
+  15, "rgba(46,177,255,0.29)",
+  40, "rgba(46,177,255,0.40)",
 ];
+
+type GeoArea = CapasAvance["barrios"]["features"][number]["geometry"];
+
+/** Si un punto cae adentro de un anillo (rayo). */
+function enAnillo(lon: number, lat: number, anillo: number[][]): boolean {
+  let cruza = false;
+  for (let i = 0, j = anillo.length - 1; i < anillo.length; j = i++) {
+    const [xi, yi] = anillo[i] as [number, number];
+    const [xj, yj] = anillo[j] as [number, number];
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) cruza = !cruza;
+  }
+  return cruza;
+}
+
+/** Si un punto cae adentro de un barrio: en su borde y fuera de sus agujeros. */
+function adentro(lon: number, lat: number, g: GeoArea): boolean {
+  const poligonos = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+  return poligonos.some(
+    ([borde, ...agujeros]) => borde != null && enAnillo(lon, lat, borde) && !agujeros.some((a) => enAnillo(lon, lat, a)),
+  );
+}
 
 type Seleccion =
   | { tipo: "hecho"; props: HechoProps; lngLat: [number, number] }
   | { tipo: "encurso"; props: EnCursoProps; lngLat: [number, number] }
   | { tipo: "pendiente"; props: PendienteProps; lngLat: [number, number] }
-  | { tipo: "orden"; props: OrdenActiva; lngLat: [number, number] };
+  | { tipo: "orden"; props: OrdenActiva; lngLat: [number, number] }
+  | { tipo: "barrio"; props: FichaDeBarrio; lngLat: [number, number] };
+
+/** Lo que dice la ficha de un barrio: sus números en la ventana y lo que espera. */
+interface FichaDeBarrio {
+  id: number;
+  nombre: string;
+  n: number;
+  m2: number;
+  cuadras: number;
+  pendientes: number;
+}
 
 interface Sobrevuelo {
   x: number;
@@ -151,12 +189,18 @@ export function MapaAvance({
   verPendientes,
   foco,
   camaraInicial,
+  capas,
   alListo,
   alAmpliar,
+  alElegirTerritorio,
   pantalla,
   publico,
 }: {
   datos: DatosAvance;
+  /** Barrios, cuadras arregladas y a qué cuadra y barrio va cada trabajo (llega aparte). */
+  capas: CapasAvance | null;
+  /** Recortar la pantalla a un barrio, desde su ficha. */
+  alElegirTerritorio?: (t: TerritorioRef) => void;
   /** Empresa aislada (clic en la columna): solo ella se dibuja. */
   empresaSel: string | null;
   /** Empresa bajo el cursor en la columna: las demás se atenúan. */
@@ -209,56 +253,156 @@ export function MapaAvance({
     [datos.territorio],
   );
 
+  /** A qué cuadra y a qué barrio va cada trabajo. */
+  const asignacion = useMemo(() => {
+    const m = new Map<number, { clave: string | null; cuadra: number | null; barrio: number | null }>();
+    for (const [id, clave, cuadra, barrio] of capas?.trabajos ?? []) m.set(id, { clave, cuadra, barrio });
+    return m;
+  }, [capas]);
+
   /**
-   * LAS CELDAS: lo hecho agrupado en cuadrículas de una o dos manzanas, para
-   * verlo de lejos. Respetan la línea de tiempo y la empresa aislada.
+   * LAS CUADRAS ARREGLADAS de la ventana (y de la empresa aislada, si hay):
+   * cada una del color de la empresa que más hizo ahí, y con el primer día en
+   * que se trabajó, para que la línea de tiempo las vaya encendiendo con un
+   * filtro, sin rehacer nada.
    */
-  const celdas = useMemo(() => {
-    const acumulado = new Map<string, { n: number; m2: number; lon: number; lat: number; por: Map<string, number> }>();
+  const calles = useMemo(() => {
+    if (!capas) return { type: "FeatureCollection" as const, features: [] };
+    const porClave = new Map<string, { n: number; m2: number; desde: number; por: Map<string, number> }>();
+    for (const f of datos.hechos.features) {
+      const p = f.properties;
+      if (empresaSel && p.empresa !== empresaSel) continue;
+      const clave = asignacion.get(p.id)?.clave;
+      if (!clave) continue;
+      let c = porClave.get(clave);
+      if (!c) {
+        c = { n: 0, m2: 0, desde: p.dia, por: new Map() };
+        porClave.set(clave, c);
+      }
+      c.n++;
+      c.m2 += p.m2 ?? 0;
+      if (p.dia < c.desde) c.desde = p.dia;
+      c.por.set(p.empresa, (c.por.get(p.empresa) ?? 0) + 1);
+    }
+    const features = [];
+    for (const f of capas.cuadras.features) {
+      const c = porClave.get(f.properties.clave);
+      if (!c) continue;
+      let empresa = "Otros";
+      let max = -1;
+      for (const [e, n] of c.por) {
+        if (n > max) {
+          max = n;
+          empresa = e;
+        }
+      }
+      features.push({
+        ...f,
+        properties: {
+          ...f.properties,
+          n: c.n,
+          m2: Math.round(c.m2),
+          desde: c.desde,
+          empresa,
+          otras: c.por.size - 1,
+          color: color(empresa),
+        },
+      });
+    }
+    return { type: "FeatureCollection" as const, features };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capas, asignacion, datos.hechos, empresaSel, tema]);
+
+  /**
+   * LOS BARRIOS: cuántos trabajos, m² y cuadras en cada uno hasta el cursor.
+   * Cambia con cada paso de la línea de tiempo, así que no rearma la capa:
+   * se escribe en el estado de cada polígono, que el mapa pinta al instante.
+   */
+  const conteoBarrios = useMemo(() => {
+    const m = new Map<number, { n: number; m2: number; cuadras: Set<number> }>();
     for (const f of datos.hechos.features) {
       const p = f.properties;
       if (cursor != null && p.dia > cursor) continue;
       if (empresaSel && p.empresa !== empresaSel) continue;
-      const [lon, lat] = f.geometry.coordinates as [number, number];
-      const clave = `${Math.floor(lat / CELDA_LAT)}:${Math.floor(lon / CELDA_LON)}`;
-      let c = acumulado.get(clave);
+      const a = asignacion.get(p.id);
+      if (a?.barrio == null) continue;
+      let c = m.get(a.barrio);
       if (!c) {
-        c = { n: 0, m2: 0, lon: 0, lat: 0, por: new Map() };
-        acumulado.set(clave, c);
+        c = { n: 0, m2: 0, cuadras: new Set() };
+        m.set(a.barrio, c);
       }
       c.n++;
       c.m2 += p.m2 ?? 0;
-      c.lon += lon;
-      c.lat += lat;
-      c.por.set(p.empresa, (c.por.get(p.empresa) ?? 0) + 1);
+      if (a.cuadra != null) c.cuadras.add(a.cuadra);
     }
-    return {
-      type: "FeatureCollection" as const,
-      features: [...acumulado.values()].map((c) => {
-        let empresa = "Otros";
-        let max = -1;
-        for (const [e, n] of c.por) {
-          if (n > max) {
-            max = n;
-            empresa = e;
-          }
-        }
-        return {
-          type: "Feature" as const,
-          geometry: { type: "Point" as const, coordinates: [c.lon / c.n, c.lat / c.n] },
-          properties: {
-            n: c.n,
-            m2: Math.round(c.m2),
-            empresa,
-            otras: c.por.size - 1,
-            color: color(empresa),
-            etiqueta: c.n > 1 ? numero(c.n) : "",
-          },
-        };
-      }),
+    return m;
+  }, [datos.hechos, asignacion, cursor, empresaSel]);
+  const conteoRef = useRef(conteoBarrios);
+  conteoRef.current = conteoBarrios;
+
+  useEffect(() => {
+    if (!cargado || !capas) return;
+    const mapa = mapRef.current?.getMap();
+    if (!mapa) return;
+    const aplicar = () => {
+      if (!mapa.getSource("av-barrios")) return;
+      const conteo = conteoRef.current;
+      for (const f of capas.barrios.features) {
+        mapa.setFeatureState({ source: "av-barrios", id: f.properties.id }, { n: conteo.get(f.properties.id)?.n ?? 0 });
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datos.hechos, cursor, empresaSel, tema]);
+    aplicar();
+    /* La fuente puede terminar de cargar después (o volver a crearse al
+       cambiar de tema): se vuelve a escribir cuando está lista. */
+    const alCargarFuente = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+      if (e.sourceId === "av-barrios" && e.isSourceLoaded) aplicar();
+    };
+    mapa.on("sourcedata", alCargarFuente);
+    return () => {
+      mapa.off("sourcedata", alCargarFuente);
+    };
+  }, [cargado, capas, conteoBarrios, tema]);
+
+  /* Con un recorte, solo sus barrios: los de afuera no están en cero, están fuera de la cuenta. */
+  const filtroBarrios = (
+    datos.territorio?.tipo === "distrito"
+      ? ["==", ["get", "distrito"], datos.territorio.id]
+      : datos.territorio?.tipo === "barrio"
+        ? ["==", ["get", "id"], datos.territorio.id]
+        : ["all"]
+  ) as unknown as FilterSpecification;
+
+  /** Los pedidos que esperan adentro de un barrio (para su etiqueta y su ficha). */
+  const pendientesCache = useRef(new Map<number, number>());
+  useEffect(() => {
+    pendientesCache.current = new Map();
+  }, [datos.pendientes, capas]);
+  const pendientesDe = (id: number): number => {
+    const hit = pendientesCache.current.get(id);
+    if (hit != null) return hit;
+    const g = capas?.barrios.features.find((f) => f.properties.id === id)?.geometry;
+    let n = 0;
+    if (g) {
+      for (const f of datos.pendientes.features) {
+        const [lon, lat] = f.geometry.coordinates as [number, number];
+        if (adentro(lon, lat, g)) n++;
+      }
+    }
+    pendientesCache.current.set(id, n);
+    return n;
+  };
+  const fichaDeBarrio = (props: Record<string, unknown>): FichaDeBarrio => {
+    const id = Number(props.id);
+    const c = conteoBarrios.get(id);
+    return {
+      id,
+      nombre: String(props.nombre ?? ""),
+      n: c?.n ?? 0,
+      m2: Math.round(c?.m2 ?? 0),
+      cuadras: c?.cuadras.size ?? 0,
+      pendientes: pendientesDe(id),
+    };
+  };
 
   /* Los filtros: la línea de tiempo y la empresa aislada. ["all"] vacío es verdadero. */
   const partes = useMemo(() => {
@@ -268,6 +412,8 @@ export function MapaAvance({
     return p;
   }, [cursor, empresaSel]);
   const filtroHechos = ["all", ...partes] as unknown as FilterSpecification;
+  /* Las cuadras se encienden el primer día que se trabajó en ellas. */
+  const filtroCalles = (cursor != null ? ["<=", ["get", "desde"], cursor] : ["all"]) as unknown as FilterSpecification;
   const filtroPulso = ["all", ES_RECIENTE, ...partes] as unknown as FilterSpecification;
   const filtroPorEmpresa = (
     empresaSel ? ["all", ["==", ["get", "empresa"], empresaSel]] : ["all"]
@@ -373,31 +519,48 @@ export function MapaAvance({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foco?.clave, cargado]);
 
+  /** Lo que está bajo el cursor; el barrio solo cuenta de lejos (de cerca se mira la cuadra). */
+  const bajoElCursor = (e: MapLayerMouseEvent) => {
+    const lejos = e.target.getZoom() < ZOOM_BARRIO;
+    return e.features?.find((f) => f.layer.id !== "av-barrio-relleno" || lejos);
+  };
+
   const alMover = (e: MapLayerMouseEvent) => {
-    const f = e.features?.[0];
+    const f = bajoElCursor(e);
     if (!f) {
       if (sobre) setSobre(null);
       return;
     }
-    setSobre({ x: e.point.x, y: e.point.y, capa: f.layer.id, props: f.properties as Record<string, unknown> });
+    const props = f.properties as Record<string, unknown>;
+    setSobre({
+      x: e.point.x,
+      y: e.point.y,
+      capa: f.layer.id,
+      props: f.layer.id === "av-barrio-relleno" ? { ...fichaDeBarrio(props) } : props,
+    });
   };
 
   const alClick = (e: MapLayerMouseEvent) => {
     setMarcador(null);
-    const f = e.features?.[0];
+    const f = bajoElCursor(e);
     if (!f) {
       setSel(null);
       return;
     }
     const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
     const props = f.properties as Record<string, unknown>;
-    if (f.layer.id === "av-celda") {
-      /* Una celda se abre: la cámara se acerca hasta donde se ven los puntos. */
-      const mapa = mapRef.current?.getMap();
-      const g = f.geometry;
-      if (mapa && g.type === "Point") {
-        mapa.easeTo({ center: g.coordinates as [number, number], zoom: Math.max(mapa.getZoom() + 1.6, ZOOM_CERCA + 0.6), duration: 700 });
+    if (f.layer.id === "av-calle") {
+      /* Una cuadra de lejos se abre: la cámara se acerca hasta ver cada
+         trabajo. De cerca, tocar la calle y no un punto no hace nada. */
+      if (e.target.getZoom() < ZOOM_CERCA) {
+        e.target.easeTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: ZOOM_CERCA + 1.4, duration: 700 });
       }
+      setSobre(null);
+      setSel(null);
+      return;
+    }
+    if (f.layer.id === "av-barrio-relleno") {
+      setSel({ tipo: "barrio", props: fichaDeBarrio(props), lngLat });
       setSobre(null);
       return;
     }
@@ -424,7 +587,7 @@ export function MapaAvance({
       maxZoom={19.5}
       canvasContextAttributes={{ preserveDrawingBuffer: true }}
       attributionControl={{ compact: true }}
-      interactiveLayerIds={["av-celda", "av-hechos-punto", "av-hechos-resalte", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
+      interactiveLayerIds={["av-barrio-relleno", "av-calle", "av-hechos-punto", "av-hechos-resalte", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
       onLoad={(e) => {
         setCargado(true);
         alListo?.(e.target);
@@ -441,6 +604,32 @@ export function MapaAvance({
         <Layer id="av-terr-relleno" type="fill" paint={{ "fill-color": "#f4dc00", "fill-opacity": 0.04 }} />
         <Layer id="av-terr-borde" type="line" paint={{ "line-color": "#f4dc00", "line-width": 2.2, "line-opacity": 0.9 }} />
       </Source>
+
+      {/* 0b. Los barrios, según cuánto se trabajó; los que no, con borde punteado */}
+      {capas && (
+        <Source key="av-barrios" id="av-barrios" type="geojson" data={capas.barrios} promoteId="id">
+          <Layer
+            id="av-barrio-relleno"
+            type="fill"
+            filter={filtroBarrios}
+            paint={{
+              "fill-color": RELLENO_BARRIO,
+              "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12.5, hayResalte ? 0.4 : 1, 15, 0.25],
+            }}
+          />
+          <Layer
+            id="av-barrio-borde"
+            type="line"
+            filter={filtroBarrios}
+            paint={{
+              "line-color": oscuro ? "#8b96a8" : "#64748b",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.4, 14, 1],
+              "line-opacity": ["case", [">", N_BARRIO, 0], 0.28, 0.5],
+              "line-dasharray": [2, 2],
+            }}
+          />
+        </Source>
+      )}
 
       {/* 1. El área real de cada orden activa */}
       <Source key="av-areas" id="av-areas" type="geojson" data={areas}>
@@ -484,37 +673,19 @@ export function MapaAvance({
         />
       </Source>
 
-      {/* 3. De lejos: las celdas, con la cantidad adentro */}
-      <Source key="av-celdas" id="av-celdas" type="geojson" data={celdas}>
+      {/* 3. Las cuadras arregladas, del color de la empresa que más hizo en cada una */}
+      <Source key="av-calles" id="av-calles" type="geojson" data={calles}>
         <Layer
-          id="av-celda"
-          type="circle"
-          maxzoom={ZOOM_CERCA + 0.01}
+          id="av-calle"
+          type="line"
+          filter={filtroCalles}
+          layout={{ "line-cap": "round", "line-join": "round" }}
           paint={{
-            "circle-color": ["get", "color"],
-            "circle-radius": RADIO_CELDA,
-            "circle-opacity": deLejos(hayResalte ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 0.9, 0.12] : 0.88),
-            "circle-stroke-color": trazo,
-            "circle-stroke-width": 1.2,
-            "circle-stroke-opacity": deLejos(0.7),
-          }}
-        />
-        <Layer
-          id="av-celda-n"
-          type="symbol"
-          maxzoom={ZOOM_CERCA + 0.01}
-          layout={{
-            "text-field": ["get", "etiqueta"],
-            "text-font": ["Open Sans Bold"],
-            "text-size": ["interpolate", ["linear"], ["get", "n"], 2, 10, 80, 13],
-            "text-allow-overlap": true,
-            "text-ignore-placement": true,
-          }}
-          paint={{
-            "text-color": "#ffffff",
-            "text-halo-color": "rgba(0,0,0,0.55)",
-            "text-halo-width": 1,
-            "text-opacity": deLejos(hayResalte ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 1, 0.15] : 1),
+            "line-color": ["get", "color"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10.5, 1.4, 12.5, 2.6, 14.5, 4.2, 17, 7],
+            "line-opacity": hayResalte
+              ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 0.95, 0.1]
+              : ["interpolate", ["linear"], ["zoom"], 12, 0.92, 16, 0.6],
           }}
         />
       </Source>
@@ -705,6 +876,20 @@ export function MapaAvance({
             {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} color={color} />}
             {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} />}
             {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} color={color} />}
+            {sel.tipo === "barrio" && (
+              <FichaBarrio
+                p={sel.props}
+                recortado={datos.territorio?.tipo === "barrio" && datos.territorio.id === sel.props.id}
+                alRecortar={
+                  alElegirTerritorio
+                    ? () => {
+                        setSel(null);
+                        alElegirTerritorio({ tipo: "barrio", id: sel.props.id });
+                      }
+                    : undefined
+                }
+              />
+            )}
           </div>
         </Popup>
       )}
@@ -720,22 +905,39 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
     <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color(empresa) }} aria-hidden="true" />
   ) : null;
 
-  if (capa === "av-celda") {
+  if (capa === "av-calle") {
     const n = Number(props.n ?? 0);
     const otras = Number(props.otras ?? 0);
     return (
       <>
         <p className="flex items-center gap-1.5 font-bold">
           {chip}
-          <span className="num">
-            {numero(n)} {n === 1 ? "bache" : "baches"}
-          </span>
-          <span className="ml-auto shrink-0 font-normal text-texto-3">{medida(props.m2)}</span>
+          <span className="truncate">{direccion ?? "Cuadra arreglada"}</span>
         </p>
-        <p className="text-texto-2">
-          {otras > 0 ? `La mayoría de ${empresa}, y ${numero(otras)} ${otras === 1 ? "empresa más" : "empresas más"}` : `Todos de ${empresa}`}
+        <p className="num text-texto-2">
+          {numero(n)} {n === 1 ? "trabajo" : "trabajos"} · {medida(props.m2)}
         </p>
-        <p className="text-texto-3">Tocá para acercarte y ver cada punto.</p>
+        <p className="text-texto-3">
+          {otras > 0 ? `La mayoría de ${empresa}, y ${numero(otras)} ${otras === 1 ? "empresa más" : "empresas más"}` : `De ${empresa}`}
+        </p>
+      </>
+    );
+  }
+  if (capa === "av-barrio-relleno") {
+    const n = Number(props.n ?? 0);
+    const cuadras = Number(props.cuadras ?? 0);
+    const pendientes = Number(props.pendientes ?? 0);
+    return (
+      <>
+        <p className="font-bold">{String(props.nombre ?? "Barrio")}</p>
+        <p className="num text-texto-2">
+          {n === 0
+            ? "Sin trabajos en lo que se está mirando"
+            : `${numero(n)} ${n === 1 ? "trabajo" : "trabajos"} · ${numero(cuadras)} ${cuadras === 1 ? "cuadra" : "cuadras"} · ${medida(props.m2)}`}
+        </p>
+        <p className="num text-texto-3">
+          {pendientes === 0 ? "Ningún pedido esperando" : `${numero(pendientes)} ${pendientes === 1 ? "pedido esperando" : "pedidos esperando"}`} · tocá para ver más
+        </p>
       </>
     );
   }
@@ -890,6 +1092,33 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
         <Link href={`/demandas/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver el pedido →
         </Link>
+      )}
+    </>
+  );
+}
+
+function FichaBarrio({ p, recortado, alRecortar }: { p: FichaDeBarrio; recortado: boolean; alRecortar?: () => void }) {
+  return (
+    <>
+      <p className="pr-5 font-bold">Barrio {p.nombre}</p>
+      {p.n > 0 ? (
+        <p className="num mt-1 text-xs text-texto-2">
+          <b className="text-texto">{numero(p.n)}</b> {p.n === 1 ? "trabajo" : "trabajos"} ·{" "}
+          <b className="text-texto">{numero(p.cuadras)}</b> {p.cuadras === 1 ? "cuadra" : "cuadras"}
+          {p.m2 > 0 ? ` · ${numero(p.m2)} m²` : ""}
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-texto-2">Todavía sin trabajos en lo que se está mirando.</p>
+      )}
+      <p className="num mt-1 text-xs text-texto-3">
+        {p.pendientes === 0
+          ? "Ningún pedido de bacheo esperando."
+          : `${numero(p.pendientes)} ${p.pendientes === 1 ? "pedido de bacheo esperando" : "pedidos de bacheo esperando"}.`}
+      </p>
+      {alRecortar && !recortado && (
+        <button type="button" onClick={alRecortar} className="mt-2 text-xs font-semibold text-celeste">
+          Ver solo este barrio →
+        </button>
       )}
     </>
   );

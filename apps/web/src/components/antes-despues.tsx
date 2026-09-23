@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronsLeftRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * ANTES | DESPUÉS con cortina. Las dos fotos del mismo bache, una encima de la
@@ -12,6 +12,10 @@ import { useState } from "react";
  * anda con el dedo, con el mouse y con las flechas del teclado, y no hay que
  * inventar ningún manejo de eventos. La prueba más contundente que tiene la
  * pantalla de Avance en cuatro líneas de CSS.
+ *
+ * Con `barrido` la cortina se corre sola: arranca mostrando el antes y a
+ * los dos segundos lo barre hasta el después. Es lo que hace el visor cuando
+ * las fotos pasan solas en el televisor.
  */
 export function AntesDespues({
   antes,
@@ -19,6 +23,7 @@ export function AntesDespues({
   alt,
   className = "",
   ajuste = "cover",
+  barrido = false,
 }: {
   antes: string;
   despues: string;
@@ -27,8 +32,30 @@ export function AntesDespues({
   className?: string;
   /** "cover" llena el marco (fichas chicas); "contain" muestra la foto entera (pantalla completa). */
   ajuste?: "cover" | "contain";
+  /** Correr la cortina sola, del antes al después. */
+  barrido?: boolean;
 }) {
-  const [pos, setPos] = useState(50);
+  const [pos, setPos] = useState(barrido ? 100 : 50);
+
+  useEffect(() => {
+    if (!barrido) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setPos(50);
+      return;
+    }
+    let raf = 0;
+    const inicio = performance.now() + 1400;
+    const DURACION = 2200;
+    const paso = (ahora: number) => {
+      const x = Math.min(1, Math.max(0, (ahora - inicio) / DURACION));
+      // Suave al arrancar y al frenar.
+      const e = x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2;
+      setPos(100 - e * 100);
+      if (x < 1) raf = requestAnimationFrame(paso);
+    };
+    raf = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(raf);
+  }, [barrido]);
   const encaje = ajuste === "contain" ? "object-contain" : "object-cover";
   return (
     <div className={`relative overflow-hidden rounded-lg border border-borde bg-panel-3 select-none ${className}`}>

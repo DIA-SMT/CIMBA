@@ -3,6 +3,7 @@ import type { Sesion } from "./auth";
 import { urlFoto } from "./fotos";
 import { numero } from "./formato";
 import {
+  PARES_POR_PAGINA,
   type Cifra,
   type DatosAvance,
   type DiasVentana,
@@ -13,6 +14,7 @@ import {
   type HechoProps,
   type ListasTerritorios,
   type OrdenActiva,
+  type PaginaMuro,
   type PendienteProps,
   type PuntoSerie,
   type Territorio,
@@ -407,6 +409,7 @@ interface BundleLento {
   resto: Fila;
   terr: Fila | null;
   fotos: Fila[];
+  paresFotos: number;
   feedCrudo: Fila[];
   sync: Fila[];
 }
@@ -629,7 +632,17 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
     `)
       : Promise.resolve([] as unknown[]);
 
-    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync] = (await Promise.all([
+    /* Cuántos trabajos tienen las dos fotos: la puerta al muro del antes y el después. */
+    const qPares = db.execute(sql`
+      select count(*)::int as n
+      from intervenciones iv
+      where iv.estado = 'finalizada' and iv.geom_ejecucion is not null
+        and exists (select 1 from fotografias f where f.intervencion_id = iv.id and f.momento = 'antes')
+        and exists (select 1 from fotografias f where f.intervencion_id = iv.id and f.momento = 'despues')
+        ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
+    `);
+
+    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync, pares] = (await Promise.all([
       qPendientes,
       qOrdenes,
       qEnCurso,
@@ -638,7 +651,8 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       qFotos,
       qFeed,
       qSync,
-    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+      qPares,
+    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
 
     return {
       pendientes,
@@ -647,6 +661,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       resto: filasResto[0] ?? {},
       terr: filasTerr[0] ?? null,
       fotos,
+      paresFotos: Number(pares[0]?.n ?? 0),
       feedCrudo,
       sync,
     };
@@ -821,7 +836,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
   });
 
   const { hechos, cifras, porEmpresa, serie, topBarrios } = rapido;
-  const { pendientes, ordenes, enCurso, resto, terr, fotos, feedCrudo, sync } = lento;
+  const { pendientes, ordenes, enCurso, resto, terr, fotos, paresFotos, feedCrudo, sync } = lento;
 
   const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
 
@@ -993,5 +1008,81 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
         }),
       )
       .filter((f) => f.url !== ""),
+    paresFotos,
   };
+}
+
+/**
+ * EL MURO DEL ANTES Y EL DESPUÉS: los trabajos que tienen las dos fotos, del
+ * más nuevo al más viejo, de a una página. Respeta el recorte y se puede
+ * filtrar por empresa (el nombre corto, el mismo que pinta el mapa).
+ *
+ * Es la misma información que las "últimas fotos" de la columna, solo que
+ * todas: en la versión pública sale igual, porque una foto de la calle
+ * arreglada y su dirección no son datos de ninguna persona.
+ */
+export async function muroAntesDespues(opciones: {
+  territorio: TerritorioRef | null;
+  empresa: string | null;
+  pagina: number;
+}): Promise<PaginaMuro> {
+  const t = opciones.territorio;
+  const porPagina = PARES_POR_PAGINA;
+  const pagina = Math.max(0, Math.min(500, Math.floor(opciones.pagina)));
+  const filtroEmpresa = opciones.empresa ? sql`and ${EMPRESA_CORTA} = ${opciones.empresa}` : sql``;
+  return getDb().transaction(async (db) => {
+    const conFotos = sql`
+      select b.*, fa.storage_path as a_sp, fa.url_externa as a_ue, fd.storage_path as d_sp, fd.url_externa as d_ue
+      from (${baseDe("finalizada", t)}) b
+      join lateral (
+        select f.storage_path, f.url_externa from fotografias f
+        where f.intervencion_id = b.id and f.momento = 'antes'
+        order by f.tomada_en asc nulls last limit 1
+      ) fa on true
+      join lateral (
+        select f.storage_path, f.url_externa from fotografias f
+        where f.intervencion_id = b.id and f.momento = 'despues'
+        order by f.tomada_en desc nulls last limit 1
+      ) fd on true
+    `;
+    const filas = (await db.execute(sql`
+      select b.id, to_char(b.fecha at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
+             ${EMPRESA_CORTA} as empresa, i.direccion, b.superficie_m2::float as m2,
+             b.a_sp, b.a_ue, b.d_sp, b.d_ue,
+             st_x(st_centroid(b.geom_ejecucion))::float as lon,
+             st_y(st_centroid(b.geom_ejecucion))::float as lat,
+             count(*) over ()::int as total
+      from (${conFotos}) b
+      left join incidentes i on i.id = b.incidente_id
+      where true ${filtroEmpresa}
+      order by b.fecha desc, b.id desc
+      limit ${porPagina} offset ${pagina * porPagina}
+    `)) as unknown as Fila[];
+    const empresas =
+      pagina === 0
+        ? ((await db.execute(sql`
+            select ${EMPRESA_CORTA} as empresa, count(*)::int as n
+            from (${conFotos}) b
+            group by 1
+            order by 2 desc
+          `)) as unknown as Fila[])
+        : null;
+    return {
+      total: Number(filas[0]?.total ?? 0),
+      pares: filas
+        .map((f) => ({
+          id: Number(f.id),
+          fecha: String(f.fecha),
+          empresa: String(f.empresa),
+          direccion: texto(f.direccion),
+          m2: num(f.m2),
+          antes: urlFoto({ storagePath: texto(f.a_sp), urlExterna: texto(f.a_ue) }) ?? "",
+          despues: urlFoto({ storagePath: texto(f.d_sp), urlExterna: texto(f.d_ue) }) ?? "",
+          lon: Number(f.lon),
+          lat: Number(f.lat),
+        }))
+        .filter((p) => p.antes !== "" && p.despues !== ""),
+      empresas: empresas ? empresas.map((f) => ({ empresa: String(f.empresa), n: Number(f.n) })) : null,
+    };
+  });
 }

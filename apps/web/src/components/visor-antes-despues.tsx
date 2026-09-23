@@ -14,6 +14,10 @@ import { AntesDespues } from "./antes-despues";
  * Mismo patrón que el visor de fotos del resto del sistema: overlay fixed en
  * un portal a <body>, montado recién al abrirse, teclado (←/→ navegan, Escape
  * cierra), nada más.
+ *
+ * Con `pasar`, las fotos avanzan solas cada seis segundos (el televisor, una
+ * reunión): la cortina se corre sola del antes al después en cada una. Tocar
+ * una flecha lo deja en manual.
  */
 
 export interface ParAntesDespues {
@@ -32,14 +36,24 @@ export function VisorAntesDespues({
   indiceInicial = 0,
   alCerrar,
   alIrAlMapa,
+  pasar = false,
 }: {
   pares: ParAntesDespues[];
   indiceInicial?: number;
   alCerrar: () => void;
   alIrAlMapa?: (lugar: { lon: number; lat: number; id: number | null }) => void;
+  /** Que avancen solas. */
+  pasar?: boolean;
 }) {
   const [indice, setIndice] = useState(Math.min(indiceInicial, Math.max(0, pares.length - 1)));
+  const [solas, setSolas] = useState(pasar);
   const par = pares[indice];
+
+  useEffect(() => {
+    if (!solas || pares.length < 2) return;
+    const id = window.setInterval(() => setIndice((i) => (i + 1) % pares.length), 6000);
+    return () => window.clearInterval(id);
+  }, [solas, pares.length]);
 
   useEffect(() => {
     const alTeclear = (e: KeyboardEvent) => {
@@ -48,9 +62,11 @@ export function VisorAntesDespues({
         alCerrar();
       } else if (e.key === "ArrowLeft" && pares.length > 1) {
         e.preventDefault();
+        setSolas(false);
         setIndice((i) => (i - 1 + pares.length) % pares.length);
       } else if (e.key === "ArrowRight" && pares.length > 1) {
         e.preventDefault();
+        setSolas(false);
         setIndice((i) => (i + 1) % pares.length);
       }
     };
@@ -84,6 +100,7 @@ export function VisorAntesDespues({
             despues={par.despues}
             alt={par.titulo}
             ajuste="contain"
+            barrido={solas}
             className="h-[min(76vh,900px)] w-full bg-black"
           />
         ) : (
@@ -114,6 +131,7 @@ export function VisorAntesDespues({
             )}
             {pares.length > 1 && (
               <span className="num text-sm text-white/60">
+                {solas ? "pasando solas · " : ""}
                 {indice + 1} / {pares.length}
               </span>
             )}
@@ -124,7 +142,10 @@ export function VisorAntesDespues({
           <>
             <button
               type="button"
-              onClick={() => setIndice((i) => (i - 1 + pares.length) % pares.length)}
+              onClick={() => {
+                setSolas(false);
+                setIndice((i) => (i - 1 + pares.length) % pares.length);
+              }}
               aria-label="Anterior"
               className="absolute top-1/2 -left-2 -translate-y-1/2 rounded-full bg-black/60 p-2 text-white transition hover:bg-black/80 sm:-left-14 sm:p-3"
             >
@@ -132,7 +153,10 @@ export function VisorAntesDespues({
             </button>
             <button
               type="button"
-              onClick={() => setIndice((i) => (i + 1) % pares.length)}
+              onClick={() => {
+                setSolas(false);
+                setIndice((i) => (i + 1) % pares.length);
+              }}
               aria-label="Siguiente"
               className="absolute top-1/2 -right-2 -translate-y-1/2 rounded-full bg-black/60 p-2 text-white transition hover:bg-black/80 sm:-right-14 sm:p-3"
             >

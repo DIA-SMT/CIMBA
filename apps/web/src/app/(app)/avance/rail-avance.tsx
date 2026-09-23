@@ -47,6 +47,8 @@ export function RailAvance({
   alEnfocar,
   alElegirTerritorio,
   alAmpliarFotos,
+  alAbrirMuro,
+  alcance,
   pantalla,
   publico,
   rol,
@@ -61,6 +63,10 @@ export function RailAvance({
   alElegirTerritorio: (t: TerritorioRef | null) => void;
   /** Abrir el antes y el después a pantalla completa, desde la foto tocada. */
   alAmpliarFotos: (indice: number) => void;
+  /** Abrir el muro con todos los antes y después. */
+  alAbrirMuro: () => void;
+  /** En cuántas cuadras y barrios hubo trabajo en lo que se mira (null hasta que llegan las capas). */
+  alcance: { cuadras: number; barrios: number; totalBarrios: number | null } | null;
   pantalla: boolean;
   publico: boolean;
   rol: RolUsuario;
@@ -125,6 +131,22 @@ export function RailAvance({
             {!empresaSel && ` · ${numero(hero.empresas)} ${hero.empresas === 1 ? "empresa" : "empresas"}`}
           </span>
         </p>
+        {alcance && hero.n > 0 && (
+          <p className="num mt-2 text-sm font-semibold text-texto-2">
+            en <b className="text-texto">{numero(alcance.cuadras)}</b> {alcance.cuadras === 1 ? "cuadra" : "cuadras"}
+            {alcance.totalBarrios != null && (
+              <>
+                {" "}de <b className="text-texto">{numero(alcance.barrios)}</b>{" "}
+                {alcance.barrios === 1 ? "barrio" : "barrios"}
+                <span className="font-normal text-texto-3">
+                  {" "}
+                  (de {numero(alcance.totalBarrios)}
+                  {datos.territorio?.tipo === "distrito" ? " del distrito" : ""})
+                </span>
+              </>
+            )}
+          </p>
+        )}
         {!empresaSel && c.ventana.sinMedida > 0 && (
           <p className="num mt-1 text-[11px] text-texto-3">
             {numero(c.ventana.sinMedida)} de los {numero(c.ventana.n)} sin medida cargada: los m² reales son más.
@@ -197,7 +219,15 @@ export function RailAvance({
 
       {datos.fotos.length > 0 && (
         <section>
-          <Rotulo>Últimos trabajos, con foto · pasá el cursor para ver el antes, tocá para verlo grande</Rotulo>
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <p className="text-[10px] font-bold tracking-[0.14em] text-texto-3 uppercase">Últimos trabajos, con foto</p>
+            {datos.paresFotos > 0 && (
+              <button type="button" onClick={alAbrirMuro} className="num shrink-0 text-xs font-bold text-celeste hover:underline">
+                Ver los {numero(datos.paresFotos)} antes y después →
+              </button>
+            )}
+          </div>
+          <p className="-mt-1 mb-2 text-[10px] text-texto-3">Pasá el cursor para ver el antes; tocá para verlo grande.</p>
           <div className="grid grid-cols-3 gap-2">
             {datos.fotos.map((f, i) => {
               return (
