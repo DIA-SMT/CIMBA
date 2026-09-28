@@ -1978,7 +1978,12 @@ function MapaInterno({
   const [imbornalesGeo, setImbornalesGeo] = useState<FC | null>(null);
   const [verAnegamiento, setVerAnegamiento] = useState(false);
   const [anegamientoGeo, setAnegamientoGeo] = useState<FC | null>(null);
-  /** Los canales a cielo abierto de la DOV (27/9): quién mantiene cada uno y cuáles están tapados. */
+  /**
+   * Los canales a cielo abierto de la DOV (27/9): quién mantiene cada uno y
+   * cuáles están BLOQUEADOS. Bloqueado no es "tapado": es un canal que existe
+   * pero al que no se puede entrar a limpiar, porque hay construcciones que
+   * impiden el acceso o usurpaciones sobre su recorrido (Dirección, 28/9).
+   */
   const [verCanales, setVerCanales] = useState(false);
   const [canalesCrudo, setCanalesCrudo] = useState<FC | null>(null);
   // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
@@ -3887,11 +3892,15 @@ function MapaInterno({
                 (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
             ];
           } else if (f.layer.id === "canales-linea" || f.layer.id === "canales-bloqueado") {
-            // Qué canal es, quién lo mantiene, cuánto mide y si está tapado.
+            // Qué canal es, quién lo mantiene, cuánto mide y si se puede limpiar.
             const largo = Number(p.largoM ?? 0);
             lineas = [
               String(p.nombre ?? "Canal") + (p.bloqueado === true ? " — bloqueado" : ""),
-              (p.responsable ? "mantiene " + String(p.responsable) : "sin responsable asignado") +
+              (p.bloqueado === true
+                ? "no se puede limpiar: construcciones o usurpaciones impiden el acceso"
+                : p.responsable
+                  ? "mantiene " + String(p.responsable)
+                  : "sin responsable asignado") +
                 (largo > 0 ? " · " + numero(largo) + " m" : "") +
                 (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
             ];
@@ -4074,7 +4083,7 @@ function MapaInterno({
                 "line-width": ["interpolate", ["linear"], ["zoom"], 11, 3.2, 14, 6, 17, 10],
               }}
             />
-            {/* Uno solo: el color de quien lo mantiene. Los tapados, en la capa
+            {/* Uno solo: el color de quien lo mantiene. Los bloqueados, en la capa
                 de al lado, en rojo punteado: es un estado, no una empresa. */}
             <Layer
               id="canales-linea"
@@ -6424,7 +6433,7 @@ function MapaInterno({
                     </label>
                     <label
                       className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
-                      title="Los canales a cielo abierto de la DOV, del color de quien los mantiene. En rojo punteado, los que están tapados."
+                      title="Los canales a cielo abierto de la DOV, del color de quien los mantiene. En rojo punteado, los bloqueados: existen, pero construcciones o usurpaciones impiden entrar a limpiarlos."
                     >
                       <input
                         type="checkbox"
@@ -6454,7 +6463,7 @@ function MapaInterno({
                         {responsablesCanales.bloqueados > 0 && (
                           <p className="flex items-center gap-1.5">
                             <span className="inline-block h-0 w-3 shrink-0 border-t-2 border-dashed" style={{ borderColor: pal.sinAtencion }} />
-                            <span className="min-w-0 flex-1 truncate text-texto-2">Bloqueados</span>
+                            <span className="min-w-0 flex-1 truncate text-texto-2" title="Existen, pero construcciones o usurpaciones impiden entrar a limpiarlos">Bloqueados · no se pueden limpiar</span>
                             <span className="num shrink-0">{numero(responsablesCanales.bloqueados)}</span>
                           </p>
                         )}

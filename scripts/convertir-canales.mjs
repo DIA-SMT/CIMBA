@@ -141,7 +141,7 @@ filas.forEach((f, i) => {
       id: texto(f["ID-TEXT"]) ?? String(i + 1),
       nombre: texto(f.NOMBRE),
       /* La columna EMPRESA dice quién mantiene el canal (Delfi, Ingeco,
-         Contatruc, FFCC, Por Administración)... salvo en los tapados, donde
+         Contatruc, FFCC, Por Administración)... salvo en los bloqueados, donde
          dice "CANAL BLOQUEADO". Eso es un estado, no una empresa: se separa. */
       responsable: bloqueado(f.EMPRESA) ? null : responsable(f.EMPRESA),
       bloqueado: bloqueado(f.EMPRESA) || /TAPADO/i.test(String(f.NOMBRE ?? "")),
