@@ -45,6 +45,11 @@ export const COLOR_FIJO_EMPRESA: Record<string, string> = {
   luxury: "#c9b458",
   contratuc: "#8f9bff",
   uocra: "#d4a373",
+  /* Los que mantienen canales (capa de Canales de la DOV, 27/9) y no hacen
+     bacheo: colores fuera de la paleta, para no chocar con ninguna
+     contratista. Sin esto Delfi caía por hash en el gris de "Otros". */
+  delfi: "#d946ef",
+  ffcc: "#8d6e63",
   /* Lo que no se pudo atribuir a ninguna empresa registrada: gris, para que
      no compita con las que sí. */
   otros: "#9aa3b2",
