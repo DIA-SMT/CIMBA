@@ -128,6 +128,8 @@ export interface AgendaProps {
   estado: "detectado" | "priorizado" | "programado" | "en_ejecucion";
   tipo: string | null;
   direccion: string | null;
+  /** Calzada (bacheo), agua (pérdidas y tapas: S.A.T. / Ingeniería) u otro. */
+  grupo: "calzada" | "agua" | "otro";
 }
 
 /** Una obra en curso: empezada y no terminada (paños de hormigón, carpetas). */
@@ -302,8 +304,16 @@ export interface DatosAvance {
 export interface Proyeccion {
   /** Baches resueltos (problemas de calzada reparados o verificados), todas las fechas. */
   hechos: number;
-  /** Pedidos en cola + baches en agenda: el mismo número de "Queda por hacer". */
+  /**
+   * Pedidos en cola + baches de CALZADA en agenda. Es "Queda por hacer" menos
+   * los problemas de agua, tapas y otros, que no los resuelve el bacheo: así
+   * "hecho" y "falta" cuentan lo mismo (calzada).
+   */
   pendientes: number;
+  pendientesPedidos: number;
+  pendientesCalzada: number;
+  /** Los de la agenda que no son de calzada (agua, tapas, otros). */
+  pendientesOtros: number;
   /** Resueltos por mes, promedio de los últimos 90 días. */
   ritmoMes: number;
   /** Resueltos en los últimos 30 días: para ver si el ritmo sube o baja. */

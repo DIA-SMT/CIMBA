@@ -610,7 +610,7 @@ function CuandoTerminamos({ p, hoy, recorte }: { p: Proyeccion; hoy: string; rec
         <div className="rounded-lg bg-panel px-2 py-1.5">
           <dt className="text-[9px] font-bold tracking-[0.12em] text-texto-3 uppercase">Falta</dt>
           <dd className="text-sm font-bold">{numero(p.pendientes)}</dd>
-          <dd className="text-[10px] text-texto-3">{100 - pct}%</dd>
+          <dd className="text-[10px] text-texto-3" title="Pedidos en cola + baches de calzada en agenda">{100 - pct}%</dd>
         </div>
         <div className="rounded-lg bg-panel px-2 py-1.5">
           <dt className="text-[9px] font-bold tracking-[0.12em] text-texto-3 uppercase">Ritmo</dt>
@@ -621,7 +621,11 @@ function CuandoTerminamos({ p, hoy, recorte }: { p: Proyeccion; hoy: string; rec
         </div>
       </dl>
 
-      <p className="mt-2.5 text-[10px] leading-snug text-texto-3">
+      <p className="num mt-2.5 text-[10px] leading-snug text-texto-3">
+        Falta = {numero(p.pendientesPedidos)} pedidos en cola + {numero(p.pendientesCalzada)} baches de calzada en agenda.
+        {p.pendientesOtros > 0 && (
+          <> Los {numero(p.pendientesOtros)} problemas de agua, tapas y otros de la agenda no entran: no los resuelve el bacheo.</>
+        )}{" "}
         Cuenta como pendiente todo pedido sin confirmar: la fecha se acerca a medida que se reparan o se confirman. Es el
         ritmo de hoy aplicado a lo que falta, no una promesa.
       </p>

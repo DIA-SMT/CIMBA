@@ -235,6 +235,14 @@ export function MapaAvance({
   const tema = usarTemaMapa();
   const oscuro = tema === "oscuro";
   const semaforo = SEMAFORO_HEX[tema];
+  /** El color del paso de un bache en agenda, para el relleno (calzada) o el borde (agua y otros). */
+  const colorPaso: ExpressionSpecification = [
+    "match", ["get", "estado"],
+    "programado", semaforo.en_cola,
+    "en_ejecucion", semaforo.en_obra,
+    semaforo.sin_atencion,
+  ];
+  const celeste = oscuro ? "#2eb1ff" : "#0b7fd1";
   const mapRef = useRef<MapRef>(null);
   const [cargado, setCargado] = useState(false);
   const [sel, setSel] = useState<Seleccion | null>(null);
@@ -707,16 +715,18 @@ export function MapaAvance({
             id="av-agenda-punto"
             type="circle"
             paint={{
+              // Calzada: relleno del color del paso. Agua y tapas: relleno celeste
+              // (el color del mapa pluvial) con el paso en el borde. Otros: gris.
               "circle-color": [
-                "match", ["get", "estado"],
-                "programado", semaforo.en_cola,
-                "en_ejecucion", semaforo.en_obra,
-                semaforo.sin_atencion,
+                "case",
+                ["==", ["get", "grupo"], "calzada"], colorPaso,
+                ["==", ["get", "grupo"], "agua"], celeste,
+                oscuro ? "#9aa3b2" : "#6b7280",
               ],
               "circle-opacity": 0.95,
               "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.2, 14, 5.5, 17, 9],
-              "circle-stroke-color": trazo,
-              "circle-stroke-width": 1,
+              "circle-stroke-color": ["case", ["==", ["get", "grupo"], "calzada"], trazo, colorPaso],
+              "circle-stroke-width": ["case", ["==", ["get", "grupo"], "calzada"], 1, 2.2],
             }}
           />
         </Source>
@@ -1048,6 +1058,7 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
         <p className="num text-texto-3">
           {ETIQUETA_PASO[estado] ?? estado}
           {typeof props.tipo === "string" ? ` · ${props.tipo.replaceAll("_", " ")}` : ""}
+          {props.grupo === "agua" ? " · no es bacheo: va a la S.A.T. o a Ingeniería" : props.grupo === "otro" ? " · no es bacheo" : ""}
         </p>
       </>
     );
@@ -1229,7 +1240,13 @@ function FichaAgenda({
           </p>
         </div>
       </div>
-      <p className="mt-1 text-xs text-texto-3">Está en la agenda de Bacheo y todavía no figura reparado.</p>
+      <p className="mt-1 text-xs text-texto-3">
+        {p.grupo === "calzada"
+          ? "Está en la agenda de Bacheo y todavía no figura reparado."
+          : p.grupo === "agua"
+            ? "Es una pérdida de agua, un sumidero o una tapa: lo resuelve la S.A.T. o Ingeniería, no una cuadrilla de bacheo. Cuenta en la agenda, no en la proyección."
+            : "No es un problema de calzada: cuenta en la agenda, no en la proyección."}
+      </p>
       {!sinLinks && (
         <Link href={`/incidentes?foco=${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Gestionar el problema →

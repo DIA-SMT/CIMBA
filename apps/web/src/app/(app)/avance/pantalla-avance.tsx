@@ -612,6 +612,13 @@ export function PantallaAvance({
     return { ...d, conArreglo: d.posterior + d.anterior + d.sin_fecha };
   }, [datos.pendientes]);
 
+  /** Los baches en agenda, por mundo: calzada (bacheo), agua y tapas, otros. */
+  const desgloseAgenda = useMemo(() => {
+    const d = { calzada: 0, agua: 0, otro: 0 };
+    for (const f of datos.agenda.features) d[f.properties.grupo] += 1;
+    return d;
+  }, [datos.agenda]);
+
   const sinTrabajo = datos.hechos.features.length === 0;
   const recorte = nombreRecorte(datos.territorio);
 
@@ -783,6 +790,12 @@ export function PantallaAvance({
                   Lo que falta{datos.territorio ? ` en ${recorte}` : ""}:{" "}
                   <span className="num">{numero(datos.cifras.pendientes.pedidos)}</span> pedidos en cola ·{" "}
                   <span className="num">{numero(datos.cifras.pendientes.incidentes)}</span> baches en agenda
+                  {desgloseAgenda.agua + desgloseAgenda.otro > 0 && (
+                    <span className="num font-normal text-texto-2">
+                      {" "}({numero(desgloseAgenda.calzada)} de calzada · {numero(desgloseAgenda.agua)} de agua y tapas
+                      {desgloseAgenda.otro > 0 ? ` · ${numero(desgloseAgenda.otro)} otros` : ""})
+                    </span>
+                  )}
                 </p>
                 <p className="num mt-0.5 text-texto-2">
                   <b className="text-texto">{numero(desgloseFalta.ninguno)}</b> pedidos sin ningún arreglo a menos de 40 m ·{" "}
@@ -793,6 +806,7 @@ export function PantallaAvance({
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ borderColor: "var(--color-sin-atencion)" }} aria-hidden="true" />con un arreglo cerca, a confirmar</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-encurso)" }} aria-hidden="true" />programado, en cola</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-amarillo)" }} aria-hidden="true" />en obra</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ background: "var(--color-celeste)", borderColor: "var(--color-sin-atencion)" }} aria-hidden="true" />agua y tapas (no es bacheo)</span>
                   <span className="text-texto-3">lo hecho queda atenuado</span>
                 </p>
               </div>

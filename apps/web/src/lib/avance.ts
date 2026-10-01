@@ -1090,6 +1090,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           estado: String(f.estado) as AgendaProps["estado"],
           tipo: texto(f.tipo),
           direccion: texto(f.direccion),
+          grupo: grupoDe(texto(f.tipo)),
         } satisfies AgendaProps,
       })),
     },
@@ -1161,7 +1162,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
       )
       .filter((f) => f.url !== ""),
     paresFotos,
-    proyeccion: publico ? null : armarProyeccion(proy, proySerie, resto, hoy),
+    proyeccion: publico ? null : armarProyeccion(proy, proySerie, resto, agenda, hoy),
     avisos: publico
       ? null
       : {
@@ -1174,6 +1175,13 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           cerradosConFoto: Number(avisos.cerrados_foto ?? 0),
         } satisfies AvisosCierre,
   };
+}
+
+/** A qué mundo pertenece un problema: calzada (bacheo), agua (S.A.T. / Ingeniería) u otro. */
+function grupoDe(tipo: string | null): AgendaProps["grupo"] {
+  if (tipo === "bache" || tipo === "pavimento_deteriorado" || tipo === "hundimiento" || tipo === "fisura") return "calzada";
+  if (tipo === "perdida_agua" || tipo === "sumidero" || tipo === "tapa_registro") return "agua";
+  return "otro";
 }
 
 /** YYYY-MM-DD más N días, sin pasar por el huso horario del servidor. */
@@ -1189,9 +1197,11 @@ function sumarDias(iso: string, dias: number): string {
  * no alcanza a lo que entra, la fecha realista es null y la pantalla dice "a
  * este ritmo no se termina", que es lo honesto.
  */
-function armarProyeccion(proy: Fila, serie: Fila[], resto: Fila, hoy: string): Proyeccion {
+function armarProyeccion(proy: Fila, serie: Fila[], resto: Fila, agenda: Fila[], hoy: string): Proyeccion {
   const hechos = Number(proy.hechos ?? 0);
-  const pendientes = Number(resto.pedidos ?? 0) + Number(resto.incidentes ?? 0);
+  const pendientesPedidos = Number(resto.pedidos ?? 0);
+  const pendientesCalzada = agenda.filter((f) => grupoDe(texto(f.tipo)) === "calzada").length;
+  const pendientes = pendientesPedidos + pendientesCalzada;
   const ritmoDia = Number(proy.r90 ?? 0) / 90;
   const entranDia = (Number(proy.entran_semana ?? 0) || 0) / 7;
   const neto = ritmoDia - entranDia;
@@ -1200,6 +1210,9 @@ function armarProyeccion(proy: Fila, serie: Fila[], resto: Fila, hoy: string): P
   return {
     hechos,
     pendientes,
+    pendientesPedidos,
+    pendientesCalzada,
+    pendientesOtros: agenda.length - pendientesCalzada,
     ritmoMes: Math.round(ritmoDia * 30.44),
     ritmoUltimoMes: Number(proy.r30 ?? 0),
     entranMes: Math.round(entranDia * 30.44),
