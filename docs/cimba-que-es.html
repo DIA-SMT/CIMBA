@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CIMBA · Qué es</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+  /* Documento institucional de CIMBA. Marca SMT: azul, celeste, amarillo, neutro, en ese orden. */
+  :root {
+    --azul: #0066FF;
+    --celeste: #2EB1FF;
+    --amarillo: #F4DC00;
+    --neutro: #333333;
+    --tinta: #16202e;
+    --tinta-2: #4a5566;
+    --tinta-3: #7a8494;
+    --papel: #ffffff;
+    --papel-2: #f3f6fb;
+    --linea: #dbe3ef;
+    --azul-tenue: #e8f1ff;
+    --hecho: #199e70;
+    --encurso: #d95926;
+  }
+  @page { size: A4; margin: 16mm 16mm 18mm 16mm; }
+  @page :first { margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--papel); }
+  body {
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 10.2pt; line-height: 1.55; color: var(--tinta);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  h1, h2, h3, .sans, table, .caja, .dato, .flujo, .red, .etiqueta { font-family: "Poppins", "Segoe UI", Arial, sans-serif; }
+  h2 {
+    font-size: 15pt; font-weight: 700; letter-spacing: -0.2px; color: var(--tinta);
+    margin: 0 0 1.5mm; break-after: avoid; text-wrap: balance;
+  }
+  h2 + .bajada { margin-top: 0; }
+  .bajada { font-size: 10.5pt; color: var(--tinta-2); margin: 0 0 5mm; max-width: 150mm; }
+  h3 { font-size: 10.6pt; font-weight: 600; margin: 5mm 0 1.5mm; color: var(--tinta); break-after: avoid; }
+  p { margin: 0 0 2.4mm; max-width: 165mm; }
+  ul { margin: 0 0 3mm; padding-left: 4.5mm; }
+  li { margin-bottom: 1.2mm; }
+  b, strong { font-weight: 600; color: #0d1420; }
+  .seccion { break-before: page; }
+  .no-cortar { break-inside: avoid; }
+  .etiqueta {
+    display: inline-block; font-size: 7pt; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--azul); margin-bottom: 2mm;
+  }
+
+  /* ── Portada ─────────────────────────────────────────── */
+  .portada {
+    height: 297mm; width: 210mm; position: relative; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 22mm 20mm 18mm; break-after: page;
+    background: var(--papel);
+  }
+  .portada .franja {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 9mm;
+    background: linear-gradient(90deg, var(--azul) 0 50%, var(--celeste) 50% 82%, var(--amarillo) 82% 100%);
+  }
+  .portada .marca { display: flex; align-items: center; gap: 4mm; font-family: "Poppins", sans-serif; }
+  .portada .marca img { height: 15mm; }
+  .portada .marca .ciudad { font-size: 7.5pt; letter-spacing: 0.18em; color: var(--tinta-2); line-height: 1.2; }
+  .portada .marca .ciudad b { display: block; font-size: 13pt; letter-spacing: 0.02em; color: var(--tinta); font-weight: 700; }
+  .portada .marca .sep { width: 1px; height: 12mm; background: var(--linea); }
+  .portada .marca .area { font-size: 8.5pt; color: var(--tinta-2); line-height: 1.35; }
+  .portada .centro { margin-top: -10mm; }
+  .portada .sigla {
+    font-family: "Poppins", sans-serif; font-weight: 800; font-size: 76pt; letter-spacing: -3px;
+    line-height: 0.9; color: var(--tinta); margin: 0;
+  }
+  .portada .sigla span { color: var(--amarillo); }
+  .portada .nombre {
+    font-family: "Poppins", sans-serif; font-size: 15pt; font-weight: 500; color: var(--azul);
+    margin: 5mm 0 9mm; letter-spacing: -0.1px;
+  }
+  .portada .tesis {
+    font-size: 15pt; line-height: 1.42; max-width: 140mm; color: var(--tinta); margin: 0;
+  }
+  .portada .tesis em { font-style: italic; color: var(--tinta-2); }
+  .portada .pie {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    font-family: "Poppins", sans-serif; font-size: 8.5pt; color: var(--tinta-2);
+    padding-bottom: 8mm;
+  }
+  .portada .pie b { color: var(--tinta); font-weight: 600; }
+  .portada .cifras { display: flex; gap: 9mm; }
+  .portada .cifras div { font-size: 7.5pt; letter-spacing: 0.04em; color: var(--tinta-3); text-transform: uppercase; }
+  .portada .cifras strong { display: block; font-size: 20pt; font-weight: 700; letter-spacing: -0.5px; color: var(--tinta); text-transform: none; font-variant-numeric: tabular-nums; }
+
+  /* ── Cajas y datos ───────────────────────────────────── */
+  .frase {
+    font-size: 13pt; line-height: 1.45; padding: 5mm 6mm; margin: 0 0 6mm;
+    border-left: 3px solid var(--azul); background: var(--azul-tenue); max-width: none;
+  }
+  .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+  .caja { border: 1px solid var(--linea); border-radius: 3mm; padding: 4mm 4.5mm; font-size: 9pt; line-height: 1.5; }
+  .caja h4 { margin: 0 0 2mm; font-size: 9.5pt; font-weight: 700; }
+  .caja ul { padding-left: 4mm; margin: 0; }
+  .caja li { margin-bottom: 1.4mm; }
+  .caja.antes h4 { color: var(--encurso); }
+  .caja.ahora { border-color: #b9d4ff; background: var(--azul-tenue); }
+  .caja.ahora h4 { color: var(--azul); }
+
+  .datos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin: 2mm 0 5mm; }
+  .dato { border: 1px solid var(--linea); border-radius: 3mm; padding: 3mm 3.5mm; }
+  .dato strong { display: block; font-size: 17pt; font-weight: 700; letter-spacing: -0.4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .dato span { display: block; font-size: 7.6pt; color: var(--tinta-2); line-height: 1.35; margin-top: 1mm; }
+  .dato.azul strong { color: var(--azul); }
+  .dato.verde strong { color: var(--hecho); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 8.8pt; margin: 1mm 0 4mm; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 7pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tinta-3); padding: 1.8mm 2mm; border-bottom: 1.5px solid var(--tinta); }
+  td { padding: 1.9mm 2mm; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  td.n { text-align: right; white-space: nowrap; font-weight: 600; }
+  th.n { text-align: right; }
+  .barra { display: inline-block; height: 2.2mm; background: var(--celeste); border-radius: 1mm; vertical-align: middle; }
+
+  /* ── La cadena ───────────────────────────────────────── */
+  .flujo { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; margin: 3mm 0 6mm; }
+  .paso { position: relative; padding: 0 3mm 0 0; }
+  .paso .punto {
+    display: flex; align-items: center; justify-content: center;
+    width: 9mm; height: 9mm; border-radius: 50%; font-weight: 700; font-size: 9pt; color: #fff;
+    background: var(--azul); position: relative; z-index: 1;
+  }
+  .paso:not(:last-child)::after {
+    content: ""; position: absolute; top: 4.5mm; left: 9mm; right: 0; height: 1.5px; background: var(--linea);
+  }
+  .paso h4 { margin: 2.5mm 0 1mm; font-size: 9.6pt; font-weight: 700; }
+  .paso p { font-size: 8.1pt; line-height: 1.42; color: var(--tinta-2); margin: 0; font-family: "Poppins", sans-serif; }
+  .paso.fin .punto { background: var(--hecho); }
+
+  /* ── Conexiones ─────────────────────────────────────── */
+  .red { display: grid; grid-template-columns: 1fr 44mm 1fr; gap: 4mm; align-items: stretch; margin: 2mm 0 4mm; }
+  .col h4 { margin: 0 0 2mm; font-size: 7.2pt; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tinta-3); font-weight: 700; }
+  .nodo { border: 1px solid var(--linea); border-radius: 2.5mm; padding: 2.2mm 3mm; margin-bottom: 2mm; font-size: 8pt; line-height: 1.38; position: relative; }
+  .nodo b { display: block; font-size: 8.6pt; font-weight: 600; }
+  .nodo i { font-style: normal; color: var(--tinta-2); }
+  .estado { float: right; margin: 0.3mm 0 0.5mm 2mm; font-size: 6.2pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.4mm 1.6mm; border-radius: 1mm; }
+  .auto { color: var(--hecho); background: #e3f5ee; }
+  .manual { color: #8a6d00; background: #fdf6c9; }
+  .falta { color: var(--encurso); background: #fce9e1; }
+  .nucleo {
+    border-radius: 3mm; background: var(--tinta); color: #fff; padding: 5mm 4mm;
+    display: flex; flex-direction: column; justify-content: center; text-align: center;
+  }
+  .nucleo .s { font-size: 21pt; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+  .nucleo .s span { color: var(--amarillo); }
+  .nucleo p { font-size: 7.6pt; color: #c9d3e3; margin: 3mm 0 0; line-height: 1.45; font-family: "Poppins", sans-serif; }
+  .nucleo .capa { margin-top: 4mm; border-top: 1px solid #3a4658; padding-top: 3mm; font-size: 7.2pt; color: #aeb9cb; text-align: left; line-height: 1.5; }
+  .nucleo .capa b { color: #fff; font-weight: 600; }
+  .leyenda { font-family: "Poppins", sans-serif; font-size: 7.6pt; color: var(--tinta-2); display: flex; gap: 5mm; margin-bottom: 4mm; }
+  .leyenda span { display: inline-flex; align-items: center; gap: 1.5mm; }
+
+  /* ── Pantallas ──────────────────────────────────────── */
+  .modulos { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 5mm; }
+  .modulo { break-inside: avoid; padding: 3mm 0 2mm; border-top: 1px solid var(--linea); }
+  .modulo h4 { font-family: "Poppins", sans-serif; margin: 0 0 1mm; font-size: 9.6pt; font-weight: 700; }
+  .modulo h4 small { font-weight: 500; color: var(--tinta-3); font-size: 7.6pt; margin-left: 1.5mm; }
+  .modulo p { font-size: 8.8pt; line-height: 1.48; margin: 0; color: var(--tinta-2); }
+
+  .reglas { counter-reset: r; }
+  .regla { display: grid; grid-template-columns: 8mm 1fr; gap: 3mm; margin-bottom: 3.5mm; break-inside: avoid; }
+  .regla::before { counter-increment: r; content: counter(r); font-family: "Poppins", sans-serif; font-weight: 700; font-size: 13pt; color: var(--celeste); line-height: 1.1; }
+  .regla h4 { font-family: "Poppins", sans-serif; margin: 0 0 0.8mm; font-size: 9.8pt; font-weight: 700; }
+  .regla p { margin: 0; font-size: 9.2pt; color: var(--tinta-2); }
+
+  .nota { font-family: "Poppins", sans-serif; font-size: 7.6pt; color: var(--tinta-3); line-height: 1.45; margin-top: 2mm; }
+  .cierre { margin-top: 8mm; padding-top: 4mm; border-top: 2px solid var(--tinta); font-family: "Poppins", sans-serif; font-size: 8.4pt; color: var(--tinta-2); }
+</style>
+</head>
+<body>
+
+<!-- ═════════════════════════ PORTADA ═════════════════════════ -->
+<section class="portada">
+  <div class="marca">
+    <img src="../apps/web/public/marca/isotipo-smt.png" alt="">
+    <div class="ciudad">CIUDAD<b>SMT</b></div>
+    <div class="sep"></div>
+    <div class="area">Municipalidad de San Miguel de Tucumán<br>Dirección de Inteligencia Artificial</div>
+  </div>
+
+  <div class="centro">
+    <p class="sigla">CIMBA<span>.</span></p>
+    <p class="nombre">Centro Inteligente de Monitoreo de Baches y Asfalto</p>
+    <p class="tesis">Un solo lugar para saber qué se pidió, dónde está el problema, quién lo tiene que arreglar, qué se hizo y con qué prueba. <em>Del reclamo del vecino a la calle arreglada y certificada.</em></p>
+  </div>
+
+  <div class="pie">
+    <div class="cifras">
+      <div><strong>3.315</strong>pedidos</div>
+      <div><strong>3.348</strong>trabajos</div>
+      <div><strong>4.974</strong>fotos</div>
+      <div><strong>177</strong>barrios</div>
+    </div>
+    <div style="text-align:right">Qué es, qué resuelve y a qué está conectado<br><b>Septiembre de 2026</b> · cimba.smt.gob.ar</div>
+  </div>
+  <div class="franja"></div>
+</section>
+
+<!-- ═════════════════════════ 1 · QUÉ ES ═════════════════════════ -->
+<section>
+  <span class="etiqueta">1 · Qué es</span>
+  <h2>El sistema municipal de gestión de bacheo</h2>
+  <p class="bajada">CIMBA es una aplicación web propia de la Municipalidad, desarrollada por la Dirección de Inteligencia Artificial para la Dirección de Obras Viales. Se usa desde la computadora de la oficina y desde el celular en la calle.</p>
+
+  <p class="frase">CIMBA reúne en un solo lugar los reclamos de todos los canales, los convierte en problemas de calzada ubicados en el mapa y priorizados, emite las órdenes de trabajo a las empresas y cuadrillas, registra lo ejecutado con fotos, medidas y GPS, y lo certifica para el pago.</p>
+
+  <h3>El problema que resuelve</h3>
+  <p>El mismo bache puede llegar por seis puertas distintas: el vecino al 147, el Concejo Deliberante por nota, una intimación a la S.A.T., una Secretaría, las redes sociales o la propia cuadrilla. Antes de CIMBA cada canal se trabajaba por separado, en planillas distintas, y el trabajo hecho quedaba en otras planillas más.</p>
+
+  <div class="dos no-cortar">
+    <div class="caja antes">
+      <h4>Antes</h4>
+      <ul>
+        <li>Cinco pedidos del mismo bache eran cinco tickets distintos.</li>
+        <li>No se sabía si un reclamo ya estaba resuelto, ni se le podía responder a quien lo pidió.</li>
+        <li>Lo hecho por cada empresa vivía en su planilla, con nombres escritos de mil formas.</li>
+        <li>Medir cuánto se reparó, y dónde, era un trabajo manual de días.</li>
+        <li>Contestar una nota del Concejo o una intimación exigía reconstruir la historia a mano.</li>
+      </ul>
+    </div>
+    <div class="caja ahora">
+      <h4>Con CIMBA</h4>
+      <ul>
+        <li>Los pedidos del mismo lugar se agrupan en un solo problema, sin borrar ninguno.</li>
+        <li>Cada pedido muestra si ya tiene orden, si se arregló y con qué foto.</li>
+        <li>Empresas y cuadrillas cargan en el mismo circuito, cada una ve solo lo suyo.</li>
+        <li>La superficie, las toneladas y la cobertura por barrio se ven al instante.</li>
+        <li>Se puede contestar <b>quién pidió qué, cuándo se reparó y con qué evidencia</b>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Para qué le sirve a cada uno</h3>
+  <ul>
+    <li><b>A la conducción:</b> ver la brecha entre lo que se pide y lo que se hace, la productividad de cada empresa y el avance del mes en una sola pantalla.</li>
+    <li><b>A Obras Viales:</b> planificar por circuito y por sector, emitir órdenes con plazo, controlar la calidad y certificar con acta.</li>
+    <li><b>A las empresas y cuadrillas:</b> recibir sus órdenes en el celular y cargar cada bache con fotos y medidas, aun sin señal.</li>
+    <li><b>A Atención Ciudadana:</b> saber el estado de un reclamo y responderle al vecino con la foto del arreglo.</li>
+    <li><b>Ante el Concejo, la S.A.T. o el Tribunal de Cuentas:</b> un registro con fecha, lugar, responsable y prueba de cada trabajo.</li>
+  </ul>
+</section>
+
+<!-- ═════════════════════════ 2 · CÓMO FUNCIONA ═════════════════════════ -->
+<section class="seccion">
+  <span class="etiqueta">2 · Cómo funciona</span>
+  <h2>Una sola cadena, del pedido a la respuesta</h2>
+  <p class="bajada">Todo lo que entra a CIMBA recorre el mismo camino. Cada paso deja registro de quién lo hizo y cuándo.</p>
+
+  <div class="flujo no-cortar">
+    <div class="paso">
+      <div class="punto">1</div>
+      <h4>Pedido</h4>
+      <p>Lo que alguien reclama: vecino, Concejo, S.A.T., Secretaría, redes o cuadrilla. Queda con su canal, su fecha y su ubicación.</p>
+    </div>
+    <div class="paso">
+      <div class="punto">2</div>
+      <h4>Problema</h4>
+      <p>El bache real en la calle. Varios pedidos del mismo lugar se agrupan en uno. Se prioriza con un puntaje que se puede explicar.</p>
+    </div>
+    <div class="paso">
+      <div class="punto">3</div>
+      <h4>Orden</h4>
+      <p>El problema entra en una orden de trabajo, con empresa o cuadrilla, zona y plazo. La empresa la recibe en el celular.</p>
+    </div>
+    <div class="paso">
+      <div class="punto">4</div>
+      <h4>Trabajo</h4>
+      <p>Lo ejecutado: medidas, foto del antes y del después, GPS y fecha. Un inspector lo verifica en calle.</p>
+    </div>
+    <div class="paso fin">
+      <div class="punto">5</div>
+      <h4>Cierre</h4>
+      <p>Se certifica la superficie y las toneladas con acta, y se le responde al vecino con la foto del arreglo.</p>
+    </div>
+  </div>
+
+  <h3>El semáforo: el mismo color en todas las pantallas</h3>
+  <p>Cada pedido y cada problema tiene un estado que se lee igual en el mapa, en las listas y en los reportes: <b style="color:#d23b3b">rojo</b> sin atención, <b style="color:var(--encurso)">naranja</b> en cola (ya tiene orden), <b style="color:#b8860b">ámbar</b> en obra, <b style="color:var(--hecho)">verde</b> resuelto y <b style="color:var(--tinta-3)">gris</b> desestimado. Quien mira el mapa de la ciudad sabe de un vistazo dónde se está esperando.</p>
+
+  <h3>La brecha: lo pedido contra lo hecho</h3>
+  <p>Es la pregunta central del sistema. CIMBA cruza cada pedido con los trabajos cercanos y posteriores a él, y separa lo que ya está resuelto (aunque nadie lo haya cerrado), lo que está en cola y lo que nadie atendió. Así se ve si el problema es de volumen (no alcanza) o de dirección (se trabaja lejos de donde se pide).</p>
+
+  <h3>El sistema propone, una persona decide</h3>
+  <p>CIMBA detecta solo los pedidos repetidos, los que ya se arreglaron, los que no son de bacheo (una calle de ripio, una tapa de cloaca) y los que corresponden a la S.A.T. Pero no descarta ni cierra nada por su cuenta: cada una de esas señales la confirma una persona, con su nombre. Lo que va a la S.A.T. sale únicamente en una nota numerada, firmada y reimprimible, dirigida a su Director.</p>
+
+  <h3>Alineado con el marco de Obras Viales</h3>
+  <p>El sistema aplica las reglas del Protocolo de la Dirección de Obras Viales: <b>un bache sin punto georreferenciado y sin foto no cuenta como reparado</b>; el control de calidad por muestreo a las 24 horas, 30 días, 90 días y 6 meses; el acta de medición conjunta como condición para certificar; los criterios de escalamiento de bacheo común a obra Tipo C y Tipo A; y el Índice de Priorización (IPI) con sus pesos oficiales por nivel de corredor.</p>
+</section>
+
+<!-- ═════════════════════════ 3 · CONEXIONES ═════════════════════════ -->
+<section class="seccion">
+  <span class="etiqueta">3 · A qué está conectado</span>
+  <h2>Lo que entra, lo que sale y sobre qué corre</h2>
+  <p class="bajada">CIMBA lee de los sistemas de otras áreas pero no los modifica.</p>
+
+  <div class="leyenda">
+    <span><i class="estado auto" style="position:static">Automático</i> se actualiza solo</span>
+    <span><i class="estado manual" style="position:static">Por archivo</i> se carga cuando llega</span>
+    <span><i class="estado falta" style="position:static">Proceso local</i> depende de una PC municipal</span>
+  </div>
+
+  <div class="red no-cortar">
+    <div class="col">
+      <h4>Entra</h4>
+      <div class="nodo"><span class="estado auto">Automático</span><b>Atención Ciudadana · 147</b><i>Sistema de reclamos (CIDITUC). Todos los días a las 6 lee los reclamos nuevos de la categoría Calles.</i></div>
+      <div class="nodo"><span class="estado falta">Proceso local</span><b>App de carga de las empresas</b><i>La planilla de Google donde las contratistas cargan el bacheo. Se sincroniza desde una PC municipal.</i></div>
+      <div class="nodo"><span class="estado manual">Por archivo</span><b>SIGOV · Obras Públicas</b><i>Obras de pavimento contratadas: empresa, m², certificados.</i></div>
+      <div class="nodo"><span class="estado manual">Por archivo</span><b>Concejo, Secretarías, redes y S.A.T.</b><i>El consolidado de pedidos (HCD, DRR, DIE) y las intimaciones a Aguas del Tucumán.</i></div>
+      <div class="nodo"><span class="estado manual">Por archivo</span><b>GIS de Obras Viales</b><i>Red vial (10.392 cuadras), 327 barrios, 20 distritos, 11 sectores, 47 circuitos, 149 corredores, 1.325 imbornales, zonas inundables y del bacheo integral.</i></div>
+      <div class="nodo"><span class="estado auto">Automático</span><b>Callejero propio + OpenStreetMap</b><i>Para ubicar direcciones. El propio se alimenta de cada bache cargado con GPS.</i></div>
+    </div>
+
+    <div class="nucleo">
+      <div class="s">CIMBA<span>.</span></div>
+      <p>Pedidos, problemas, órdenes, trabajos, fotos, actas y certificación, en una sola base con ubicación.</p>
+      <div class="capa">
+        <b>Sitio:</b> cimba.smt.gob.ar<br>
+        <b>Base y fotos:</b> Supabase (PostgreSQL con PostGIS)<br>
+        <b>Hosting:</b> Vercel<br>
+        <b>Código:</b> GitHub, repositorio DIA-SMT/CIMBA
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>Sale</h4>
+      <div class="nodo"><b>Portal de empresas y cuadrillas</b><i>En el celular: sus órdenes, la carga con fotos y medidas, su certificación. Funciona sin señal.</i></div>
+      <div class="nodo"><b>Nota a la S.A.T.</b><i>Expediente numerado, con ubicación y foto de cada reclamo, firmado por la Dirección.</i></div>
+      <div class="nodo"><b>Respuesta al vecino</b><i>WhatsApp o mail con el texto y la foto del arreglo ya escritos. Lo envía una persona.</i></div>
+      <div class="nodo"><b>Avisos al personal y a las empresas</b><i>Notificaciones al celular y por mail: órdenes vencidas, trabajo nuevo, parte diario de las 7.</i></div>
+      <div class="nodo"><b>Bot de Telegram</b><i>Preguntar, ver lo que espera una decisión y cerrar o reasignar una orden desde el teléfono.</i></div>
+      <div class="nodo"><b>Migue, el asistente</b><i>Contesta preguntas sobre los datos del bacheo en lenguaje natural. Solo consulta, no modifica.</i></div>
+      <div class="nodo"><b>Pantallas y reportes</b><i>Televisor de oficina, imagen para WhatsApp, hoja A4 para reuniones y exportaciones.</i></div>
+    </div>
+  </div>
+
+  <h3>Conexiones que faltan</h3>
+  <ul style="font-size:9.4pt">
+    <li><b>Ingreso con Ciudad Digital:</b> hoy se entra con usuario y clave propios de CIMBA.</li>
+    <li><b>Cierre del ticket del 147:</b> CIMBA lee los reclamos, pero Atención Ciudadana todavía no permite marcarlos resueltos desde afuera.</li>
+    <li><b>Planilla de empresas:</b> se sincroniza desde una PC municipal; tiene que pasar a correr sola.</li>
+    <li><b>Sistema Integral de Secretaría General:</b> registra lo mismo por otro camino. Falta definir si se integran o conviven; CIMBA ya usa su mismo esquema de carga.</li>
+  </ul>
+</section>
+
+<!-- ═════════════════════════ 4 · PANTALLAS ═════════════════════════ -->
+<section class="seccion">
+  <span class="etiqueta">4 · Qué se puede hacer</span>
+  <h2>Las pantallas principales</h2>
+  <p class="bajada">Cada persona ve lo que le corresponde según su rol. Una contratista solo ve sus órdenes y su trabajo.</p>
+
+  <div class="modulos">
+    <div class="modulo"><h4>Avance <small>la portada</small></h4><p>La ciudad contada desde lo hecho: los trabajos del mes en el mapa, las cuadras arregladas pintadas, los barrios según cuánto se trabajó, quién produjo y lo que falta. Se puede reproducir como película desde marzo.</p></div>
+    <div class="modulo"><h4>Mapa</h4><p>Pedidos y problemas con el semáforo, en tres vistas: Hoy, Brecha e Historial. Desde un pedido se lo coteja con el arreglo cercano y se lo cierra ahí mismo, con el aviso al vecino.</p></div>
+    <div class="modulo"><h4>Pedidos y Tratamiento</h4><p>La bandeja de todo lo que entró. El tratamiento detecta repetidos, ya resueltos, lo que no es bacheo y lo de la S.A.T.; una persona lo confirma.</p></div>
+    <div class="modulo"><h4>Órdenes</h4><p>Relevar un circuito, armar la orden, asignarla a una empresa con plazo y seguir su avance. Incluye el IPI, los criterios de escalamiento, el simulador de dotación y la certificación con actas.</p></div>
+    <div class="modulo"><h4>Portal de empresas</h4><p>En el celular: la lista de lo encargado ordenada por cercanía, la carga de cada bache con GPS y fotos, la corrección de medidas y la certificación propia.</p></div>
+    <div class="modulo"><h4>Cierres</h4><p>Los pedidos resueltos esperando respuesta: el mensaje al vecino ya redactado, con la foto, listo para WhatsApp o mail.</p></div>
+    <div class="modulo"><h4>Antes y después</h4><p>Los 1.343 trabajos que tienen las dos fotos, en un muro filtrable por empresa y con un modo en que pasan solas.</p></div>
+    <div class="modulo"><h4>Pulso diario y televisor</h4><p>El parte de las 7 de la mañana al celular, y una pantalla de oficina que rota sola entre vistas y distritos.</p></div>
+    <div class="modulo"><h4>Migue</h4><p>Un asistente al que se le pregunta en castellano: “¿cuántos baches hizo Calleri esta semana?”, “¿qué hay pendiente en el distrito 9?”.</p></div>
+    <div class="modulo"><h4>Actividad y usuarios</h4><p>Quién hizo qué y cuándo, y el alta de usuarios con clave temporal para el personal nuevo.</p></div>
+  </div>
+
+  <h3>Quiénes lo usan hoy</h3>
+  <table class="no-cortar">
+    <thead><tr><th>Rol</th><th>Qué hace en CIMBA</th><th class="n">Usuarios</th></tr></thead>
+    <tbody>
+      <tr><td>Empresas contratistas</td><td>Reciben órdenes y cargan lo ejecutado desde el celular</td><td class="n">14</td></tr>
+      <tr><td>Administración</td><td>Conducción de Obras Viales y Dirección de IA: ven y gestionan todo</td><td class="n">6</td></tr>
+      <tr><td>Planificación</td><td>Arman circuitos y emiten órdenes</td><td class="n">4</td></tr>
+      <tr><td>Supervisión</td><td>Inspectores: verifican en calle y validan lo cargado</td><td class="n">3</td></tr>
+      <tr><td>Atención Ciudadana</td><td>Consultan reclamos y le responden al vecino</td><td class="n">2</td></tr>
+      <tr><td>Otros</td><td>Cuadrillas, funcionarios, Concejo, información estratégica, consulta</td><td class="n">5</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═════════════════════════ 5 · NÚMEROS ═════════════════════════ -->
+<section class="seccion">
+  <span class="etiqueta">5 · Qué contiene</span>
+  <h2>Los números, al 27 de septiembre de 2026</h2>
+  <p class="bajada">Medidos directamente sobre la base de CIMBA. Los trabajos se cuentan desde el 15 de marzo de 2026, primera fecha cargada.</p>
+
+  <div class="datos no-cortar">
+    <div class="dato azul"><strong>3.315</strong><span>pedidos registrados, de seis canales; el 97% con ubicación</span></div>
+    <div class="dato"><strong>3.564</strong><span>problemas de calzada identificados; 3.348 ya reparados o verificados</span></div>
+    <div class="dato verde"><strong>3.348</strong><span>trabajos terminados: 2.992 baches y 356 obras de pavimento</span></div>
+    <div class="dato"><strong>4.974</strong><span>fotos de respaldo; 1.343 trabajos con antes y después</span></div>
+    <div class="dato"><strong>1.430</strong><span>cuadras distintas con al menos un arreglo</span></div>
+    <div class="dato"><strong>177</strong><span>barrios alcanzados, de los 327 de la ciudad</span></div>
+    <div class="dato"><strong>26</strong><span>órdenes de trabajo emitidas; 16 activas hoy</span></div>
+    <div class="dato"><strong>13</strong><span>empresas y cuadrillas dadas de alta</span></div>
+  </div>
+
+  <div class="dos">
+    <div>
+      <h3 style="margin-top:0">Pedidos por canal</h3>
+      <table>
+        <thead><tr><th>Canal</th><th></th><th class="n">Pedidos</th></tr></thead>
+        <tbody>
+          <tr><td>S.A.T. (Aguas del Tucumán)</td><td><span class="barra" style="width:24mm"></span></td><td class="n">794</td></tr>
+          <tr><td>Atención Ciudadana (147)</td><td><span class="barra" style="width:23.7mm"></span></td><td class="n">785</td></tr>
+          <tr><td>Concejo Deliberante</td><td><span class="barra" style="width:22.9mm"></span></td><td class="n">758</td></tr>
+          <tr><td>Secretarías</td><td><span class="barra" style="width:18.2mm"></span></td><td class="n">603</td></tr>
+          <tr><td>Redes sociales</td><td><span class="barra" style="width:8.3mm"></span></td><td class="n">274</td></tr>
+          <tr><td>Cuadrillas municipales</td><td><span class="barra" style="width:3.1mm"></span></td><td class="n">101</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 style="margin-top:0">La superficie, por escala</h3>
+      <table>
+        <thead><tr><th>Tipo de trabajo</th><th class="n">Trabajos</th><th class="n">m² cargados</th></tr></thead>
+        <tbody>
+          <tr><td>Bacheo</td><td class="n">2.992</td><td class="n">6.295</td></tr>
+          <tr><td>Obras de pavimento (paños, carpetas, SIGOV)</td><td class="n">356</td><td class="n">53.284</td></tr>
+        </tbody>
+      </table>
+      <p class="nota">Se muestran por separado a propósito: un bache mide unos 4 m² y una obra más de 150, y sumarlos esconde el esfuerzo del bacheo. Además, cerca de la mitad de los baches se cargaron sin medida, así que su superficie real es mayor que la informada.</p>
+    </div>
+  </div>
+
+  <h3>Lo que queda por hacer, también a la vista</h3>
+  <p>CIMBA no muestra solo lo bueno. Hoy esperan alrededor de <b>1.500 pedidos de bacheo</b> sin resolver, y la mayor parte del trabajo se sigue haciendo en lugares donde no hay un pedido cerca. Esa brecha es la que el sistema existe para achicar, y está siempre en pantalla, al lado de lo hecho.</p>
+</section>
+
+<!-- ═════════════════════════ 6 · REGLAS Y PRÓXIMOS PASOS ═════════════════════════ -->
+<section class="seccion">
+  <span class="etiqueta">6 · Por qué se puede confiar en el dato</span>
+  <h2>Las reglas que sostienen al sistema</h2>
+  <p class="bajada">Son las decisiones que hacen que lo que dice CIMBA se pueda llevar a una nota, a un expediente o a una auditoría.</p>
+
+  <div class="reglas">
+    <div class="regla"><div><h4>Nunca se borra un pedido</h4><p>Los pedidos repetidos se vinculan al mismo problema, no se eliminan. Si un vecino y un concejal pidieron lo mismo, los dos quedan registrados, con su fecha y su canal.</p></div></div>
+    <div class="regla"><div><h4>La prueba es el punto con foto</h4><p>Un trabajo sin ubicación georreferenciada y sin foto no se considera reparado, igual que dice el Protocolo de Obras Viales. La unidad de registro es el bache, no el ticket.</p></div></div>
+    <div class="regla"><div><h4>La fecha es la del trabajo</h4><p>Un bache tapado el lunes y cargado el jueves cuenta para el lunes. Y un arreglo anterior a un pedido no lo responde: es el bache que volvió.</p></div></div>
+    <div class="regla"><div><h4>Una persona confirma cada decisión</h4><p>El sistema detecta y propone. Descartar, cerrar o derivar un pedido lo hace alguien con nombre y apellido, y queda registrado.</p></div></div>
+    <div class="regla"><div><h4>Los datos personales se protegen</h4><p>El teléfono y el mail del vecino solo los ve quien le tiene que responder. La versión pública de Avance no muestra nombres ni direcciones de pedidos.</p></div></div>
+    <div class="regla"><div><h4>Cada empresa ve solo lo suyo</h4><p>Una contratista no puede ver las órdenes ni el trabajo de las demás.</p></div></div>
+    <div class="regla"><div><h4>Los sistemas de otras áreas no se tocan</h4><p>CIMBA lee del 147, del SIGOV y de las planillas, pero no les escribe. Un error en el origen se corrige en el origen.</p></div></div>
+  </div>
+
+  <h3>Próximos pasos</h3>
+  <ul>
+    <li><b>Conectar las piezas pendientes:</b> ingreso con Ciudad Digital, cierre del ticket del 147 y sincronización automática de la planilla de empresas.</li>
+    <li><b>Completar las medidas:</b> que cada trabajo informe superficie y espesor, indispensables para certificar toneladas.</li>
+    <li><b>Sumar la capa de equipamientos urbanos</b> (escuelas, salud, edificios públicos), la única variable del IPI que todavía no puntúa.</li>
+    <li><b>Definir la relación con el sistema de Secretaría General</b> para que haya un solo registro oficial de obra.</li>
+    <li><b>Decidir la publicación de la versión pública de Avance</b>, ya lista y apagada hasta que la Dirección lo resuelva.</li>
+  </ul>
+
+  <div class="cierre">
+    <b>CIMBA</b> · Centro Inteligente de Monitoreo de Baches y Asfalto · Municipalidad de San Miguel de Tucumán<br>
+    Desarrollado por la Dirección de Inteligencia Artificial para la Dirección de Obras Viales · cimba.smt.gob.ar<br>
+    Los números de la sección 5 corresponden al 27 de septiembre de 2026 y cambian todos los días.
+  </div>
+</section>
+
+</body>
+</html>
