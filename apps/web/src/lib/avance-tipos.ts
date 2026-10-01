@@ -152,6 +152,9 @@ export interface OrdenActiva {
   items: number;
   hechos: number;
   ultimo: string | null;
+  /** Fecha de vencimiento (YYYY-MM-DD) y si ya pasó. */
+  vence: string | null;
+  vencida: boolean;
 }
 
 export interface Cifra {

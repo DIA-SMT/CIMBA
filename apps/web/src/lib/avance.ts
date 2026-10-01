@@ -510,6 +510,8 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              count(oi.id)::int as items,
              count(oi.id) filter (where oi.estado = 'hecho')::int as hechos,
              to_char(max(oi.reportado_en) at time zone ${TZ}, 'YYYY-MM-DD') as ultimo,
+             to_char(ot.vence_en at time zone ${TZ}, 'YYYY-MM-DD') as vence,
+             (ot.vence_en is not null and ot.vence_en < now()) as vencida,
              case when count(oi.geom) > 0 then
                st_asgeojson(st_simplify(
                  st_buffer(st_concavehull(st_collect(oi.geom), 0.5, false)::geography, 50)::geometry,
@@ -520,7 +522,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       left join orden_items oi on oi.orden_id = ot.id
       where ot.estado in ('emitida', 'en_ejecucion')
         ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``}
-      group by ot.id, ot.numero, ot.estado, ot.tipo, e.nombre, ot.emitida_en
+      group by ot.id, ot.numero, ot.estado, ot.tipo, e.nombre, ot.emitida_en, ot.vence_en
       order by max(oi.reportado_en) desc nulls last, ot.emitida_en desc
     `);
 
@@ -983,6 +985,8 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
     items: Number(o.items),
     hechos: Number(o.hechos),
     ultimo: texto(o.ultimo),
+    vence: texto(o.vence),
+    vencida: Boolean(o.vencida),
   }));
 
   const feed: EventoAvance[] = [

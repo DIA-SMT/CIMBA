@@ -258,7 +258,7 @@ export function RailAvance({
         color={color}
       />
 
-      <OrdenesActivas ordenes={datos.ordenes} puedeNavegar={puedeNavegar} alResaltar={alResaltarOrden} color={color} />
+      <OrdenesActivas ordenes={datos.ordenes} puedeNavegar={puedeNavegar} alResaltar={alResaltarOrden} color={color} modoFalta={modoFalta} />
 
       {datos.fotos.length > 0 && (
         <section>
@@ -855,17 +855,24 @@ function OrdenesActivas({
   puedeNavegar,
   alResaltar,
   color,
+  modoFalta,
 }: {
   ordenes: DatosAvance["ordenes"];
   puedeNavegar: boolean;
   alResaltar: (id: number | null) => void;
   color: (e: string) => string;
+  /** Con "lo que falta" a la vista, las vencidas se marcan; si no, la lista es la de siempre. */
+  modoFalta: boolean;
 }) {
   if (ordenes.length === 0) return null;
   const visibles = ordenes.slice(0, 8);
+  const vencidas = ordenes.filter((o) => o.vencida).length;
   return (
     <section>
-      <Rotulo>Órdenes activas · {numero(ordenes.length)} · pasá el cursor para ubicarla</Rotulo>
+      <Rotulo>
+        Órdenes activas · {numero(ordenes.length)}
+        {modoFalta && vencidas > 0 ? ` · ${numero(vencidas)} vencidas` : ""} · pasá el cursor para ubicarla
+      </Rotulo>
       <ul className="space-y-1" onMouseLeave={() => alResaltar(null)}>
         {visibles.map((o) => {
           const contenido = (
@@ -880,7 +887,13 @@ function OrdenesActivas({
               <span className="num shrink-0 text-texto-2" title="baches hechos / baches de la orden">
                 {numero(o.hechos)}/{numero(o.items)}
               </span>
-              <span className="num shrink-0 text-[10px] text-texto-3">{o.ultimo ? fechaCorta(o.ultimo) : "sin reporte"}</span>
+              {modoFalta && o.vencida && o.vence ? (
+                <span className="num shrink-0 rounded px-1 text-[10px] font-bold" style={{ color: "var(--color-sin-atencion)", background: "color-mix(in oklab, var(--color-sin-atencion) 14%, transparent)" }} title={`Venció el ${fechaCorta(o.vence)}`}>
+                  vencida {fechaCorta(o.vence).slice(0, 5)}
+                </span>
+              ) : (
+                <span className="num shrink-0 text-[10px] text-texto-3">{o.ultimo ? fechaCorta(o.ultimo) : "sin reporte"}</span>
+              )}
             </>
           );
           const clase = "flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-xs transition hover:bg-panel-2";

@@ -666,8 +666,9 @@ export function MapaAvance({
           type="line"
           filter={filtroPorEmpresa}
           paint={{
-            "line-color": ["get", "color"],
-            "line-width": ordenResaltada != null ? ["case", ["==", ["get", "id"], ordenResaltada], 3.4, 1.6] : 1.6,
+            // Con "lo que falta" a la vista, el área de una orden vencida se bordea en rojo.
+            "line-color": modoFalta ? ["case", ["==", ["get", "vencida"], true], semaforo.sin_atencion, ["get", "color"]] : ["get", "color"],
+            "line-width": ordenResaltada != null ? ["case", ["==", ["get", "id"], ordenResaltada], 3.4, 1.6] : modoFalta ? 2.2 : 1.6,
             "line-opacity": hayResalte ? 0.25 : 0.9,
             "line-dasharray": [2.2, 1.6],
           }}
@@ -1046,6 +1047,7 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
         </p>
         <p className="num text-texto-3">
           {numero(Number(props.hechos ?? 0))} de {numero(Number(props.items ?? 0))} baches hechos · orden activa
+          {props.vencida === true && typeof props.vence === "string" ? ` · vencida el ${fechaCorta(props.vence)}` : ""}
         </p>
       </>
     );
@@ -1299,6 +1301,12 @@ function FichaOrden({ p, sinLinks, color }: { p: OrdenActiva; sinLinks: boolean;
         {numero(p.hechos)} de {numero(p.items)} baches hechos
         {p.ultimo ? ` · último reporte ${fechaCorta(p.ultimo)}` : " · sin reportes todavía"}
       </p>
+      {p.vence && (
+        <p className="num mt-1 text-xs font-semibold" style={{ color: p.vencida ? "var(--color-sin-atencion)" : "var(--color-texto-2)" }}>
+          {p.vencida ? `Venció el ${fechaCorta(p.vence)}` : `Vence el ${fechaCorta(p.vence)}`}
+          {p.vencida && p.items > p.hechos ? ` · le faltan ${numero(p.items - p.hechos)} baches` : ""}
+        </p>
+      )}
       {!sinLinks && (
         <Link href={`/ordenes/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver la orden →
