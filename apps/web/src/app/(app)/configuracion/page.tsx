@@ -8,6 +8,7 @@ import { PanelTabla } from "@/components/tabla-deslizable";
 import { fechaCorta } from "@/lib/formato";
 import { FormularioUsuario } from "../actividad/formulario-usuario";
 import { BotonClaveUsuario } from "../actividad/boton-clave-usuario";
+import { BotonTelegram } from "./boton-telegram";
 import { FilaUsuario } from "./fila-usuario";
 import { InterruptorAviso } from "./interruptor-aviso";
 
@@ -105,7 +106,12 @@ export default async function PaginaConfiguracion() {
                 usuario={u}
                 etiquetaRol={ETIQUETA_ROL}
                 esUnoMismo={u.id === sesion.sub}
-                accionClave={<BotonClaveUsuario perfilId={u.id} />}
+                accionClave={
+                  <>
+                    <BotonClaveUsuario perfilId={u.id} />
+                    <BotonTelegram perfilId={u.id} nombre={u.nombre} />
+                  </>
+                }
               />
             ))}
           </tbody>
@@ -129,7 +135,7 @@ export default async function PaginaConfiguracion() {
                     usuario={u}
                     etiquetaRol={ETIQUETA_ROL}
                     esUnoMismo={u.id === sesion.sub}
-                    accionClave={null}
+                    accionClave={<BotonTelegram perfilId={u.id} nombre={u.nombre} />}
                   />
                 ))}
               </tbody>

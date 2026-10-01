@@ -269,3 +269,88 @@ export async function cambiarAvisoConfig(entrada: { id: number; activo: boolean 
   revalidatePath("/ordenes/avisos");
   return { ok: true };
 }
+
+// ── Vincular un chat de Telegram a una persona ──────────────────────────────
+
+/**
+ * Emite un código de un solo uso para que alguien vincule su Telegram.
+ *
+ * Mismo gesto que regenerarClaveUsuario, y por el mismo motivo: el código se
+ * ve UNA vez, acá, y después solo queda su hash. En claro es una llave para
+ * actuar como esa persona en CIMBA, así que se trata igual que una clave.
+ *
+ * El alta no puede hacerse desde Telegram —ahí cualquiera escribe "soy
+ * Fulano"— ni copiando identificadores de chat a mano, que es el tipo de paso
+ * que se hace mal una vez y queda mal para siempre. Alguien de adentro emite
+ * el código, se lo pasa a la persona, y la persona lo canjea.
+ *
+ * Vence a los 15 minutos (el default de la tabla). Si hay otro código sin usar
+ * para esa misma persona, se anula: tener dos vivos a la vez es una llave
+ * suelta que nadie sabe que existe.
+ */
+export async function generarCodigoTelegram(entrada: { perfilId: string }) {
+  const sesion = await exigirSuperadmin();
+  const { perfilId } = z.object({ perfilId: z.string().uuid() }).parse(entrada);
+  const codigo = claveAleatoria();
+
+  const fila = await conRls(claims(sesion), async (tx) => {
+    const p = (await tx.execute(sql`
+      select nombre, activo from perfiles where id = ${perfilId}::uuid
+    `)) as unknown as Array<{ nombre: string; activo: boolean }>;
+    if (!p[0]) throw new ErrorVisible("Esa persona no existe");
+    if (!p[0].activo) {
+      throw new ErrorVisible(`${p[0].nombre} está dada de baja: no se le puede vincular un Telegram`);
+    }
+
+    await tx.execute(sql`
+      update telegram_codigos set usado_en = now()
+      where perfil_id = ${perfilId}::uuid and usado_en is null
+    `);
+    await tx.execute(sql`
+      insert into telegram_codigos (perfil_id, codigo_hash, creado_por)
+      values (${perfilId}::uuid, ${sha256(codigo)}, ${sesion.sub}::uuid)
+    `);
+    return p[0];
+  });
+
+  revalidatePath("/configuracion");
+  return { nombre: fila.nombre, codigo };
+}
+
+/** Los chats vinculados de una persona, para mostrarlos y poder revocarlos. */
+export async function listarTelegramDe(perfilId: string) {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select id, chat_id::text as chat, usuario_telegram, vinculado_en::date::text as desde,
+             ultimo_uso::date::text as ultimo
+      from telegram_vinculos
+      where perfil_id = ${perfilId}::uuid and revocado_en is null
+      order by id
+    `)) as unknown as Array<{
+      id: number;
+      chat: string;
+      usuario_telegram: string | null;
+      desde: string;
+      ultimo: string | null;
+    }>,
+  );
+}
+
+/**
+ * Corta el acceso de un chat. No borra la fila: el rastro de quién pudo actuar
+ * como quién no se tira, y así el chat se puede volver a vincular después.
+ */
+export async function revocarTelegram(entrada: { vinculoId: number }) {
+  const sesion = await exigirSuperadmin();
+  const { vinculoId } = z.object({ vinculoId: z.number().int().positive() }).parse(entrada);
+  await conRls(claims(sesion), async (tx) => {
+    await tx.execute(sql`
+      update telegram_vinculos
+      set revocado_en = now(), revocado_por = ${sesion.sub}::uuid
+      where id = ${vinculoId} and revocado_en is null
+    `);
+  });
+  revalidatePath("/configuracion");
+  return { ok: true };
+}

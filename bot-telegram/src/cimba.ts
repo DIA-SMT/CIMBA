@@ -96,6 +96,22 @@ export async function preguntarACimba(
  * orden ya estaba cerrada", "UOCRA está dada de baja") y son mejores que
  * cualquier cosa que pudiéramos inventar de este lado.
  */
+/**
+ * Canjear un código de vinculación.
+ *
+ * Es lo único que un chat sin habilitar puede hacer. Manda además el usuario y
+ * el nombre de Telegram, que después permiten ver en CIMBA quién es cada chat
+ * sin tener que adivinar por el número.
+ */
+export function canjearCodigo(
+  config: ConfigCimba,
+  chatId: number,
+  codigo: string,
+  quien: { usuario?: string; nombre?: string },
+): Promise<Salida<{ nombre: string; rol: string }>> {
+  return pedirA(config, chatId, "vincular", { codigo, ...quien });
+}
+
 export async function pedirA<T>(
   config: ConfigCimba,
   chatId: number,

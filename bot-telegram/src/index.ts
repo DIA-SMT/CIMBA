@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { createLogger, installShutdownHandlers, onShutdown, requireEnv } from "@bots/core";
-import { preguntarACimba, type ConfigCimba } from "./cimba.ts";
+import { canjearCodigo, preguntarACimba, type ConfigCimba } from "./cimba.ts";
 import { limpiar, olvidar, recordar } from "./conversacion.ts";
 import { aHtml, aPlano } from "./formato.ts";
 import { partirTexto } from "./partir.ts";
@@ -152,10 +152,45 @@ async function main(): Promise<void> {
     await mostrarVencidas(ctx, r.datos.ordenesVencidas);
   });
 
+  /**
+   * Un mensaje que tiene pinta de código de vinculación.
+   *
+   * El formato lo fija CIMBA: diez caracteres de un alfabeto sin ambigüedades
+   * (sin 0/O ni 1/l/I), elegido para poder dictarse por teléfono. Se prueba
+   * ANTES de mandar el texto al asistente, porque quien escribe un código
+   * todavía no está habilitado y la otra puerta lo rechazaría.
+   *
+   * Si el canje falla se sigue de largo sin decir nada: así una palabra
+   * cualquiera de diez letras no se convierte en un mensaje de error raro en
+   * medio de una conversación normal.
+   */
+  const pareceCodigo = (t: string) => /^[abcdefghjkmnpqrstuvwxyz23456789]{10}$/i.test(t.trim());
+
   bot.on("message:text", async (ctx) => {
     const chatId = ctx.chat.id;
     const texto = ctx.message.text.trim();
     if (texto === "" || texto.startsWith("/")) return;
+
+    if (pareceCodigo(texto)) {
+      const r = await canjearCodigo(config, chatId, texto, {
+        ...(ctx.from?.username ? { usuario: "@" + ctx.from.username } : {}),
+        ...(ctx.from ? { nombre: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ") } : {}),
+      });
+      if (r.ok) {
+        olvidar(chatId);
+        await ctx.reply(
+          `Listo, ${r.datos.nombre}. Ya podés usar CIMBA desde acá.\n\n${BIENVENIDA}`,
+        );
+        return;
+      }
+      /* Un código que CIMBA rechazó explícitamente sí se cuenta: la persona lo
+         tipeó a propósito y tiene que saber que no sirvió. */
+      if (r.texto.includes("código")) {
+        await ctx.reply(r.texto);
+        return;
+      }
+      // Si no, era una palabra de diez letras: sigue como pregunta normal.
+    }
 
     if (enVuelo.has(chatId)) {
       await ctx.reply("Estoy con tu consulta anterior. Dame un segundo y te contesto.");
