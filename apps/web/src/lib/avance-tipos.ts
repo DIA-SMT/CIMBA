@@ -280,9 +280,10 @@ export interface DatosAvance {
  *
  * "Lo que falta" es EXACTAMENTE lo que muestra la tarjeta "Queda por hacer":
  * los pedidos de bacheo en cola más los baches en agenda. Cuenta como
- * pendiente todo pedido sin confirmar, aunque por las fechas probablemente ya
- * esté arreglado (Marcos, 1/10: "que estén sin confirmar no quiere decir que
- * no existan"). A medida que se confirman, la fecha se acerca sola.
+ * pendiente todo pedido sin confirmar (Marcos, 1/10: "que estén sin confirmar
+ * no quiere decir que no existan"; medido en metros, 1.099 de 1.549 no tienen
+ * ningún arreglo a menos de 40 m). A medida que se reparan o se confirman, la
+ * fecha se acerca sola.
  */
 export interface Proyeccion {
   /** Baches resueltos (problemas de calzada reparados o verificados), todas las fechas. */

@@ -608,8 +608,8 @@ function CuandoTerminamos({ p, hoy, recorte }: { p: Proyeccion; hoy: string; rec
       </dl>
 
       <p className="mt-2.5 text-[10px] leading-snug text-texto-3">
-        Cuenta como pendiente todo pedido sin confirmar, aunque probablemente ya esté arreglado: la fecha se acerca a medida
-        que se confirman. Es el ritmo de hoy aplicado a lo que falta, no una promesa.
+        Cuenta como pendiente todo pedido sin confirmar: la fecha se acerca a medida que se reparan o se confirman. Es el
+        ritmo de hoy aplicado a lo que falta, no una promesa.
       </p>
     </section>
   );

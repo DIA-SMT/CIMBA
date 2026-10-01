@@ -727,9 +727,11 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       candidatos as (
         select d.id,
                (select i.id from incidentes i
-                where i.estado in ('reparado', 'verificado') and st_dwithin(i.geom, d.geom, 40)
+                where i.estado in ('reparado', 'verificado')
+                  -- ::geography para que 40 sean METROS (sobre geometry 4326 serían grados)
+                  and st_dwithin(i.geom::geography, d.geom::geography, 40)
                   and (coalesce(d.metadata->>'sin_fecha', 'false') = 'true' or i.cerrado_en >= d.creado_en)
-                order by st_distance(i.geom, d.geom) limit 1) as inc
+                order by st_distance(i.geom::geography, d.geom::geography) limit 1) as inc
         from demandas d
         join contacto c on c.id = d.id
         where d.estado in ('recibida', 'en_validacion') and d.geom is not null
