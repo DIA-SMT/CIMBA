@@ -684,10 +684,11 @@ export function MapaAvance({
             modoFalta
               ? {
                   "circle-color": semaforo.sin_atencion,
-                  "circle-opacity": 0.9,
+                  // Rojo pleno: ningún arreglo a menos de 40 m. Anillo: hay uno cerca, a confirmar.
+                  "circle-opacity": ["case", ["==", ["get", "cerca"], "ninguno"], 0.9, 0.12],
                   "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.4, 14, 4.2, 17, 7],
-                  "circle-stroke-color": trazo,
-                  "circle-stroke-width": 0.8,
+                  "circle-stroke-color": ["case", ["==", ["get", "cerca"], "ninguno"], trazo, semaforo.sin_atencion],
+                  "circle-stroke-width": ["case", ["==", ["get", "cerca"], "ninguno"], 0.8, 1.8],
                 }
               : {
                   "circle-color": oscuro ? "#9aa3b2" : "#6b7280",
@@ -1056,6 +1057,9 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
       <p className="font-bold text-texto-2">Pedido que espera</p>
       {direccion && <p className="truncate text-texto-2">{direccion}</p>}
       <p className="num text-texto-3">desde el {typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"}</p>
+      {typeof props.cerca === "string" && (
+        <p className="num text-texto-3">{textoCerca(props as unknown as PendienteProps, true)}</p>
+      )}
     </>
   );
 }
@@ -1143,6 +1147,25 @@ function FichaEnCurso({ p, color }: { p: EnCursoProps; color: (e: string) => str
   );
 }
 
+/**
+ * Qué hay a menos de 40 m del pedido, dicho sin afirmar de más: "cerca" no
+ * garantiza que sea el mismo bache, y la fecha solo se compara cuando el pedido
+ * tiene una propia.
+ */
+function textoCerca(p: PendienteProps, corto: boolean): string {
+  if (p.cerca === "ninguno" || p.cercaM == null) return corto ? "sin ningún arreglo a menos de 40 m" : "Ningún arreglo a menos de 40 m.";
+  const donde = `a ${numero(p.cercaM)} m${p.cercaFecha ? `, del ${fechaCorta(p.cercaFecha)}` : ""}`;
+  if (p.cerca === "posterior") {
+    return corto ? `arreglo ${donde}, posterior al pedido · a confirmar` : `Hay un arreglo ${donde}, posterior al pedido: probablemente ya está resuelto. Falta confirmarlo.`;
+  }
+  if (p.cerca === "anterior") {
+    return corto ? `arreglo ${donde}, anterior al pedido · ¿volvió?` : `Hay un arreglo ${donde}, anterior al pedido: puede ser el bache que volvió, o uno distinto al lado.`;
+  }
+  return corto
+    ? `arreglo ${donde} · sin fecha del reclamo para comparar`
+    : `Hay un arreglo ${donde}. El pedido entró por planilla sin la fecha del reclamo, así que no se puede saber si fue antes o después.`;
+}
+
 function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks: boolean; publico: boolean }) {
   return (
     <>
@@ -1151,6 +1174,7 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
         {publico ? "Pedido de un vecino" : `Pedido #${p.id}`} · espera desde el {fechaCorta(p.fecha)}
       </p>
       <p className="mt-1 text-xs text-texto-3">Todavía no tiene una orden de trabajo. Está en la cola de la Brecha.</p>
+      <p className="num mt-1 text-xs text-texto-2">{textoCerca(p, false)}</p>
       {!sinLinks && (
         <Link href={`/demandas/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver el pedido →

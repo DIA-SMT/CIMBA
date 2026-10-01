@@ -106,6 +106,16 @@ export interface PendienteProps {
   id: number;
   fecha: string;
   direccion: string | null;
+  /**
+   * Qué hay a menos de 40 m: ningún arreglo; uno POSTERIOR al pedido (probablemente
+   * resuelto, a confirmar); uno ANTERIOR (¿el bache que volvió?); o uno cerca pero
+   * el pedido entró por planilla sin fecha propia, así que no se puede comparar.
+   * Cerca no garantiza que sea el mismo bache.
+   */
+  cerca: "ninguno" | "posterior" | "anterior" | "sin_fecha";
+  /** Distancia en metros y fecha (YYYY-MM-DD) del arreglo más cercano, si lo hay. */
+  cercaM: number | null;
+  cercaFecha: string | null;
 }
 
 /** Un bache en agenda: un problema abierto, en alguno de los pasos antes de reparado. */

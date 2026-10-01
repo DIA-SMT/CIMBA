@@ -458,8 +458,25 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              to_char(d.creado_en at time zone ${TZ}, 'YYYY-MM-DD') as fecha,
              ${publico ? sql`null::text` : sql`coalesce(d.direccion_normalizada, d.direccion_texto)`} as direccion,
              st_x(st_centroid(d.geom))::float as lon,
-             st_y(st_centroid(d.geom))::float as lat
+             st_y(st_centroid(d.geom))::float as lat,
+             coalesce(d.metadata->>'sin_fecha', 'false') = 'true' as sin_fecha,
+             ar.distancia_m,
+             to_char(ar.cerrado_en at time zone ${TZ}, 'YYYY-MM-DD') as cerca_fecha,
+             case when ar.cerrado_en is null then 'ninguno'
+                  when coalesce(d.metadata->>'sin_fecha', 'false') = 'true' then 'sin_fecha'
+                  when ar.cerrado_en >= d.creado_en then 'posterior'
+                  else 'anterior' end as cerca
       from demandas d
+      -- El arreglo más cercano a 40 METROS (::geography: sobre geometry 4326
+      -- serían grados). Misma regla de fecha que Cierres: posterior = respuesta
+      -- al pedido; anterior = el bache que volvió.
+      left join lateral (
+        select i.cerrado_en, round(st_distance(i.geom::geography, d.geom::geography))::int as distancia_m
+        from incidentes i
+        where i.estado in ('reparado', 'verificado') and st_dwithin(i.geom::geography, d.geom::geography, 40)
+        order by st_distance(i.geom::geography, d.geom::geography)
+        limit 1
+      ) ar on true
       where d.estado in ('recibida', 'en_validacion')
         and d.geom is not null
         and coalesce(d.destino::text, 'bacheo') = 'bacheo'
@@ -1054,6 +1071,9 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           id: Number(f.id),
           fecha: String(f.fecha),
           direccion: texto(f.direccion),
+          cerca: (texto(f.cerca) ?? "ninguno") as PendienteProps["cerca"],
+          cercaM: num(f.distancia_m),
+          cercaFecha: texto(f.cerca_fecha),
         } satisfies PendienteProps,
       })),
     },

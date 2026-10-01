@@ -2,7 +2,7 @@
 
 import { MapPin, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RolUsuario } from "@cimba/domain";
 import {
   conMayuscula,
@@ -89,6 +89,12 @@ export function RailAvance({
   const puedeNavegar = !pantalla && !publico;
   /* Lo cargado en las últimas 48 h que está en la ventana (con "Hoy" solo lo de hoy). */
   const recientes = datos.hechos.features.reduce((n, f) => n + (f.properties.reciente ? 1 : 0), 0);
+  /* Con "lo que falta" a la vista: cuántos pedidos en cola tienen un arreglo cerca. */
+  const desglose = useMemo(() => {
+    const d = { ninguno: 0, posterior: 0, anterior: 0, sin_fecha: 0 };
+    for (const f of datos.pendientes.features) d[f.properties.cerca] += 1;
+    return { ...d, conArreglo: d.posterior + d.anterior + d.sin_fecha };
+  }, [datos.pendientes]);
   const nAnimado = useContador(hero.n);
   const m2Animado = useContador(hero.m2);
 
@@ -204,6 +210,14 @@ export function RailAvance({
             </>
           )}
         </p>
+        {modoFalta && c.pendientes.pedidos > 0 && (
+          <p className="num mt-1.5 text-[11px] leading-snug text-texto-3">
+            De los pedidos en cola, <b className="text-texto-2">{numero(desglose.ninguno)}</b> no tienen ningún arreglo a menos de 40 m;{" "}
+            <b className="text-texto-2">{numero(desglose.conArreglo)}</b> sí: {numero(desglose.posterior)} posterior al pedido (a confirmar),{" "}
+            {numero(desglose.anterior)} anterior (¿el bache que volvió?), {numero(desglose.sin_fecha)} sin fecha del reclamo para comparar.
+            Cerca no garantiza que sea el mismo bache.
+          </p>
+        )}
         {!publico && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
             <button
