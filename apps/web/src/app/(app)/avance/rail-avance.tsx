@@ -13,6 +13,8 @@ import {
   type DatosAvance,
   type DiasVentana,
   type EventoAvance,
+  type Proyeccion,
+  type AvisosCierre,
   type TerritorioRef,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
@@ -202,6 +204,9 @@ export function RailAvance({
           </Link>
         )}
       </section>
+
+      {datos.proyeccion && <CuandoTerminamos p={datos.proyeccion} hoy={datos.hoy} recorte={datos.territorio != null} />}
+      {datos.avisos && <AvisarAlVecino a={datos.avisos} puedeNavegar={puedeNavegar} />}
 
       <Ritmo serie={datos.serie} desde={datos.ventana.desde} />
 
@@ -484,6 +489,205 @@ function Ritmo({ serie, desde }: { serie: DatosAvance["serie"]; desde: string | 
         )}
         <span className="text-amarillo">esta semana</span>
       </div>
+    </section>
+  );
+}
+
+/** "2 de enero" o "2 de enero de 2027" si cambia el año; con el día de la semana en el título. */
+function fechaProyectada(iso: string, hoy: string) {
+  const d = new Date(`${iso}T12:00:00Z`);
+  const mismoAnio = iso.slice(0, 4) === hoy.slice(0, 4);
+  return {
+    corta: new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "long", ...(mismoAnio ? {} : { year: "numeric" }), timeZone: "UTC" }).format(d),
+    larga: conMayuscula(new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(d)),
+  };
+}
+
+/**
+ * ¿CUÁNDO TERMINAMOS? La regla de tres, dicha completa y sin promesas: lo
+ * hecho, lo que falta (el mismo número que "Queda por hacer"), el ritmo de
+ * los últimos 90 días, lo que sigue entrando, y las dos fechas que salen de
+ * ahí. Abajo, el gráfico del acumulado con la proyección punteada: la misma
+ * curva que se mostró en papel el 1/10, ahora viva.
+ *
+ * Es deliberadamente SERIA: la fecha grande es la realista (con los pedidos
+ * que siguen entrando), la optimista va en segundo plano, y si el ritmo no
+ * alcanza se dice "a este ritmo no se termina" en vez de inventar una fecha.
+ */
+function CuandoTerminamos({ p, hoy, recorte }: { p: Proyeccion; hoy: string; recorte: boolean }) {
+  const total = p.hechos + p.pendientes;
+  const pct = total > 0 ? Math.round((p.hechos / total) * 100) : 100;
+  const realista = p.fechaRealista ? fechaProyectada(p.fechaRealista, hoy) : null;
+  const sinNuevos = p.fechaSinNuevos ? fechaProyectada(p.fechaSinNuevos, hoy) : null;
+  const tendencia = p.ritmoMes > 0 ? (p.ritmoUltimoMes - p.ritmoMes) / p.ritmoMes : 0;
+  const meses = (dias: number) => (dias / 30.44).toFixed(1).replace(".", ",");
+
+  return (
+    <section className="rounded-2xl border border-borde bg-panel-2 p-4">
+      <Rotulo>¿Cuándo terminamos lo que falta?</Rotulo>
+
+      {p.pendientes === 0 ? (
+        <p className="text-sm font-semibold" style={{ color: "var(--color-hecho)" }}>
+          No hay nada pendiente{recorte ? " en este recorte" : ""}. Al día.
+        </p>
+      ) : p.ritmoMes === 0 ? (
+        <p className="text-sm text-texto-2">
+          Sin trabajo resuelto en los últimos 90 días{recorte ? " en este recorte" : ""}: no hay ritmo con qué proyectar.
+        </p>
+      ) : (
+        <>
+          {realista ? (
+            <>
+              <p className="text-3xl leading-none font-extrabold tracking-tight" title={realista.larga}>
+                {realista.corta}
+              </p>
+              <p className="num mt-1.5 text-xs text-texto-2">
+                Si siguen entrando ≈{numero(p.entranMes)} pedidos de bacheo por mes · {meses(p.diasRealista!)} meses
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xl leading-tight font-extrabold tracking-tight text-amarillo">A este ritmo no se termina</p>
+              <p className="num mt-1.5 text-xs text-texto-2">
+                Entran ≈{numero(p.entranMes)} pedidos por mes y se resuelven ≈{numero(p.ritmoMes)}: lo pendiente crece.
+              </p>
+            </>
+          )}
+          {sinNuevos && (
+            <p className="num mt-2 text-xs text-texto-3">
+              Si no entrara nada nuevo: <b className="text-texto-2">{sinNuevos.corta}</b> · {meses(p.diasSinNuevos!)} meses
+            </p>
+          )}
+        </>
+      )}
+
+      <GraficoProyeccion p={p} hoy={hoy} />
+
+      <dl className="num mt-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg bg-panel px-2 py-1.5">
+          <dt className="text-[9px] font-bold tracking-[0.12em] text-texto-3 uppercase">Hecho</dt>
+          <dd className="text-sm font-bold" style={{ color: "var(--color-hecho)" }}>{numero(p.hechos)}</dd>
+          <dd className="text-[10px] text-texto-3">{pct}%</dd>
+        </div>
+        <div className="rounded-lg bg-panel px-2 py-1.5">
+          <dt className="text-[9px] font-bold tracking-[0.12em] text-texto-3 uppercase">Falta</dt>
+          <dd className="text-sm font-bold">{numero(p.pendientes)}</dd>
+          <dd className="text-[10px] text-texto-3">{100 - pct}%</dd>
+        </div>
+        <div className="rounded-lg bg-panel px-2 py-1.5">
+          <dt className="text-[9px] font-bold tracking-[0.12em] text-texto-3 uppercase">Ritmo</dt>
+          <dd className="text-sm font-bold">{numero(p.ritmoMes)}<span className="text-[10px] font-medium text-texto-3">/mes</span></dd>
+          <dd className="text-[10px] text-texto-3" title="Resueltos en los últimos 30 días contra el promedio de 90">
+            últ. 30 d: {numero(p.ritmoUltimoMes)}{Math.abs(tendencia) >= 0.1 ? (tendencia > 0 ? " ↑" : " ↓") : ""}
+          </dd>
+        </div>
+      </dl>
+
+      <p className="mt-2.5 text-[10px] leading-snug text-texto-3">
+        Cuenta como pendiente todo pedido sin confirmar, aunque probablemente ya esté arreglado: la fecha se acerca a medida
+        que se confirman. Es el ritmo de hoy aplicado a lo que falta, no una promesa.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * El acumulado de resueltos por mes, y desde hoy la proyección punteada hasta
+ * la meta. La meta sube con lo que sigue entrando (línea azul). Sin ejes
+ * cargados: en la columna vale más la forma que el detalle; los valores
+ * exactos están arriba.
+ */
+function GraficoProyeccion({ p, hoy }: { p: Proyeccion; hoy: string }) {
+  if (p.serie.length === 0 || p.ritmoMes === 0) return null;
+  const W = 320;
+  const H = 96;
+  const M = { l: 4, r: 4, t: 10, b: 16 };
+  const total = p.hechos + p.pendientes;
+  const diasHorizonte = Math.max(60, Math.min(400, (p.diasRealista ?? p.diasSinNuevos ?? 90) + 30));
+  const hoyDia = Date.parse(`${hoy}T12:00:00Z`) / 86_400_000;
+  const dia0 = Date.parse(`${p.serie[0]!.mes}-01T12:00:00Z`) / 86_400_000;
+  const diaFin = hoyDia + diasHorizonte;
+  const x = (dia: number) => M.l + ((dia - dia0) / (diaFin - dia0)) * (W - M.l - M.r);
+  const yMax = Math.max(total * 1.08, p.hechos * 1.08, 1);
+  const y = (v: number) => H - M.b - (v / yMax) * (H - M.t - M.b);
+
+  let acum = 0;
+  const puntos: Array<[number, number]> = [[dia0, 0]];
+  for (const s of p.serie) {
+    acum += s.n;
+    const [a, m] = s.mes.split("-").map(Number);
+    const finMes = Date.UTC(a!, m!, 0, 12) / 86_400_000; // último día del mes
+    puntos.push([Math.min(finMes, hoyDia), acum]);
+  }
+  puntos.push([hoyDia, p.hechos]);
+  const linea = puntos.map(([d, v], i) => `${i ? "L" : "M"}${x(d).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const area = `${linea} L${x(hoyDia).toFixed(1)},${y(0).toFixed(1)} L${x(dia0).toFixed(1)},${y(0).toFixed(1)} Z`;
+
+  const ritmoDia = p.ritmoMes / 30.44;
+  const entranDia = p.entranMes / 30.44;
+  const finProy = p.diasRealista != null ? hoyDia + p.diasRealista : diaFin;
+  const proy = `M${x(hoyDia).toFixed(1)},${y(p.hechos).toFixed(1)} L${x(finProy).toFixed(1)},${y(p.hechos + ritmoDia * (finProy - hoyDia)).toFixed(1)}`;
+  const meta = `M${x(hoyDia).toFixed(1)},${y(total).toFixed(1)} L${x(diaFin).toFixed(1)},${y(total + entranDia * diasHorizonte).toFixed(1)}`;
+
+  /* Marcas de mes en el eje: una letra por mes, sin apretar. */
+  const meses: Array<[number, string]> = [];
+  for (let d = new Date(dia0 * 86_400_000); d.getTime() / 86_400_000 < diaFin; d.setUTCMonth(d.getUTCMonth() + 1, 1)) {
+    meses.push([d.getTime() / 86_400_000, "EFMAMJJASOND"[d.getUTCMonth()]!]);
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 block h-24 w-full" role="img" aria-label="Baches resueltos acumulados y proyección hasta terminar lo pendiente">
+      <line x1={M.l} x2={W - M.r} y1={y(0)} y2={y(0)} stroke="var(--color-borde-2)" strokeWidth="1" />
+      <line x1={M.l} x2={W - M.r} y1={y(total)} y2={y(total)} stroke="var(--color-borde-2)" strokeWidth="1" strokeDasharray="4 3" />
+      <path d={meta} fill="none" stroke="var(--color-celeste)" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.8" />
+      <path d={area} fill="var(--color-hecho)" opacity="0.14" />
+      <path d={linea} fill="none" stroke="var(--color-hecho)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <path d={proy} fill="none" stroke="var(--color-hecho)" strokeWidth="2" strokeDasharray="2 4" strokeLinecap="round" />
+      <line x1={x(hoyDia)} x2={x(hoyDia)} y1={M.t} y2={y(0)} stroke="var(--color-amarillo)" strokeWidth="1.2" strokeDasharray="2 3" />
+      <circle cx={x(hoyDia)} cy={y(p.hechos)} r="3.5" fill="var(--color-hecho)" stroke="var(--color-panel-2)" strokeWidth="1.5" />
+      {p.diasRealista != null && (
+        <circle cx={x(finProy)} cy={y(p.hechos + ritmoDia * p.diasRealista)} r="4" fill="var(--color-panel-2)" stroke="var(--color-celeste)" strokeWidth="2" />
+      )}
+      <text x={x(hoyDia) + 4} y={M.t + 7} fontSize="8" fontWeight="700" fill="var(--color-amarillo)" letterSpacing="0.08em">HOY</text>
+      <text x={M.l + 2} y={y(total) - 3} fontSize="8" fill="var(--color-texto-3)">meta {numero(total)}</text>
+      {meses.map(([d, l]) => (
+        <text key={d} x={x(d) + 2} y={H - 4} fontSize="8" fill="var(--color-texto-3)">{l}</text>
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * AVISAR AL VECINO: a cuántos se les puede cerrar el pedido con la foto del
+ * arreglo. Es la cuenta que la Dirección pidió el 1/10: no cuántos baches se
+ * hicieron, sino a cuántas personas se les puede mostrar. Lo que frena no es
+ * el trabajo: la mayoría de los pedidos entró por planilla, sin teléfono.
+ */
+function AvisarAlVecino({ a, puedeNavegar }: { a: AvisosCierre; puedeNavegar: boolean }) {
+  const hoyMismo = a.listosConFotoYContacto;
+  const alConfirmar = a.candidatosConFotoYContacto;
+  return (
+    <section className="rounded-2xl border border-borde px-4 py-3">
+      <Rotulo>Avisar al vecino, con la foto del arreglo</Rotulo>
+      <p className="num text-sm text-texto-2">
+        <b className="text-texto">{numero(hoyMismo)}</b> {hoyMismo === 1 ? "pedido listo" : "pedidos listos"} para avisar hoy ·{" "}
+        <b className="text-texto">{numero(alConfirmar)}</b> más en cuanto se confirmen
+      </p>
+      <p className="num mt-1 text-[11px] leading-snug text-texto-3">
+        De los {numero(a.listos)} resueltos que esperan el cierre, {numero(a.listosSinContacto)} no traen teléfono ni mail: entraron por el
+        Concejo, la S.A.T. o planillas, y no hay a quién avisarle.
+        {a.listosConContactoSinFoto > 0 && <> {numero(a.listosConContactoSinFoto)} tienen contacto pero no foto.</>}
+      </p>
+      <p className="num mt-1 text-[11px] text-texto-3">
+        Ya avisados: <b className="text-texto-2">{numero(a.cerrados)}</b>
+        {a.cerrados > 0 && <>, {numero(a.cerradosConFoto)} con la foto en el mensaje</>}.
+      </p>
+      {puedeNavegar && (
+        <p className="mt-1.5 flex flex-wrap gap-x-3 text-xs font-semibold">
+          <Link href="/cierres" className="text-celeste">Ir a Cierres →</Link>
+          <Link href="/mapa?vista=brecha" className="text-celeste">Confirmar desde el mapa →</Link>
+        </p>
+      )}
     </section>
   );
 }

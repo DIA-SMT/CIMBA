@@ -254,6 +254,64 @@ export interface DatosAvance {
   fotos: FotoAvance[];
   /** Cuántos trabajos del recorte tienen foto del antes Y del después (todas las fechas). */
   paresFotos: number;
+  /** Cuándo se termina lo que falta, al ritmo de hoy. null en la versión pública. */
+  proyeccion: Proyeccion | null;
+  /** A cuántos vecinos se les puede avisar el cierre, y con qué. null en la versión pública. */
+  avisos: AvisosCierre | null;
+}
+
+/**
+ * LA PROYECCIÓN: lo hecho, lo que falta y cuándo se termina si se sigue al
+ * ritmo de hoy. No es una promesa; es una regla de tres honesta, y la
+ * pantalla lo dice.
+ *
+ * "Lo que falta" es EXACTAMENTE lo que muestra la tarjeta "Queda por hacer":
+ * los pedidos de bacheo en cola más los baches en agenda. Cuenta como
+ * pendiente todo pedido sin confirmar, aunque por las fechas probablemente ya
+ * esté arreglado (Marcos, 1/10: "que estén sin confirmar no quiere decir que
+ * no existan"). A medida que se confirman, la fecha se acerca sola.
+ */
+export interface Proyeccion {
+  /** Baches resueltos (problemas de calzada reparados o verificados), todas las fechas. */
+  hechos: number;
+  /** Pedidos en cola + baches en agenda: el mismo número de "Queda por hacer". */
+  pendientes: number;
+  /** Resueltos por mes, promedio de los últimos 90 días. */
+  ritmoMes: number;
+  /** Resueltos en los últimos 30 días: para ver si el ritmo sube o baja. */
+  ritmoUltimoMes: number;
+  /** Pedidos nuevos de bacheo por mes (mediana de las últimas 13 semanas, que ignora las cargas masivas). */
+  entranMes: number;
+  /** Días hasta terminar si no entrara nada nuevo; null si no hay ritmo. */
+  diasSinNuevos: number | null;
+  /** Días hasta terminar con los pedidos que siguen entrando; null si el ritmo no alcanza. */
+  diasRealista: number | null;
+  fechaSinNuevos: string | null;
+  fechaRealista: string | null;
+  /** Resueltos por mes desde el principio, para dibujar el acumulado. */
+  serie: Array<{ mes: string; n: number }>;
+}
+
+/**
+ * EL CIERRE CON EL VECINO: cuántos pedidos ya resueltos tienen a quién
+ * avisarle (teléfono o mail) y con qué prueba (foto del después). Solo
+ * cuenta si el dato existe, nunca lo trae: el contacto se ve en Cierres,
+ * con el permiso que corresponde.
+ */
+export interface AvisosCierre {
+  /** Vinculados a un bache ya reparado, esperando el cierre formal. */
+  listos: number;
+  /** De esos, con teléfono o mail Y foto del trabajo terminado: se avisan hoy. */
+  listosConFotoYContacto: number;
+  /** Con contacto pero sin foto del después. */
+  listosConContactoSinFoto: number;
+  /** Sin teléfono ni mail: no hay a quién avisarle (Concejo, S.A.T., planillas). */
+  listosSinContacto: number;
+  /** Sin confirmar todavía, pero con un arreglo posterior cerca, contacto y foto: se avisan al confirmarlos. */
+  candidatosConFotoYContacto: number;
+  /** Ya cerrados, y cuántos de esos llevaban la foto en la respuesta. */
+  cerrados: number;
+  cerradosConFoto: number;
 }
 
 /**

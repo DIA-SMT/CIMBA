@@ -722,6 +722,18 @@ export function PantallaAvance({
                       </>
                     )}
                   </p>
+                  {/* Al llegar a hoy, la película no inventa el futuro: dice la
+                      fecha que sale del ritmo actual y deja la curva en la columna. */}
+                  {cursor >= finLinea && datos.proyeccion?.fechaRealista && datos.proyeccion.pendientes > 0 && (
+                    <p className="num mt-1 text-xs font-semibold text-celeste">
+                      Al ritmo actual, lo que falta se termina el{" "}
+                      {new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "long", timeZone: "UTC" }).format(
+                        new Date(`${datos.proyeccion.fechaRealista}T12:00:00Z`),
+                      )}
+                      {datos.proyeccion.fechaRealista.slice(0, 4) !== datos.hoy.slice(0, 4) ? ` de ${datos.proyeccion.fechaRealista.slice(0, 4)}` : ""}
+                      {" "}→ ver abajo
+                    </p>
+                  )}
                 </div>
                 <button type="button" onClick={cerrarLinea} aria-label="Cerrar la línea de tiempo" className="rounded-md p-1 text-texto-3 hover:text-texto">
                   <X size={14} />

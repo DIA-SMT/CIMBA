@@ -16,6 +16,8 @@ import {
   type OrdenActiva,
   type PaginaMuro,
   type PendienteProps,
+  type Proyeccion,
+  type AvisosCierre,
   type PuntoSerie,
   type Territorio,
   type TerritorioRef,
@@ -412,6 +414,9 @@ interface BundleLento {
   paresFotos: number;
   feedCrudo: Fila[];
   sync: Fila[];
+  proy: Fila;
+  proySerie: Fila[];
+  avisos: Fila;
 }
 
 const CACHE_MS = 60_000;
@@ -642,17 +647,107 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
     `);
 
-    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync, pares] = (await Promise.all([
-      qPendientes,
-      qOrdenes,
-      qEnCurso,
-      qResto,
-      qTerritorio,
-      qFotos,
-      qFeed,
-      qSync,
-      qPares,
-    ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+    /**
+     * LA PROYECCIÓN, materia prima. "Hecho" son los problemas de calzada
+     * resueltos (un problema = un bache), con la fecha en que se cerraron.
+     * El ritmo es el de los últimos 90 días; los 30 últimos, aparte, para
+     * ver si sube o baja. Lo que ENTRA son los pedidos nuevos de bacheo por
+     * semana: se toma la MEDIANA de las últimas 13 semanas completas (con
+     * las semanas en cero incluidas) porque las cargas masivas —1.500
+     * pedidos del Concejo en una semana de agosto— no son el caudal normal
+     * y un promedio las tomaría como tal.
+     */
+    const CALZADA = sql`i.tipo::text in ('bache', 'pavimento_deteriorado', 'hundimiento', 'fisura')`;
+    const qProy = db.execute(sql`
+      with semanas as (
+        select generate_series(
+          date_trunc('week', now() at time zone ${TZ}) - interval '13 weeks',
+          date_trunc('week', now() at time zone ${TZ}) - interval '1 week',
+          interval '1 week') as s
+      ),
+      entradas as (
+        select (select count(*) from demandas d
+                where coalesce(d.destino::text, 'bacheo') = 'bacheo' and d.geom is not null
+                  and date_trunc('week', d.creado_en at time zone ${TZ}) = semanas.s
+                  ${enTerr(t, sql`d.geom`)}) as n
+        from semanas
+      )
+      select
+        (select count(*) from incidentes i where ${CALZADA} and i.estado in ('reparado', 'verificado') ${enTerr(t, sql`i.geom`)})::int as hechos,
+        (select count(*) from incidentes i where ${CALZADA} and i.estado in ('reparado', 'verificado')
+           and i.cerrado_en >= now() - interval '90 days' ${enTerr(t, sql`i.geom`)})::int as r90,
+        (select count(*) from incidentes i where ${CALZADA} and i.estado in ('reparado', 'verificado')
+           and i.cerrado_en >= now() - interval '30 days' ${enTerr(t, sql`i.geom`)})::int as r30,
+        (select percentile_cont(0.5) within group (order by n) from entradas)::float as entran_semana
+    `);
+    const qProySerie = db.execute(sql`
+      select to_char(date_trunc('month', i.cerrado_en at time zone ${TZ}), 'YYYY-MM') as mes, count(*)::int as n
+      from incidentes i
+      where ${CALZADA} and i.estado in ('reparado', 'verificado') and i.cerrado_en is not null ${enTerr(t, sql`i.geom`)}
+      group by 1 order by 1
+    `);
+
+    /**
+     * A QUIÉN SE LE PUEDE AVISAR. Solo se pregunta si el teléfono o el mail
+     * EXISTEN y si hay foto del después; el dato en sí no sale de acá. La
+     * regla del arreglo POSTERIOR al pedido es la misma de Cierres: un
+     * arreglo anterior es el bache que volvió, no la respuesta.
+     */
+    const qAvisos = db.execute(sql`
+      with contacto as (
+        select d.id,
+               length(regexp_replace(coalesce(d.contacto->>'telefono', ''), '\\D', '', 'g')) >= 8 as tel,
+               coalesce(d.contacto->>'email', '') ~ '^[^@]+@[^@]+$' as mail
+        from demandas d
+      ),
+      listos as (
+        select d.id, c.tel or c.mail as con_contacto,
+               exists (select 1 from intervenciones iv join fotografias f on f.intervencion_id = iv.id
+                       where iv.incidente_id = di.incidente_id and f.momento = 'despues') as foto
+        from demandas d
+        join contacto c on c.id = d.id
+        join demanda_incidente di on di.demanda_id = d.id
+        join incidentes i on i.id = di.incidente_id
+        where d.estado = 'vinculada' and i.estado in ('reparado', 'verificado') ${enTerr(t, sql`d.geom`)}
+      ),
+      candidatos as (
+        select d.id,
+               (select i.id from incidentes i
+                where i.estado in ('reparado', 'verificado') and st_dwithin(i.geom, d.geom, 40)
+                  and (coalesce(d.metadata->>'sin_fecha', 'false') = 'true' or i.cerrado_en >= d.creado_en)
+                order by st_distance(i.geom, d.geom) limit 1) as inc
+        from demandas d
+        join contacto c on c.id = d.id
+        where d.estado in ('recibida', 'en_validacion') and d.geom is not null
+          and coalesce(d.destino::text, 'bacheo') = 'bacheo' and (c.tel or c.mail) ${enTerr(t, sql`d.geom`)}
+      )
+      select
+        (select count(*) from listos)::int as listos,
+        (select count(*) from listos where con_contacto and foto)::int as listos_foto_contacto,
+        (select count(*) from listos where con_contacto and not foto)::int as listos_contacto_sin_foto,
+        (select count(*) from listos where not con_contacto)::int as listos_sin_contacto,
+        (select count(*) from candidatos ca where ca.inc is not null
+           and exists (select 1 from intervenciones iv join fotografias f on f.intervencion_id = iv.id
+                       where iv.incidente_id = ca.inc and f.momento = 'despues'))::int as candidatos_foto_contacto,
+        (select count(*) from demandas d where d.estado = 'cerrada' ${enTerr(t, sql`d.geom`)})::int as cerrados,
+        (select count(*) from demandas d where d.estado = 'cerrada' and d.metadata->'cierre'->>'respuesta' ilike '%http%' ${enTerr(t, sql`d.geom`)})::int as cerrados_foto
+    `);
+
+    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync, pares, filasProy, proySerie, filasAvisos] =
+      (await Promise.all([
+        qPendientes,
+        qOrdenes,
+        qEnCurso,
+        qResto,
+        qTerritorio,
+        qFotos,
+        qFeed,
+        qSync,
+        qPares,
+        qProy,
+        qProySerie,
+        qAvisos,
+      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
 
     return {
       pendientes,
@@ -664,6 +759,9 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       paresFotos: Number(pares[0]?.n ?? 0),
       feedCrudo,
       sync,
+      proy: filasProy[0] ?? {},
+      proySerie,
+      avisos: filasAvisos[0] ?? {},
     };
   });
 }
@@ -836,7 +934,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
   });
 
   const { hechos, cifras, porEmpresa, serie, topBarrios } = rapido;
-  const { pendientes, ordenes, enCurso, resto, terr, fotos, paresFotos, feedCrudo, sync } = lento;
+  const { pendientes, ordenes, enCurso, resto, terr, fotos, paresFotos, feedCrudo, sync, proy, proySerie, avisos } = lento;
 
   const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
 
@@ -1009,6 +1107,53 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
       )
       .filter((f) => f.url !== ""),
     paresFotos,
+    proyeccion: publico ? null : armarProyeccion(proy, proySerie, resto, hoy),
+    avisos: publico
+      ? null
+      : {
+          listos: Number(avisos.listos ?? 0),
+          listosConFotoYContacto: Number(avisos.listos_foto_contacto ?? 0),
+          listosConContactoSinFoto: Number(avisos.listos_contacto_sin_foto ?? 0),
+          listosSinContacto: Number(avisos.listos_sin_contacto ?? 0),
+          candidatosConFotoYContacto: Number(avisos.candidatos_foto_contacto ?? 0),
+          cerrados: Number(avisos.cerrados ?? 0),
+          cerradosConFoto: Number(avisos.cerrados_foto ?? 0),
+        } satisfies AvisosCierre,
+  };
+}
+
+/** YYYY-MM-DD más N días, sin pasar por el huso horario del servidor. */
+function sumarDias(iso: string, dias: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + dias)).toISOString().slice(0, 10);
+}
+
+/**
+ * La regla de tres, dicha completa. "Pendientes" es el mismo número que la
+ * tarjeta "Queda por hacer" (pedidos en cola + baches en agenda). El ritmo es
+ * por día para que la fecha caiga en un día y no en "2,5 meses". Si el ritmo
+ * no alcanza a lo que entra, la fecha realista es null y la pantalla dice "a
+ * este ritmo no se termina", que es lo honesto.
+ */
+function armarProyeccion(proy: Fila, serie: Fila[], resto: Fila, hoy: string): Proyeccion {
+  const hechos = Number(proy.hechos ?? 0);
+  const pendientes = Number(resto.pedidos ?? 0) + Number(resto.incidentes ?? 0);
+  const ritmoDia = Number(proy.r90 ?? 0) / 90;
+  const entranDia = (Number(proy.entran_semana ?? 0) || 0) / 7;
+  const neto = ritmoDia - entranDia;
+  const diasSinNuevos = ritmoDia > 0 ? Math.ceil(pendientes / ritmoDia) : null;
+  const diasRealista = neto > 0 ? Math.ceil(pendientes / neto) : null;
+  return {
+    hechos,
+    pendientes,
+    ritmoMes: Math.round(ritmoDia * 30.44),
+    ritmoUltimoMes: Number(proy.r30 ?? 0),
+    entranMes: Math.round(entranDia * 30.44),
+    diasSinNuevos,
+    diasRealista,
+    fechaSinNuevos: diasSinNuevos == null ? null : sumarDias(hoy, diasSinNuevos),
+    fechaRealista: diasRealista == null ? null : sumarDias(hoy, diasRealista),
+    serie: serie.map((f) => ({ mes: String(f.mes), n: Number(f.n) })),
   };
 }
 
