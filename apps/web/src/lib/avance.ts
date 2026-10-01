@@ -460,6 +460,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              st_x(st_centroid(d.geom))::float as lon,
              st_y(st_centroid(d.geom))::float as lat,
              coalesce(d.metadata->>'sin_fecha', 'false') = 'true' as sin_fecha,
+             d.fuente::text as fuente,
              ar.distancia_m,
              to_char(ar.cerrado_en at time zone ${TZ}, 'YYYY-MM-DD') as cerca_fecha,
              case when ar.cerrado_en is null then 'ninguno'
@@ -1072,6 +1073,8 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           fecha: String(f.fecha),
           direccion: texto(f.direccion),
           cerca: (texto(f.cerca) ?? "ninguno") as PendienteProps["cerca"],
+          sinFecha: Boolean(f.sin_fecha),
+          fuente: String(f.fuente ?? ""),
           cercaM: num(f.distancia_m),
           cercaFecha: texto(f.cerca_fecha),
         } satisfies PendienteProps,

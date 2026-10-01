@@ -30,7 +30,7 @@ import {
   type TerritorioRef,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
-import { SEMAFORO_HEX, fechaCorta, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, SEMAFORO_HEX, fechaCorta, numero } from "@/lib/formato";
 import { AntesDespues } from "@/components/antes-despues";
 import type { ParAntesDespues } from "@/components/visor-antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
@@ -1056,7 +1056,11 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
     <>
       <p className="font-bold text-texto-2">Pedido que espera</p>
       {direccion && <p className="truncate text-texto-2">{direccion}</p>}
-      <p className="num text-texto-3">desde el {typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"}</p>
+      <p className="num text-texto-3">
+        {props.sinFecha === true
+          ? `cargado el ${typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"} por planilla · sin fecha del reclamo`
+          : `desde el ${typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"}`}
+      </p>
       {typeof props.cerca === "string" && (
         <p className="num text-texto-3">{textoCerca(props as unknown as PendienteProps, true)}</p>
       )}
@@ -1152,6 +1156,12 @@ function FichaEnCurso({ p, color }: { p: EnCursoProps; color: (e: string) => str
  * garantiza que sea el mismo bache, y la fecha solo se compara cuando el pedido
  * tiene una propia.
  */
+/** " (Concejo Deliberante)" o nada, para decir de qué planilla vino el pedido. */
+function canalDe(fuente: string): string {
+  const e = ETIQUETA_FUENTE[fuente as keyof typeof ETIQUETA_FUENTE];
+  return e ? ` (${e})` : "";
+}
+
 function textoCerca(p: PendienteProps, corto: boolean): string {
   if (p.cerca === "ninguno" || p.cercaM == null) return corto ? "sin ningún arreglo a menos de 40 m" : "Ningún arreglo a menos de 40 m.";
   const donde = `a ${numero(p.cercaM)} m${p.cercaFecha ? `, del ${fechaCorta(p.cercaFecha)}` : ""}`;
@@ -1171,7 +1181,10 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
     <>
       <p className="pr-5 font-bold">{publico ? "Un pedido que espera" : (p.direccion ?? "Sin dirección")}</p>
       <p className="mt-1 text-xs text-texto-2">
-        {publico ? "Pedido de un vecino" : `Pedido #${p.id}`} · espera desde el {fechaCorta(p.fecha)}
+        {publico ? "Pedido de un vecino" : `Pedido #${p.id}`} ·{" "}
+        {p.sinFecha
+          ? `cargado el ${fechaCorta(p.fecha)} desde una planilla${canalDe(p.fuente)}, sin la fecha del reclamo`
+          : `espera desde el ${fechaCorta(p.fecha)}`}
       </p>
       <p className="mt-1 text-xs text-texto-3">Todavía no tiene una orden de trabajo. Está en la cola de la Brecha.</p>
       <p className="num mt-1 text-xs text-texto-2">{textoCerca(p, false)}</p>

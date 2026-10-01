@@ -113,6 +113,10 @@ export interface PendienteProps {
    * Cerca no garantiza que sea el mismo bache.
    */
   cerca: "ninguno" | "posterior" | "anterior" | "sin_fecha";
+  /** Entró por planilla sin la fecha real del reclamo: `fecha` es la de la carga. */
+  sinFecha: boolean;
+  /** El canal por el que entró (atencion_ciudadana, hcd, secretaria, redes_sociales, sat, cuadrilla). */
+  fuente: string;
   /** Distancia en metros y fecha (YYYY-MM-DD) del arreglo más cercano, si lo hay. */
   cercaM: number | null;
   cercaFecha: string | null;
