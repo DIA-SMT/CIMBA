@@ -158,6 +158,13 @@ export function PantallaAvance({
   const [ordenResaltada, setOrdenResaltada] = useState<number | null>(null);
   const [foco, setFoco] = useState<Foco | null>(null);
   const [verPendientes, setVerPendientes] = useState(true);
+  /**
+   * VER LO QUE FALTA, a pedido (Marcos, 1/10: "que aparezca la info si es
+   * solicitada, no para meter esa presión"). Prende los pendientes en el mapa
+   * con el semáforo y, recién ahí, la fecha proyectada en la columna. Nunca
+   * arranca prendido, y el televisor no lo toca.
+   */
+  const [modoFalta, setModoFalta] = useState(false);
   const [leyendaAbierta, setLeyendaAbierta] = useState(false);
   const [menu, setMenu] = useState<"recorte" | "compartir" | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -621,6 +628,7 @@ export function PantallaAvance({
           cursor={cursor}
           nuevos={nuevos}
           verPendientes={verPendientes}
+          modoFalta={modoFalta}
           foco={foco}
           camaraInicial={camaraInicial}
           capas={capas}
@@ -724,7 +732,7 @@ export function PantallaAvance({
                   </p>
                   {/* Al llegar a hoy, la película no inventa el futuro: dice la
                       fecha que sale del ritmo actual y deja la curva en la columna. */}
-                  {cursor >= finLinea && datos.proyeccion?.fechaRealista && datos.proyeccion.pendientes > 0 && (
+                  {modoFalta && cursor >= finLinea && datos.proyeccion?.fechaRealista && datos.proyeccion.pendientes > 0 && (
                     <p className="num mt-1 text-xs font-semibold text-celeste">
                       Al ritmo actual, lo que falta se termina el{" "}
                       {new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "long", timeZone: "UTC" }).format(
@@ -756,6 +764,29 @@ export function PantallaAvance({
                 <span>{fechaDeDia(inicioLinea)}</span>
                 <span>hoy</span>
               </div>
+            </div>
+          )}
+
+          {/* Lo que falta, cuando se pidió verlo: el cartel que explica los
+              colores y la salida. Lo hecho queda atenuado detrás. */}
+          {modoFalta && (
+            <div className="pointer-events-auto flex max-w-[min(32rem,calc(100vw-24px))] items-start gap-2 rounded-xl border px-3 py-2 shadow-lg backdrop-blur" style={{ borderColor: "var(--color-sin-atencion)", background: "color-mix(in oklab, var(--color-panel) 92%, var(--color-sin-atencion))" }}>
+              <div className="min-w-0 flex-1 text-xs">
+                <p className="font-bold">
+                  Lo que falta{datos.territorio ? ` en ${recorte}` : ""}:{" "}
+                  <span className="num">{numero(datos.cifras.pendientes.pedidos)}</span> pedidos en cola ·{" "}
+                  <span className="num">{numero(datos.cifras.pendientes.incidentes)}</span> baches en agenda
+                </p>
+                <p className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-texto-2">
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--color-sin-atencion)" }} aria-hidden="true" />sin atención</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-encurso)" }} aria-hidden="true" />programado, en cola</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-amarillo)" }} aria-hidden="true" />en obra</span>
+                  <span className="text-texto-3">lo hecho queda atenuado</span>
+                </p>
+              </div>
+              <button type="button" onClick={() => setModoFalta(false)} aria-label="Volver a lo hecho" className="shrink-0 p-1 text-texto-3 hover:text-texto">
+                <X size={13} />
+              </button>
             </div>
           )}
 
@@ -1085,6 +1116,8 @@ export function PantallaAvance({
         alAmpliarFotos={ampliarFotos}
         alAbrirMuro={() => setMuroAbierto(true)}
         alcance={alcance}
+        modoFalta={modoFalta}
+        alAlternarFalta={() => setModoFalta((v) => !v)}
         pantalla={pantalla}
         publico={publico}
         rol={rol}

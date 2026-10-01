@@ -51,6 +51,8 @@ export function RailAvance({
   alAmpliarFotos,
   alAbrirMuro,
   alcance,
+  modoFalta,
+  alAlternarFalta,
   pantalla,
   publico,
   rol,
@@ -69,6 +71,9 @@ export function RailAvance({
   alAbrirMuro: () => void;
   /** En cuántas cuadras y barrios hubo trabajo en lo que se mira (null hasta que llegan las capas). */
   alcance: { cuadras: number; barrios: number; totalBarrios: number | null } | null;
+  /** Si se está mirando lo que falta (pendientes al frente, proyección a la vista). */
+  modoFalta: boolean;
+  alAlternarFalta: () => void;
   pantalla: boolean;
   publico: boolean;
   rol: RolUsuario;
@@ -185,8 +190,9 @@ export function RailAvance({
 
       <EnObraAhora datos={datos} recientes={recientes} alResaltarEmpresa={alResaltarEmpresa} alElegirEmpresa={alElegirEmpresa} color={color} />
 
-      {/* Lo que falta, en neutro y con el mismo número que el mapa */}
-      <section className="rounded-2xl border border-dashed border-borde-2 px-4 py-3">
+      {/* Lo que falta, en neutro y con el mismo número que el mapa. Tocarlo
+          pone los pendientes en el mapa y, recién ahí, la proyección. */}
+      <section className={`rounded-2xl border px-4 py-3 ${modoFalta ? "border-borde-2 bg-panel-2" : "border-dashed border-borde-2"}`}>
         <p className="text-[10px] font-bold tracking-[0.14em] text-texto-3 uppercase">Queda por hacer</p>
         <p className="num mt-1 text-sm text-texto-2">
           <b className="text-texto">{numero(c.pendientes.pedidos)}</b> pedidos de bacheo en cola ·{" "}
@@ -198,15 +204,33 @@ export function RailAvance({
             </>
           )}
         </p>
-        {puedeNavegar && (
-          <Link href="/mapa?vista=brecha" className="mt-1.5 inline-block text-xs font-semibold text-celeste">
-            Ver la brecha en el mapa →
-          </Link>
+        {!publico && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={alAlternarFalta}
+              aria-pressed={modoFalta}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                modoFalta ? "bg-panel-3 text-texto ring-1 ring-borde-2 hover:bg-panel" : "text-white hover:brightness-110"
+              }`}
+              style={modoFalta ? undefined : { background: "var(--color-sin-atencion)" }}
+            >
+              {modoFalta ? "Volver a lo hecho ✕" : "Ver lo que falta en el mapa"}
+            </button>
+            {puedeNavegar && (
+              <Link href="/mapa?vista=brecha" className="text-xs font-semibold text-celeste">
+                Brecha completa →
+              </Link>
+            )}
+          </div>
         )}
       </section>
 
-      {datos.proyeccion && <CuandoTerminamos p={datos.proyeccion} hoy={datos.hoy} recorte={datos.territorio != null} />}
-      {datos.avisos && <AvisarAlVecino a={datos.avisos} puedeNavegar={puedeNavegar} />}
+      {/* La proyección y los avisos aparecen solo cuando se pidió ver lo que
+          falta: la fecha es información para quien la busca, no una presión
+          permanente en la portada. */}
+      {modoFalta && datos.proyeccion && <CuandoTerminamos p={datos.proyeccion} hoy={datos.hoy} recorte={datos.territorio != null} />}
+      {modoFalta && datos.avisos && <AvisarAlVecino a={datos.avisos} puedeNavegar={puedeNavegar} />}
 
       <Ritmo serie={datos.serie} desde={datos.ventana.desde} />
 

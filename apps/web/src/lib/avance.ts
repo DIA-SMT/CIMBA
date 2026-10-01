@@ -16,6 +16,7 @@ import {
   type OrdenActiva,
   type PaginaMuro,
   type PendienteProps,
+  type AgendaProps,
   type Proyeccion,
   type AvisosCierre,
   type PuntoSerie,
@@ -417,6 +418,7 @@ interface BundleLento {
   proy: Fila;
   proySerie: Fila[];
   avisos: Fila;
+  agenda: Fila[];
 }
 
 const CACHE_MS = 60_000;
@@ -462,6 +464,18 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         and d.geom is not null
         and coalesce(d.destino::text, 'bacheo') = 'bacheo'
         ${enTerr(t, sql`d.geom`)}
+    `);
+
+    /* Los baches en agenda: el MISMO conjunto que cuenta "Queda por hacer"
+       (resto.incidentes), con su ubicación, para ponerlos en el mapa cuando se
+       pide ver lo que falta. */
+    const qAgenda = db.execute(sql`
+      select i.id, i.estado::text as estado, i.tipo::text as tipo,
+             ${publico ? sql`null::text` : sql`i.direccion`} as direccion,
+             st_x(i.geom)::float as lon, st_y(i.geom)::float as lat
+      from incidentes i
+      where i.estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion')
+        and i.geom is not null ${enTerr(t, sql`i.geom`)}
     `);
 
     /**
@@ -733,7 +747,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         (select count(*) from demandas d where d.estado = 'cerrada' and d.metadata->'cierre'->>'respuesta' ilike '%http%' ${enTerr(t, sql`d.geom`)})::int as cerrados_foto
     `);
 
-    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync, pares, filasProy, proySerie, filasAvisos] =
+    const [pendientes, ordenes, enCurso, filasResto, filasTerr, fotos, feedCrudo, sync, pares, filasProy, proySerie, filasAvisos, agenda] =
       (await Promise.all([
         qPendientes,
         qOrdenes,
@@ -747,7 +761,8 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         qProy,
         qProySerie,
         qAvisos,
-      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
+        qAgenda,
+      ])) as unknown as [Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[], Fila[]];
 
     return {
       pendientes,
@@ -762,6 +777,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       proy: filasProy[0] ?? {},
       proySerie,
       avisos: filasAvisos[0] ?? {},
+      agenda,
     };
   });
 }
@@ -934,7 +950,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
   });
 
   const { hechos, cifras, porEmpresa, serie, topBarrios } = rapido;
-  const { pendientes, ordenes, enCurso, resto, terr, fotos, paresFotos, feedCrudo, sync, proy, proySerie, avisos } = lento;
+  const { pendientes, ordenes, enCurso, resto, terr, fotos, paresFotos, feedCrudo, sync, proy, proySerie, avisos, agenda } = lento;
 
   const hoy = String(cifras.hoy ?? new Date().toISOString().slice(0, 10));
 
@@ -1037,6 +1053,19 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           fecha: String(f.fecha),
           direccion: texto(f.direccion),
         } satisfies PendienteProps,
+      })),
+    },
+    agenda: {
+      type: "FeatureCollection",
+      features: agenda.map((f) => ({
+        type: "Feature" as const,
+        geometry: punto(f),
+        properties: {
+          id: Number(f.id),
+          estado: String(f.estado) as AgendaProps["estado"],
+          tipo: texto(f.tipo),
+          direccion: texto(f.direccion),
+        } satisfies AgendaProps,
       })),
     },
     areas: {

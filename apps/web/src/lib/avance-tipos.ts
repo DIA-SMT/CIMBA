@@ -108,6 +108,14 @@ export interface PendienteProps {
   direccion: string | null;
 }
 
+/** Un bache en agenda: un problema abierto, en alguno de los pasos antes de reparado. */
+export interface AgendaProps {
+  id: number;
+  estado: "detectado" | "priorizado" | "programado" | "en_ejecucion";
+  tipo: string | null;
+  direccion: string | null;
+}
+
 /** Una obra en curso: empezada y no terminada (paños de hormigón, carpetas). */
 export interface EnCursoProps {
   id: number;
@@ -221,6 +229,11 @@ export interface DatosAvance {
   publico: boolean;
   hechos: FeatureCollection<Point, HechoProps>;
   pendientes: FeatureCollection<Point, PendienteProps>;
+  /**
+   * Los baches en agenda (el otro sumando de "Queda por hacer"), sin importar
+   * la ventana. Solo se dibujan cuando alguien pide ver lo que falta.
+   */
+  agenda: FeatureCollection<Point, AgendaProps>;
   /** Las obras empezadas y no terminadas, sin importar la ventana: son el "ahora". */
   enCurso: FeatureCollection<Point, EnCursoProps>;
   /** El área real de cada orden activa: la envolvente de sus items. */

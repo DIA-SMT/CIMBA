@@ -17,6 +17,7 @@ import {
 } from "react-map-gl/maplibre";
 import {
   fechaLarga,
+  type AgendaProps,
   type Camara,
   type CapasAvance,
   type DatosAvance,
@@ -29,7 +30,7 @@ import {
   type TerritorioRef,
 } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
-import { fechaCorta, numero } from "@/lib/formato";
+import { SEMAFORO_HEX, fechaCorta, numero } from "@/lib/formato";
 import { AntesDespues } from "@/components/antes-despues";
 import type { ParAntesDespues } from "@/components/visor-antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
@@ -142,6 +143,7 @@ type Seleccion =
   | { tipo: "hecho"; props: HechoProps; lngLat: [number, number] }
   | { tipo: "encurso"; props: EnCursoProps; lngLat: [number, number] }
   | { tipo: "pendiente"; props: PendienteProps; lngLat: [number, number] }
+  | { tipo: "agenda"; props: AgendaProps; lngLat: [number, number] }
   | { tipo: "orden"; props: OrdenActiva; lngLat: [number, number] }
   | { tipo: "barrio"; props: FichaDeBarrio; lngLat: [number, number] };
 
@@ -187,6 +189,7 @@ export function MapaAvance({
   cursor,
   nuevos,
   verPendientes,
+  modoFalta,
   foco,
   camaraInicial,
   capas,
@@ -212,6 +215,12 @@ export function MapaAvance({
   /** Los trabajos que entraron en el último refresco: laten en amarillo. */
   nuevos: ReadonlySet<number>;
   verPendientes: boolean;
+  /**
+   * LO QUE FALTA, a pedido: lo hecho se atenúa y los pendientes pasan al
+   * frente con el semáforo (pedidos en cola en rojo; baches en agenda según
+   * su paso). Nunca prendido por defecto: Avance es la vista positiva.
+   */
+  modoFalta: boolean;
   /** A dónde ir (una foto, una línea del feed, una dirección). */
   foco: Foco | null;
   /** La cámara con la que abre (de un link compartido). */
@@ -225,6 +234,7 @@ export function MapaAvance({
 }) {
   const tema = usarTemaMapa();
   const oscuro = tema === "oscuro";
+  const semaforo = SEMAFORO_HEX[tema];
   const mapRef = useRef<MapRef>(null);
   const [cargado, setCargado] = useState(false);
   const [sel, setSel] = useState<Seleccion | null>(null);
@@ -567,6 +577,7 @@ export function MapaAvance({
     if (f.layer.id === "av-hechos-punto" || f.layer.id === "av-hechos-resalte") setSel({ tipo: "hecho", props: props as unknown as HechoProps, lngLat });
     else if (f.layer.id === "av-encurso-punto") setSel({ tipo: "encurso", props: props as unknown as EnCursoProps, lngLat });
     else if (f.layer.id === "av-pend-punto") setSel({ tipo: "pendiente", props: props as unknown as PendienteProps, lngLat });
+    else if (f.layer.id === "av-agenda-punto") setSel({ tipo: "agenda", props: props as unknown as AgendaProps, lngLat });
     else if (f.layer.id === "av-areas-relleno") setSel({ tipo: "orden", props: props as unknown as OrdenActiva, lngLat });
   };
 
@@ -587,7 +598,10 @@ export function MapaAvance({
       maxZoom={19.5}
       canvasContextAttributes={{ preserveDrawingBuffer: true }}
       attributionControl={{ compact: true }}
-      interactiveLayerIds={["av-barrio-relleno", "av-calle", "av-hechos-punto", "av-hechos-resalte", "av-encurso-punto", "av-pend-punto", "av-areas-relleno"]}
+      interactiveLayerIds={[
+        "av-barrio-relleno", "av-calle", "av-hechos-punto", "av-hechos-resalte", "av-encurso-punto", "av-pend-punto", "av-areas-relleno",
+        ...(modoFalta ? ["av-agenda-punto"] : []),
+      ]}
       onLoad={(e) => {
         setCargado(true);
         alListo?.(e.target);
@@ -659,19 +673,53 @@ export function MapaAvance({
         />
       </Source>
 
-      {/* 2. Lo que falta, de fondo: gris, chico, apagable */}
+      {/* 2. Lo que falta, de fondo: gris, chico, apagable. Cuando se PIDE ver
+          lo que falta, pasa al frente: rojo de "sin atención", más grande. */}
       <Source key="av-pend" id="av-pend" type="geojson" data={datos.pendientes}>
         <Layer
           id="av-pend-punto"
           type="circle"
-          layout={{ visibility: verPendientes ? "visible" : "none" }}
-          paint={{
-            "circle-color": oscuro ? "#9aa3b2" : "#6b7280",
-            "circle-opacity": hayResalte ? 0.2 : 0.5,
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.6, 17, 4.5],
-          }}
+          layout={{ visibility: verPendientes || modoFalta ? "visible" : "none" }}
+          paint={
+            modoFalta
+              ? {
+                  "circle-color": semaforo.sin_atencion,
+                  "circle-opacity": 0.9,
+                  "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 2.4, 14, 4.2, 17, 7],
+                  "circle-stroke-color": trazo,
+                  "circle-stroke-width": 0.8,
+                }
+              : {
+                  "circle-color": oscuro ? "#9aa3b2" : "#6b7280",
+                  "circle-opacity": hayResalte ? 0.2 : 0.5,
+                  "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.6, 17, 4.5],
+                }
+          }
         />
       </Source>
+
+      {/* 2b. Los baches en agenda, solo cuando se pide lo que falta: cada uno
+          con el color de su paso en el semáforo. */}
+      {modoFalta && (
+        <Source key="av-agenda" id="av-agenda" type="geojson" data={datos.agenda}>
+          <Layer
+            id="av-agenda-punto"
+            type="circle"
+            paint={{
+              "circle-color": [
+                "match", ["get", "estado"],
+                "programado", semaforo.en_cola,
+                "en_ejecucion", semaforo.en_obra,
+                semaforo.sin_atencion,
+              ],
+              "circle-opacity": 0.95,
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.2, 14, 5.5, 17, 9],
+              "circle-stroke-color": trazo,
+              "circle-stroke-width": 1,
+            }}
+          />
+        </Source>
+      )}
 
       {/* 3. Las cuadras arregladas, del color de la empresa que más hizo en cada una */}
       <Source key="av-calles" id="av-calles" type="geojson" data={calles}>
@@ -683,9 +731,11 @@ export function MapaAvance({
           paint={{
             "line-color": ["get", "color"],
             "line-width": ["interpolate", ["linear"], ["zoom"], 10.5, 1.4, 12.5, 2.6, 14.5, 4.2, 17, 7],
-            "line-opacity": hayResalte
-              ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 0.95, 0.1]
-              : ["interpolate", ["linear"], ["zoom"], 12, 0.92, 16, 0.6],
+            "line-opacity": modoFalta
+              ? 0.12
+              : hayResalte
+                ? ["case", ["==", ["get", "empresa"], resaltada ?? ""], 0.95, 0.1]
+                : ["interpolate", ["linear"], ["zoom"], 12, 0.92, 16, 0.6],
           }}
         />
       </Source>
@@ -700,10 +750,10 @@ export function MapaAvance({
           paint={{
             "circle-color": ["get", "color"],
             "circle-radius": RADIO,
-            "circle-opacity": deCerca(hayResalte ? 0.12 : ["case", ES_RECIENTE, 0.95, 0.78]),
+            "circle-opacity": deCerca(hayResalte || modoFalta ? 0.12 : ["case", ES_RECIENTE, 0.95, 0.78]),
             "circle-stroke-width": ["case", ES_RECIENTE, 2.2, oscuro ? 0.6 : 0.9],
             "circle-stroke-color": ["case", ES_RECIENTE, "#2eb1ff", trazo],
-            "circle-stroke-opacity": deCerca(hayResalte ? 0.1 : ["case", ES_RECIENTE, 1, 0.6]),
+            "circle-stroke-opacity": deCerca(hayResalte || modoFalta ? 0.1 : ["case", ES_RECIENTE, 1, 0.6]),
           }}
         />
         <Layer
@@ -875,6 +925,7 @@ export function MapaAvance({
             )}
             {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} color={color} />}
             {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} />}
+            {sel.tipo === "agenda" && <FichaAgenda p={sel.props} sinLinks={sinLinks} publico={publico} color={semaforo} />}
             {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} color={color} />}
             {sel.tipo === "barrio" && (
               <FichaBarrio
@@ -988,6 +1039,18 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
       </>
     );
   }
+  if (capa === "av-agenda-punto") {
+    const estado = String(props.estado ?? "");
+    return (
+      <>
+        <p className="font-bold text-texto-2">Bache en agenda{direccion ? ` — ${direccion}` : ""}</p>
+        <p className="num text-texto-3">
+          {ETIQUETA_PASO[estado] ?? estado}
+          {typeof props.tipo === "string" ? ` · ${props.tipo.replaceAll("_", " ")}` : ""}
+        </p>
+      </>
+    );
+  }
   return (
     <>
       <p className="font-bold text-texto-2">Pedido que espera</p>
@@ -1091,6 +1154,48 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
       {!sinLinks && (
         <Link href={`/demandas/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver el pedido →
+        </Link>
+      )}
+    </>
+  );
+}
+
+/** Cómo se dice cada paso de la agenda, en el idioma de la pantalla. */
+const ETIQUETA_PASO: Record<string, string> = {
+  detectado: "detectado, sin atención",
+  priorizado: "priorizado, sin orden todavía",
+  programado: "programado, en cola",
+  en_ejecucion: "en obra",
+};
+
+function FichaAgenda({
+  p,
+  sinLinks,
+  publico,
+  color,
+}: {
+  p: AgendaProps;
+  sinLinks: boolean;
+  publico: boolean;
+  color: { sin_atencion: string; en_cola: string; en_obra: string };
+}) {
+  const c = p.estado === "programado" ? color.en_cola : p.estado === "en_ejecucion" ? color.en_obra : color.sin_atencion;
+  return (
+    <>
+      <div className="flex items-start gap-2 pr-5">
+        <span className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: c }} aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-bold">{publico ? "Un bache en agenda" : (p.direccion ?? "Sin dirección")}</p>
+          <p className="text-xs text-texto-2">
+            {publico ? "Bache en agenda" : `Problema #${p.id}`} · {ETIQUETA_PASO[p.estado] ?? p.estado}
+            {p.tipo ? ` · ${p.tipo.replaceAll("_", " ")}` : ""}
+          </p>
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-texto-3">Está en la agenda de Bacheo y todavía no figura reparado.</p>
+      {!sinLinks && (
+        <Link href={`/incidentes?foco=${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
+          Gestionar el problema →
         </Link>
       )}
     </>
