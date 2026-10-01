@@ -841,6 +841,23 @@ const PALETA_COLECTORES = [
 ] as const;
 
 /**
+ * LA RED DE COLECTORES PLUVIALES (30/9): el trazado real al que descargan los
+ * imbornales. Un mismo colector nombrado trae varios tramos "Colector" (el
+ * caño principal) y, a veces, un tramo de otro tipo donde cruza una vía, un
+ * ferrocarril o un ducto — es el mismo trazado, se pinta por tipo de tramo,
+ * no por colector (son 70 nombres distintos, demasiados para una paleta).
+ */
+const COLOR_TIPO_COLECTOR: Record<string, string> = {
+  Colector: "#4f9cf9",
+  Canal: "#3ec9a7",
+  FFCC: "#9aa3b2",
+  Vialidad: "#f2a33c",
+  Parque: "#9ecf4a",
+  Ducto: "#b18cff",
+};
+const ORDEN_TIPO_COLECTOR = ["Colector", "Canal", "FFCC", "Vialidad", "Parque", "Ducto"];
+
+/**
  * LAS OBRAS DEL SIGOV, COMO CAPA PROPIA.
  *
  * "Deberían aparecer más significativas en el mapa dado que son
@@ -1986,6 +2003,9 @@ function MapaInterno({
    */
   const [verCanales, setVerCanales] = useState(false);
   const [canalesCrudo, setCanalesCrudo] = useState<FC | null>(null);
+  /** La red de colectores pluviales de la DOV (30/9): a dónde descargan los imbornales. */
+  const [verColectores, setVerColectores] = useState(false);
+  const [colectoresCrudo, setColectoresCrudo] = useState<FC | null>(null);
   // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
   // recién cuando se prende — son ~600 tramos, no una alfombra.
   const [verRiesgo, setVerRiesgo] = useState(false);
@@ -2028,6 +2048,7 @@ function MapaInterno({
       setVerImbornales(true);
       setVerAnegamiento(true);
       setVerCanales(true);
+      setVerColectores(true);
       setVerSigov((antes) => {
         sigovAntesDelPluvial.current = antes;
         return false;
@@ -2037,6 +2058,7 @@ function MapaInterno({
     setVerImbornales(false);
     setVerAnegamiento(false);
     setVerCanales(false);
+    setVerColectores(false);
     if (sigovAntesDelPluvial.current != null) {
       setVerSigov(sigovAntesDelPluvial.current);
       sigovAntesDelPluvial.current = null;
@@ -2082,6 +2104,35 @@ function MapaInterno({
     }
     return { lista: [...m.entries()].sort((a, b) => b[1].m - a[1].m), bloqueados, km: largo / 1000 };
   }, [canalesGeo]);
+  useEffect(() => {
+    if (!verColectores || colectoresCrudo) return;
+    fetch("/data/colectores.json").then((r) => r.json()).then(setColectoresCrudo).catch(() => {});
+  }, [verColectores, colectoresCrudo]);
+  const colectoresGeo = useMemo<FC | null>(() => {
+    if (!colectoresCrudo) return null;
+    return {
+      type: "FeatureCollection",
+      features: colectoresCrudo.features.map((f) => ({
+        ...f,
+        properties: { ...f.properties, color: COLOR_TIPO_COLECTOR[String(f.properties?.tipo)] ?? pal.inactivo },
+      })),
+    };
+  }, [colectoresCrudo, pal.inactivo]);
+  /** Cuántos tramos y cuántos km hay de cada tipo, para la leyenda del panel. */
+  const tiposColectores = useMemo(() => {
+    const m = new Map<string, { n: number; m: number }>();
+    for (const f of colectoresGeo?.features ?? []) {
+      const p = f.properties ?? {};
+      const t = String(p.tipo ?? "Colector");
+      const x = m.get(t) ?? { n: 0, m: 0 };
+      x.n++;
+      x.m += Number(p.largoM ?? 0);
+      m.set(t, x);
+    }
+    const lista = ORDEN_TIPO_COLECTOR.filter((t) => m.has(t)).map((t) => [t, m.get(t)!] as const);
+    const km = lista.reduce((s, [, x]) => s + x.m, 0) / 1000;
+    return { lista, km };
+  }, [colectoresGeo]);
   useEffect(() => {
     if (!verImbornales || imbornalesGeo) return;
     fetch("/data/imbornales.json")
@@ -3608,6 +3659,7 @@ function MapaInterno({
         f.layer.id !== "anegamiento-punto" &&
         f.layer.id !== "canales-linea" &&
         f.layer.id !== "canales-bloqueado" &&
+        f.layer.id !== "colectores-linea" &&
         f.layer.id !== "riesgo-linea",
     );
     if (!feature) {
@@ -3716,6 +3768,7 @@ function MapaInterno({
           ...(verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 ? ["ing-cluster", "ing-emoji"] : []),
           ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
           ...(verCanales && canalesGeo ? ["canales-linea", "canales-bloqueado"] : []),
+          ...(verColectores && colectoresGeo ? ["colectores-linea"] : []),
           ...(verImbornales && imbornalesGeo ? ["imbornales-punto"] : []),
           ...(verAnegamiento && anegamientoGeo ? ["anegamiento-punto"] : []),
         ]}
@@ -3890,6 +3943,13 @@ function MapaInterno({
               (p.estado ? "estado " + String(p.estado) : "sin calificar") +
                 (p.colector ? " · descarga a " + String(p.colector) : "") +
                 (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
+            ];
+          } else if (f.layer.id === "colectores-linea") {
+            // El colector al que descarga el imbornal: su nombre, el tipo de tramo y el largo.
+            const largo = Number(p.largoM ?? 0);
+            lineas = [
+              String(p.nombre ?? "Colector pluvial"),
+              String(p.tipo ?? "Colector") + (largo > 0 ? " · " + numero(largo) + " m" : ""),
             ];
           } else if (f.layer.id === "canales-linea" || f.layer.id === "canales-bloqueado") {
             // Qué canal es, quién lo mantiene, cuánto mide y si se puede limpiar.
@@ -4068,6 +4128,20 @@ function MapaInterno({
         {verSigov && data?.obrasSigov && (
           <Source id="obras-sigov" type="geojson" data={data.obrasSigov}>
             <Layer {...capas.obrasSigov} />
+          </Source>
+        )}
+        {verColectores && colectoresGeo && (
+          <Source id="colectores" type="geojson" data={colectoresGeo}>
+            <Layer
+              id="colectores-linea"
+              type="line"
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.8, 17, 5.5],
+                "line-opacity": 0.85,
+              }}
+            />
           </Source>
         )}
         {verCanales && canalesGeo && (
@@ -6431,6 +6505,37 @@ function MapaInterno({
                       <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
                       <span className="min-w-0 truncate">Puntos de anegamiento</span>
                     </label>
+                    <label
+                      className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="La red de colectores a la que descargan los imbornales, por tipo de tramo: el caño principal, y dónde cruza una vía, un ferrocarril o un ducto."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verColectores}
+                        onChange={(e) => setVerColectores(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: COLOR_TIPO_COLECTOR.Colector }} />
+                      <span className="min-w-0 flex-1 truncate">Colectores pluviales</span>
+                      {colectoresGeo && (
+                        <span className="num shrink-0 text-[11px] text-texto-3">
+                          {numero(colectoresGeo.features.length)} · {tiposColectores.km.toFixed(1).replace(".", ",")} km
+                        </span>
+                      )}
+                    </label>
+                    {verColectores && colectoresGeo && (
+                      <div className="mb-2 ml-6 space-y-0.5 text-[10px] text-texto-3">
+                        {tiposColectores.lista.map(([t, x]) => (
+                          <p key={t} className="flex items-center gap-1.5">
+                            <span className="inline-block h-1 w-3 shrink-0 rounded" style={{ background: COLOR_TIPO_COLECTOR[t] }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2">{t}</span>
+                            <span className="num shrink-0">
+                              {numero(x.n)} · {numero(Math.round(x.m / 100) / 10)} km
+                            </span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
                     <label
                       className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
                       title="Los canales a cielo abierto de la DOV, del color de quien los mantiene. En rojo punteado, los bloqueados: existen, pero construcciones o usurpaciones impiden entrar a limpiarlos."
