@@ -62,7 +62,7 @@ import {
   semaforoHex,
 } from "@/lib/formato";
 import { GLOSARIO } from "@/lib/glosario";
-import { colorDeEmpresa } from "@/lib/color-empresa";
+import { colorDeEmpresa, colorDeEmpresaEn } from "@/lib/color-empresa";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
 import { cerrarPedidoDesdeMapa, vincularDemanda } from "@/lib/acciones";
@@ -1978,6 +1978,14 @@ function MapaInterno({
   const [imbornalesGeo, setImbornalesGeo] = useState<FC | null>(null);
   const [verAnegamiento, setVerAnegamiento] = useState(false);
   const [anegamientoGeo, setAnegamientoGeo] = useState<FC | null>(null);
+  /**
+   * Los canales a cielo abierto de la DOV (27/9): quién mantiene cada uno y
+   * cuáles están BLOQUEADOS. Bloqueado no es "tapado": es un canal que existe
+   * pero al que no se puede entrar a limpiar, porque hay construcciones que
+   * impiden el acceso o usurpaciones sobre su recorrido (Dirección, 28/9).
+   */
+  const [verCanales, setVerCanales] = useState(false);
+  const [canalesCrudo, setCanalesCrudo] = useState<FC | null>(null);
   // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
   // recién cuando se prende — son ~600 tramos, no una alfombra.
   const [verRiesgo, setVerRiesgo] = useState(false);
@@ -2008,13 +2016,72 @@ function MapaInterno({
   // encienden solos al entrar. En el de bache y asfalto no aparecen nunca.
   // Y la ficha abierta se cierra al cambiar de mapa: un pedido de bacheo
   // colgado sobre la red de desagües no tiene sentido.
+  /* Leo, 27/9: "en el mapa del Sistema Pluvial aparece información que no es
+     relevante, como las obras del SIGOV" y "cuando salís de la vista quedan
+     las capas activas de imbornales". Al entrar se prende lo pluvial y se
+     apaga SIGOV; al salir se apaga lo pluvial y SIGOV vuelve como estaba. */
+  const sigovAntesDelPluvial = useRef<boolean | null>(null);
   useEffect(() => {
     setSeleccion(null);
     setCotejo(null);
-    if (!enPluvial) return;
-    setVerImbornales(true);
-    setVerAnegamiento(true);
+    if (enPluvial) {
+      setVerImbornales(true);
+      setVerAnegamiento(true);
+      setVerCanales(true);
+      setVerSigov((antes) => {
+        sigovAntesDelPluvial.current = antes;
+        return false;
+      });
+      return;
+    }
+    setVerImbornales(false);
+    setVerAnegamiento(false);
+    setVerCanales(false);
+    if (sigovAntesDelPluvial.current != null) {
+      setVerSigov(sigovAntesDelPluvial.current);
+      sigovAntesDelPluvial.current = null;
+    }
   }, [enPluvial]);
+  useEffect(() => {
+    if (!verCanales || canalesCrudo) return;
+    fetch("/data/canales.json").then((r) => r.json()).then(setCanalesCrudo).catch(() => {});
+  }, [verCanales, canalesCrudo]);
+  /* El color de quien mantiene cada canal, el mismo de la empresa en todo
+     CIMBA: se resuelve acá porque MapLibre no puede hashear un nombre. */
+  const canalesGeo = useMemo<FC | null>(() => {
+    if (!canalesCrudo) return null;
+    return {
+      type: "FeatureCollection",
+      features: canalesCrudo.features.map((f) => {
+        const r = f.properties?.responsable;
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            color: typeof r === "string" ? colorDeEmpresaEn(r, tema) : pal.inactivo,
+          },
+        };
+      }),
+    };
+  }, [canalesCrudo, tema, pal.inactivo]);
+  /** Los que mantiene cada uno, para la leyenda del panel. */
+  const responsablesCanales = useMemo(() => {
+    const m = new Map<string, { n: number; m: number; color: string }>();
+    let bloqueados = 0;
+    let largo = 0;
+    for (const f of canalesGeo?.features ?? []) {
+      const p = f.properties ?? {};
+      largo += Number(p.largoM ?? 0);
+      if (p.bloqueado === true) bloqueados++;
+      const r = typeof p.responsable === "string" ? p.responsable : null;
+      if (!r) continue;
+      const x = m.get(r) ?? { n: 0, m: 0, color: String(p.color) };
+      x.n++;
+      x.m += Number(p.largoM ?? 0);
+      m.set(r, x);
+    }
+    return { lista: [...m.entries()].sort((a, b) => b[1].m - a[1].m), bloqueados, km: largo / 1000 };
+  }, [canalesGeo]);
   useEffect(() => {
     if (!verImbornales || imbornalesGeo) return;
     fetch("/data/imbornales.json")
@@ -3539,6 +3606,8 @@ function MapaInterno({
         f.layer.id !== "bacheo-integral-relleno" &&
         f.layer.id !== "imbornales-punto" &&
         f.layer.id !== "anegamiento-punto" &&
+        f.layer.id !== "canales-linea" &&
+        f.layer.id !== "canales-bloqueado" &&
         f.layer.id !== "riesgo-linea",
     );
     if (!feature) {
@@ -3646,6 +3715,7 @@ function MapaInterno({
           ...(verDemandas && destinos.sat === true && satGeo.features.length > 0 ? ["sat-cluster", "sat-emoji"] : []),
           ...(verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 ? ["ing-cluster", "ing-emoji"] : []),
           ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
+          ...(verCanales && canalesGeo ? ["canales-linea", "canales-bloqueado"] : []),
           ...(verImbornales && imbornalesGeo ? ["imbornales-punto"] : []),
           ...(verAnegamiento && anegamientoGeo ? ["anegamiento-punto"] : []),
         ]}
@@ -3821,6 +3891,19 @@ function MapaInterno({
                 (p.colector ? " · descarga a " + String(p.colector) : "") +
                 (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
             ];
+          } else if (f.layer.id === "canales-linea" || f.layer.id === "canales-bloqueado") {
+            // Qué canal es, quién lo mantiene, cuánto mide y si se puede limpiar.
+            const largo = Number(p.largoM ?? 0);
+            lineas = [
+              String(p.nombre ?? "Canal") + (p.bloqueado === true ? " — bloqueado" : ""),
+              (p.bloqueado === true
+                ? "no se puede limpiar: construcciones o usurpaciones impiden el acceso"
+                : p.responsable
+                  ? "mantiene " + String(p.responsable)
+                  : "sin responsable asignado") +
+                (largo > 0 ? " · " + numero(largo) + " m" : "") +
+                (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
+            ];
           } else if (f.layer.id === "anegamiento-punto") {
             lineas = [
               "Anegamiento — " + String(p.direccion ?? ""),
@@ -3985,6 +4068,44 @@ function MapaInterno({
         {verSigov && data?.obrasSigov && (
           <Source id="obras-sigov" type="geojson" data={data.obrasSigov}>
             <Layer {...capas.obrasSigov} />
+          </Source>
+        )}
+        {verCanales && canalesGeo && (
+          <Source id="canales" type="geojson" data={canalesGeo}>
+            {/* Un borde oscuro debajo: el canal se lee como cauce y no como calle. */}
+            <Layer
+              id="canales-borde"
+              type="line"
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": pal.tinta,
+                "line-opacity": 0.55,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 3.2, 14, 6, 17, 10],
+              }}
+            />
+            {/* Uno solo: el color de quien lo mantiene. Los bloqueados, en la capa
+                de al lado, en rojo punteado: es un estado, no una empresa. */}
+            <Layer
+              id="canales-linea"
+              type="line"
+              filter={["!=", ["get", "bloqueado"], true]}
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 14, 3.6, 17, 7],
+              }}
+            />
+            <Layer
+              id="canales-bloqueado"
+              type="line"
+              filter={["==", ["get", "bloqueado"], true]}
+              layout={{ "line-join": "round" }}
+              paint={{
+                "line-color": pal.sinAtencion,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 14, 3.6, 17, 7],
+                "line-dasharray": [1.4, 1.1],
+              }}
+            />
           </Source>
         )}
         {verImbornales && imbornalesGeo && (
@@ -6310,9 +6431,46 @@ function MapaInterno({
                       <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
                       <span className="min-w-0 truncate">Puntos de anegamiento</span>
                     </label>
+                    <label
+                      className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="Los canales a cielo abierto de la DOV, del color de quien los mantiene. En rojo punteado, los bloqueados: existen, pero construcciones o usurpaciones impiden entrar a limpiarlos."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verCanales}
+                        onChange={(e) => setVerCanales(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: pal.enObra }} />
+                      <span className="min-w-0 flex-1 truncate">Canales</span>
+                      {canalesGeo && (
+                        <span className="num shrink-0 text-[11px] text-texto-3">
+                          {numero(canalesGeo.features.length)} · {responsablesCanales.km.toFixed(1).replace(".", ",")} km
+                        </span>
+                      )}
+                    </label>
+                    {verCanales && canalesGeo && (
+                      <div className="mb-2 ml-6 space-y-0.5 text-[10px] text-texto-3">
+                        {responsablesCanales.lista.map(([r, x]) => (
+                          <p key={r} className="flex items-center gap-1.5">
+                            <span className="inline-block h-1 w-3 shrink-0 rounded" style={{ background: x.color }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2">{r}</span>
+                            <span className="num shrink-0">
+                              {numero(x.n)} · {numero(Math.round(x.m / 100) / 10)} km
+                            </span>
+                          </p>
+                        ))}
+                        {responsablesCanales.bloqueados > 0 && (
+                          <p className="flex items-center gap-1.5">
+                            <span className="inline-block h-0 w-3 shrink-0 border-t-2 border-dashed" style={{ borderColor: pal.sinAtencion }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2" title="Existen, pero construcciones o usurpaciones impiden entrar a limpiarlos">Bloqueados · no se pueden limpiar</span>
+                            <span className="num shrink-0">{numero(responsablesCanales.bloqueados)}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <p className="mb-2 text-[10px] leading-snug text-texto-3">
-                      Los canales a cielo abierto y las cuencas todavía no están: hay que pedirle a la DOV
-                      esas capas.
+                      Las cuencas todavía no están: hay que pedirle a la DOV esa capa.
                     </p>
                   </>
                 )}
@@ -6630,7 +6788,9 @@ function MapaInterno({
 
       {/* El pluvial tiene su propia leyenda: el estado del imbornal es una
           escala de deterioro, no los pasos de atención del bacheo. */}
-      {enPluvial && !despejado && (
+      {/* Con el panel de capas abierto, la leyenda se esconde: en pantallas bajas
+          lo tapaba entero, y el panel ya explica cada capa. */}
+      {enPluvial && !despejado && !panelCapas && (
         <div className="panel-vidrio pointer-events-auto absolute bottom-3 left-3 z-10 rounded-xl px-3 py-2 text-[11px]">
           <p className="mb-1 font-bold tracking-wide text-texto-3 uppercase">Estado del imbornal</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -6650,6 +6810,12 @@ function MapaInterno({
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: pal.anegamiento }} />
               anegamiento
             </span>
+            {verCanales && (
+              <span className="flex items-center gap-1.5 text-texto-2">
+                <span className="inline-block h-0 w-3.5 border-t-2 border-dashed" style={{ borderColor: pal.sinAtencion }} />
+                canal bloqueado
+              </span>
+            )}
           </div>
           <p className="mt-1 text-[10px] text-texto-3">
             El halo del punto azul crece con el tirante que relataron los vecinos.
