@@ -886,7 +886,7 @@ export function MapaAvance({
               : { left: etiqueta.x + 14, top: etiqueta.y + 14 }
           }
         >
-          <Etiqueta capa={etiqueta.capa} props={etiqueta.props} color={color} />
+          <Etiqueta capa={etiqueta.capa} props={etiqueta.props} color={color} modoFalta={modoFalta} />
         </div>
       )}
 
@@ -936,9 +936,9 @@ export function MapaAvance({
               />
             )}
             {sel.tipo === "encurso" && <FichaEnCurso p={sel.props} color={color} />}
-            {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} />}
+            {sel.tipo === "pendiente" && <FichaPendiente p={sel.props} sinLinks={sinLinks} publico={publico} modoFalta={modoFalta} />}
             {sel.tipo === "agenda" && <FichaAgenda p={sel.props} sinLinks={sinLinks} publico={publico} color={semaforo} />}
-            {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} color={color} />}
+            {sel.tipo === "orden" && <FichaOrden p={sel.props} sinLinks={sinLinks} color={color} modoFalta={modoFalta} />}
             {sel.tipo === "barrio" && (
               <FichaBarrio
                 p={sel.props}
@@ -961,7 +961,18 @@ export function MapaAvance({
 }
 
 /** La etiqueta flotante, por capa. Una línea de título y una de datos: nada más. */
-function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, unknown>; color: (e: string) => string }) {
+function Etiqueta({
+  capa,
+  props,
+  color,
+  modoFalta,
+}: {
+  capa: string;
+  props: Record<string, unknown>;
+  color: (e: string) => string;
+  /** Lo que habla de deuda (vencida, ¿volvió?, a confirmar) solo se dice cuando se pidió ver lo que falta. */
+  modoFalta: boolean;
+}) {
   const empresa = typeof props.empresa === "string" ? props.empresa : null;
   const direccion = typeof props.direccion === "string" ? props.direccion : null;
   const chip = empresa ? (
@@ -1047,7 +1058,7 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
         </p>
         <p className="num text-texto-3">
           {numero(Number(props.hechos ?? 0))} de {numero(Number(props.items ?? 0))} baches hechos · orden activa
-          {props.vencida === true && typeof props.vence === "string" ? ` · vencida el ${fechaCorta(props.vence)}` : ""}
+          {modoFalta && props.vencida === true && typeof props.vence === "string" ? ` · vencida el ${fechaCorta(props.vence)}` : ""}
         </p>
       </>
     );
@@ -1060,7 +1071,7 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
         <p className="num text-texto-3">
           {ETIQUETA_PASO[estado] ?? estado}
           {typeof props.tipo === "string" ? ` · ${props.tipo.replaceAll("_", " ")}` : ""}
-          {props.grupo === "agua" ? " · no es bacheo: va a la S.A.T. o a Ingeniería" : props.grupo === "otro" ? " · no es bacheo" : ""}
+          {props.grupo === "agua" || props.grupo === "otro" ? " · no es bacheo" : ""}
         </p>
       </>
     );
@@ -1074,7 +1085,7 @@ function Etiqueta({ capa, props, color }: { capa: string; props: Record<string, 
           ? `cargado el ${typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"} por planilla · sin fecha del reclamo`
           : `desde el ${typeof props.fecha === "string" ? fechaCorta(props.fecha) : "—"}`}
       </p>
-      {typeof props.cerca === "string" && (
+      {modoFalta && typeof props.cerca === "string" && (
         <p className="num text-texto-3">{textoCerca(props as unknown as PendienteProps, true)}</p>
       )}
     </>
@@ -1189,7 +1200,7 @@ function textoCerca(p: PendienteProps, corto: boolean): string {
     : `Hay un arreglo ${donde}. El pedido entró por planilla sin la fecha del reclamo, así que no se puede saber si fue antes o después.`;
 }
 
-function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks: boolean; publico: boolean }) {
+function FichaPendiente({ p, sinLinks, publico, modoFalta }: { p: PendienteProps; sinLinks: boolean; publico: boolean; modoFalta: boolean }) {
   return (
     <>
       <p className="pr-5 font-bold">{publico ? "Un pedido que espera" : (p.direccion ?? "Sin dirección")}</p>
@@ -1200,7 +1211,7 @@ function FichaPendiente({ p, sinLinks, publico }: { p: PendienteProps; sinLinks:
           : `espera desde el ${fechaCorta(p.fecha)}`}
       </p>
       <p className="mt-1 text-xs text-texto-3">Todavía no tiene una orden de trabajo. Está en la cola de la Brecha.</p>
-      <p className="num mt-1 text-xs text-texto-2">{textoCerca(p, false)}</p>
+      {modoFalta && <p className="num mt-1 text-xs text-texto-2">{textoCerca(p, false)}</p>}
       {!sinLinks && (
         <Link href={`/demandas/${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
           Ver el pedido →
@@ -1246,8 +1257,8 @@ function FichaAgenda({
         {p.grupo === "calzada"
           ? "Está en la agenda de Bacheo y todavía no figura reparado."
           : p.grupo === "agua"
-            ? "Es una pérdida de agua, un sumidero o una tapa: lo resuelve la S.A.T. o Ingeniería, no una cuadrilla de bacheo. Cuenta en la agenda, no en la proyección."
-            : "No es un problema de calzada: cuenta en la agenda, no en la proyección."}
+            ? "Es un problema de agua (una pérdida, un sumidero o una tapa): no lo resuelve el bacheo. Cuenta en la agenda, no en la proyección."
+            : "No es de bacheo: cuenta en la agenda, no en la proyección."}
       </p>
       {!sinLinks && (
         <Link href={`/incidentes?foco=${p.id}`} className="mt-2 inline-block text-xs font-semibold text-celeste">
@@ -1285,7 +1296,18 @@ function FichaBarrio({ p, recortado, alRecortar }: { p: FichaDeBarrio; recortado
   );
 }
 
-function FichaOrden({ p, sinLinks, color }: { p: OrdenActiva; sinLinks: boolean; color: (e: string) => string }) {
+function FichaOrden({
+  p,
+  sinLinks,
+  color,
+  modoFalta,
+}: {
+  p: OrdenActiva;
+  sinLinks: boolean;
+  color: (e: string) => string;
+  /** El vencimiento se dice solo cuando se pidió ver lo que falta. */
+  modoFalta: boolean;
+}) {
   return (
     <>
       <div className="flex items-start gap-2 pr-5">
@@ -1301,10 +1323,10 @@ function FichaOrden({ p, sinLinks, color }: { p: OrdenActiva; sinLinks: boolean;
         {numero(p.hechos)} de {numero(p.items)} baches hechos
         {p.ultimo ? ` · último reporte ${fechaCorta(p.ultimo)}` : " · sin reportes todavía"}
       </p>
-      {p.vence && (
+      {modoFalta && p.vence && (
         <p className="num mt-1 text-xs font-semibold" style={{ color: p.vencida ? "var(--color-sin-atencion)" : "var(--color-texto-2)" }}>
           {p.vencida ? `Venció el ${fechaCorta(p.vence)}` : `Vence el ${fechaCorta(p.vence)}`}
-          {p.vencida && p.items > p.hechos ? ` · le faltan ${numero(p.items - p.hechos)} baches` : ""}
+          {p.vencida && p.sinHacer > 0 ? ` · ${p.sinHacer === 1 ? "le falta 1 bache" : `le faltan ${numero(p.sinHacer)} baches`}` : ""}
         </p>
       )}
       {!sinLinks && (

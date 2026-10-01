@@ -212,9 +212,9 @@ export function RailAvance({
         </p>
         {modoFalta && c.pendientes.pedidos > 0 && (
           <p className="num mt-1.5 text-[11px] leading-snug text-texto-3">
-            De los pedidos en cola, <b className="text-texto-2">{numero(desglose.ninguno)}</b> no tienen ningún arreglo a menos de 40 m;{" "}
-            <b className="text-texto-2">{numero(desglose.conArreglo)}</b> sí: {numero(desglose.posterior)} posterior al pedido (a confirmar),{" "}
-            {numero(desglose.anterior)} anterior (¿el bache que volvió?), {numero(desglose.sin_fecha)} sin fecha del reclamo para comparar.
+            De los pedidos en cola, <b className="text-texto-2">{numero(desglose.ninguno)}</b> {desglose.ninguno === 1 ? "no tiene" : "no tienen"} ningún arreglo a menos de 40 m;{" "}
+            <b className="text-texto-2">{numero(desglose.conArreglo)}</b> sí: {numero(desglose.posterior)} con el arreglo posterior al pedido (a confirmar),{" "}
+            {numero(desglose.anterior)} con el arreglo anterior (¿el bache que volvió?), {numero(desglose.sin_fecha)} sin fecha del reclamo para comparar.
             Cerca no garantiza que sea el mismo bache.
           </p>
         )}
@@ -624,7 +624,12 @@ function CuandoTerminamos({ p, hoy, recorte }: { p: Proyeccion; hoy: string; rec
       <p className="num mt-2.5 text-[10px] leading-snug text-texto-3">
         Falta = {numero(p.pendientesPedidos)} pedidos en cola + {numero(p.pendientesCalzada)} baches de calzada en agenda.
         {p.pendientesOtros > 0 && (
-          <> Los {numero(p.pendientesOtros)} problemas de agua, tapas y otros de la agenda no entran: no los resuelve el bacheo.</>
+          <>
+            {" "}
+            {p.pendientesOtros === 1
+              ? "El problema de agua, tapa u otro que hay en la agenda no entra: no lo resuelve el bacheo."
+              : `Los ${numero(p.pendientesOtros)} problemas de agua, tapas y otros de la agenda no entran: no los resuelve el bacheo.`}
+          </>
         )}{" "}
         Cuenta como pendiente todo pedido sin confirmar: la fecha se acerca a medida que se reparan o se confirman. Es el
         ritmo de hoy aplicado a lo que falta, no una promesa.
@@ -871,7 +876,7 @@ function OrdenesActivas({
     <section>
       <Rotulo>
         Órdenes activas · {numero(ordenes.length)}
-        {modoFalta && vencidas > 0 ? ` · ${numero(vencidas)} vencidas` : ""} · pasá el cursor para ubicarla
+        {modoFalta && vencidas > 0 ? ` · ${vencidas === 1 ? "1 vencida" : `${numero(vencidas)} vencidas`}` : ""} · pasá el cursor para ubicarla
       </Rotulo>
       <ul className="space-y-1" onMouseLeave={() => alResaltar(null)}>
         {visibles.map((o) => {

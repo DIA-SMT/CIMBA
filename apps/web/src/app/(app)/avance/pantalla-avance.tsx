@@ -622,7 +622,7 @@ export function PantallaAvance({
   /** Las órdenes activas que ya vencieron, y cuántos baches les faltan. */
   const vencidas = useMemo(() => {
     const lista = datos.ordenes.filter((o) => o.vencida);
-    return { n: lista.length, faltan: lista.reduce((s, o) => s + Math.max(0, o.items - o.hechos), 0) };
+    return { n: lista.length, faltan: lista.reduce((s, o) => s + o.sinHacer, 0) };
   }, [datos.ordenes]);
 
   const sinTrabajo = datos.hechos.features.length === 0;
@@ -804,13 +804,13 @@ export function PantallaAvance({
                   )}
                 </p>
                 <p className="num mt-0.5 text-texto-2">
-                  <b className="text-texto">{numero(desgloseFalta.ninguno)}</b> pedidos sin ningún arreglo a menos de 40 m ·{" "}
+                  <b className="text-texto">{numero(desgloseFalta.ninguno)}</b> {desgloseFalta.ninguno === 1 ? "pedido" : "pedidos"} sin ningún arreglo a menos de 40 m ·{" "}
                   <b className="text-texto">{numero(desgloseFalta.conArreglo)}</b> con un arreglo cerca, a confirmar
                 </p>
                 {vencidas.n > 0 && (
                   <p className="num mt-0.5 text-texto-2">
-                    <b className="text-texto">{numero(vencidas.n)}</b> de {numero(datos.ordenes.length)} órdenes activas ya vencieron
-                    {vencidas.faltan > 0 ? `, con ${numero(vencidas.faltan)} baches sin hacer adentro` : ""} · borde rojo en el mapa
+                    <b className="text-texto">{numero(vencidas.n)}</b> de {numero(datos.ordenes.length)} órdenes activas ya {vencidas.n === 1 ? "venció" : "vencieron"}
+                    {vencidas.faltan > 0 ? `, con ${numero(vencidas.faltan)} ${vencidas.faltan === 1 ? "bache" : "baches"} sin hacer adentro` : ""} · borde rojo en el mapa
                   </p>
                 )}
                 <p className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-texto-2">
@@ -818,7 +818,10 @@ export function PantallaAvance({
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ borderColor: "var(--color-sin-atencion)" }} aria-hidden="true" />con un arreglo cerca, a confirmar</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-encurso)" }} aria-hidden="true" />programado, en cola</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--color-amarillo)" }} aria-hidden="true" />en obra</span>
-                  <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ background: "var(--color-celeste)", borderColor: "var(--color-sin-atencion)" }} aria-hidden="true" />agua y tapas (no es bacheo)</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ background: "var(--color-celeste)", borderColor: "var(--color-texto-3)" }} aria-hidden="true" />agua y tapas (no es bacheo; el borde dice su paso)</span>
+                  {desgloseAgenda.otro > 0 && (
+                    <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ background: "var(--color-texto-3)", borderColor: "var(--color-texto-3)" }} aria-hidden="true" />otros (no es bacheo)</span>
+                  )}
                   <span className="text-texto-3">lo hecho queda atenuado</span>
                 </p>
               </div>

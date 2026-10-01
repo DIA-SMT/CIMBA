@@ -152,9 +152,11 @@ export interface OrdenActiva {
   items: number;
   hechos: number;
   ultimo: string | null;
-  /** Fecha de vencimiento (YYYY-MM-DD) y si ya pasó. */
+  /** Fecha de vencimiento (YYYY-MM-DD) y si ya pasó, contra el día de Tucumán. */
   vence: string | null;
   vencida: boolean;
+  /** Baches de la orden todavía pendientes (ni hechos, ni propuestos, ni descartados). */
+  sinHacer: number;
 }
 
 export interface Cifra {

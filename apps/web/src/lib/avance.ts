@@ -475,7 +475,8 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         select i.cerrado_en, round(st_distance(i.geom::geography, d.geom::geography))::int as distancia_m
         from incidentes i
         where i.estado in ('reparado', 'verificado') and st_dwithin(i.geom::geography, d.geom::geography, 40)
-        order by st_distance(i.geom::geography, d.geom::geography)
+        -- Primero los POSTERIORES al pedido (la misma preferencia que Cierres), después el más cercano.
+        order by (i.cerrado_en >= d.creado_en) desc nulls last, st_distance(i.geom::geography, d.geom::geography)
         limit 1
       ) ar on true
       where d.estado in ('recibida', 'en_validacion')
@@ -509,9 +510,11 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              initcap(split_part(e.nombre, ' ', 1)) as empresa,
              count(oi.id)::int as items,
              count(oi.id) filter (where oi.estado = 'hecho')::int as hechos,
+             count(oi.id) filter (where oi.estado = 'pendiente')::int as sin_hacer,
              to_char(max(oi.reportado_en) at time zone ${TZ}, 'YYYY-MM-DD') as ultimo,
-             to_char(ot.vence_en at time zone ${TZ}, 'YYYY-MM-DD') as vence,
-             (ot.vence_en is not null and ot.vence_en < now()) as vencida,
+             -- vence_en es DATE: sin "at time zone", que lo corría un día. Vencida = anterior al día de hoy en Tucumán.
+             to_char(ot.vence_en, 'YYYY-MM-DD') as vence,
+             (ot.vence_en is not null and ot.vence_en < (now() at time zone ${TZ})::date) as vencida,
              case when count(oi.geom) > 0 then
                st_asgeojson(st_simplify(
                  st_buffer(st_concavehull(st_collect(oi.geom), 0.5, false)::geography, 50)::geometry,
@@ -691,7 +694,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
      * pedidos del Concejo en una semana de agosto— no son el caudal normal
      * y un promedio las tomaría como tal.
      */
-    const CALZADA = sql`i.tipo::text in ('bache', 'pavimento_deteriorado', 'hundimiento', 'fisura')`;
+    const CALZADA = sql`i.tipo::text in ('bache', 'pavimento_deteriorado', 'hundimiento', 'fisura', 'bocacalle_rota', 'cuneta_rota', 'cuadra_completa')`;
     const qProy = db.execute(sql`
       with semanas as (
         select generate_series(
@@ -987,6 +990,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
     ultimo: texto(o.ultimo),
     vence: texto(o.vence),
     vencida: Boolean(o.vencida),
+    sinHacer: Number(o.sin_hacer ?? 0),
   }));
 
   const feed: EventoAvance[] = [
@@ -1183,9 +1187,23 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
 
 /** A qué mundo pertenece un problema: calzada (bacheo), agua (S.A.T. / Ingeniería) u otro. */
 function grupoDe(tipo: string | null): AgendaProps["grupo"] {
-  if (tipo === "bache" || tipo === "pavimento_deteriorado" || tipo === "hundimiento" || tipo === "fisura") return "calzada";
-  if (tipo === "perdida_agua" || tipo === "sumidero" || tipo === "tapa_registro") return "agua";
-  return "otro";
+  switch (tipo) {
+    case "bache":
+    case "pavimento_deteriorado":
+    case "hundimiento":
+    case "fisura":
+    case "bocacalle_rota":
+    case "cuneta_rota":
+    case "cuadra_completa":
+      return "calzada";
+    case "perdida_agua":
+    case "perdida_cloacal":
+    case "sumidero":
+    case "tapa_registro":
+      return "agua";
+    default:
+      return "otro";
+  }
 }
 
 /** YYYY-MM-DD más N días, sin pasar por el huso horario del servidor. */
