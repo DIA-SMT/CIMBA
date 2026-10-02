@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { recalcularRankingIpi } from "@/lib/acciones-ipi";
 import { numero } from "@/lib/formato";
-import { mensajeDeError } from "@/lib/errores";
+import { esFalloDeRed, mensajeDeError } from "@/lib/errores";
 
 /**
  * Vuelve a medir el estado de cada corredor contra la operación de los últimos
@@ -26,6 +26,25 @@ export function BotonRecalcularIpi() {
         setAviso(`Listo: ${numero(r.corredores)} corredores recalculados`);
         router.refresh();
       } catch (e) {
+        /**
+         * Un corte de red se reintenta UNA vez y en silencio. El recálculo
+         * tarda 0,4 s del lado del servidor y no falla; lo que sí pasa es que
+         * la conexión se caiga en el medio (wifi que salta a datos, DNS que no
+         * resuelve), y entonces la pantalla decía "No se pudo recalcular" y
+         * parecía que la función estaba rota. Es idempotente: reintentar no
+         * puede dejar el índice a medias.
+         */
+        if (esFalloDeRed(e)) {
+          try {
+            const r = await recalcularRankingIpi();
+            setAviso(`Listo: ${numero(r.corredores)} corredores recalculados`);
+            router.refresh();
+            return;
+          } catch (e2) {
+            setError(mensajeDeError(e2, "No se pudo recalcular"));
+            return;
+          }
+        }
         setError(mensajeDeError(e, "No se pudo recalcular"));
       }
     });

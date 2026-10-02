@@ -2,26 +2,41 @@ import "server-only";
 import { getDb, sql } from "@cimba/db";
 import type { RolUsuario } from "@cimba/domain";
 import { ROLES_USUARIO } from "@cimba/domain";
-import { notificarRoles, type CargaPush } from "./push";
+import { notificarEmpresa, notificarRoles, type CargaPush } from "./push";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
  * El despachador de avisos de CIMBA. Un evento (orden emitida, orden vencida,
  * bache propuesto, aviso general) se manda a los destinatarios que la
- * Dirección de Bacheo configuró en /ordenes/avisos, por dos canales:
- *  - push  (VAPID, a todos los perfiles del rol destino con push suscripto)
- *  - email (Resend, por API REST — sin SDK: es un POST con Bearer)
+ * Dirección de Bacheo configuró en /ordenes/avisos, por tres canales:
+ *  - push     (VAPID, a todos los perfiles del rol destino con push suscripto)
+ *  - email    (Resend, por API REST — sin SDK: es un POST con Bearer)
+ *  - telegram (API de Telegram, igual: un POST; el destino es el id del chat)
  *
- * Sin RESEND_API_KEY los emails se saltean y se informa: el push sigue
- * andando igual. Nada de lo que pase acá puede romper la acción que disparó
- * el evento (emitir una orden vale más que su aviso).
+ * Sin RESEND_API_KEY los emails se saltean y se informa; sin
+ * CIMBA_TELEGRAM_BOT_TOKEN pasa lo mismo con Telegram. Los demás canales
+ * siguen andando igual. Nada de lo que pase acá puede romper la acción que
+ * disparó el evento (emitir una orden vale más que su aviso).
  */
 
-export type EventoAviso = "orden_emitida" | "orden_vencida" | "item_propuesto" | "aviso_general" | "cierres_pendientes" | "pulso_diario";
+export type EventoAviso =
+  | "orden_emitida"
+  | "orden_vencida"
+  | "item_propuesto"
+  | "aviso_general"
+  | "cierres_pendientes"
+  | "pulso_diario"
+  /* Los que le hablan a la EMPRESA de la orden: lo que ella necesita saber
+     para trabajar, en su teléfono. */
+  | "item_validado"
+  | "item_rechazado"
+  | "orden_reasignada"
+  | "orden_cerrada";
 
 export interface ResultadoAviso {
   push: number;
   emails: number;
+  telegram: number;
   saltados: string[];
 }
 
@@ -49,9 +64,88 @@ export async function enviarEmail(datos: {
   }
 }
 
+/**
+ * Telegram contesta con un código y una descripción en inglés. Los cuatro
+ * errores que se dan en la práctica tienen una causa concreta y un arreglo de
+ * una línea, así que se traducen: quien lee el tablero no tiene por qué saber
+ * qué significa un 404 de una API. El código se deja al final, para nosotros.
+ *
+ * Los dos primeros cuestan una tarde de diagnóstico si no están escritos: un
+ * 404 es el token mal copiado (el de BotFather viene con los dígitos y los dos
+ * puntos adelante), y un 403 es que el destinatario nunca le escribió al bot
+ * — Telegram no deja que un bot hable primero.
+ */
+function explicarTelegram(estado: number, cuerpo: string): string {
+  const descripcion = /"description"\s*:\s*"([^"]*)"/.exec(cuerpo)?.[1] ?? "";
+  if (estado === 404) return "el token del bot no es válido o está incompleto";
+  if (estado === 401) return "Telegram rechazó el token del bot";
+  if (estado === 403) return "esa persona todavía no le escribió al bot: tiene que abrirlo y apretar Start";
+  if (descripcion.includes("chat not found")) return "ese id de chat no existe";
+  if (estado === 429) return "demasiados mensajes seguidos: Telegram está frenando los envíos";
+  return descripcion || "error desconocido";
+}
+
+/**
+ * Un mensaje a un chat de Telegram. Mismo criterio que enviarEmail: un POST
+ * con fetch, sin SDK, y nunca lanza — devuelve el motivo para que el
+ * despachador lo anote en `saltados`.
+ *
+ * Va en texto plano y sin parse_mode a propósito: los títulos y cuerpos de
+ * los avisos traen direcciones con guiones, paréntesis y puntos, y en
+ * MarkdownV2 un solo carácter sin escapar hace fallar el envío entero con un
+ * 400. El texto se recorta a 4096, que es el máximo de un mensaje: un aviso
+ * es corto por definición, y si alguna vez se pasa, preferimos que llegue
+ * cortado antes que que no llegue.
+ */
+export interface BotonTelegram {
+  texto: string;
+  /** callback_data. Telegram corta en 64 BYTES y descarta el botón sin avisar. */
+  dato: string;
+}
+
+export async function enviarTelegram(datos: {
+  chatId: string;
+  texto: string;
+  url?: string;
+  botones?: BotonTelegram[];
+}): Promise<{ ok: boolean; motivo?: string }> {
+  const token = process.env.CIMBA_TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, motivo: "falta CIMBA_TELEGRAM_BOT_TOKEN" };
+  const cuerpo = datos.url ? `${datos.texto}\n\n${datos.url}` : datos.texto;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: datos.chatId,
+        text: cuerpo.slice(0, 4096),
+        link_preview_options: { is_disabled: true },
+        /* Un botón por fila: en un teléfono, dos botones juntos con el pulgar
+           en movimiento es cómo se toca el que no era. Y este mensaje decide
+           sobre trabajo de una cuadrilla. */
+        ...(datos.botones?.length
+          ? { reply_markup: { inline_keyboard: datos.botones.map((b) => [{ text: b.texto, callback_data: b.dato }]) } }
+          : {}),
+      }),
+    });
+    if (!r.ok) {
+      const detalle = await r.text().catch(() => "");
+      return { ok: false, motivo: `${explicarTelegram(r.status, detalle)} (Telegram ${r.status})` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, motivo: mensajeDeError(e, "error de red") };
+  }
+}
+
+/** La base pública, para armar enlaces absolutos desde las rutas de `carga.url`. */
+function basePublica(): string {
+  return process.env.CIMBA_URL_PUBLICA ?? "https://cimba-smt.vercel.app";
+}
+
 /** Plantilla mínima y sobria: el contenido manda, no el diseño. */
 function htmlAviso(titulo: string, cuerpo: string, url?: string): string {
-  const base = process.env.CIMBA_URL_PUBLICA ?? "https://cimba-smt.vercel.app";
+  const base = basePublica();
   const enlace = url ? `${base}${url}` : base;
   return `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:16px">
     <p style="font-size:12px;letter-spacing:2px;color:#0066FF;margin:0 0 8px">CIMBA · BACHEO SMT</p>
@@ -72,9 +166,25 @@ const escapar = (s: string) =>
  */
 export async function notificarEvento(
   evento: EventoAviso,
-  carga: CargaPush & { cuerpoEmail?: string },
+  carga: CargaPush & {
+    cuerpoEmail?: string;
+    /**
+     * Botones para el canal de Telegram, y solo para ese: el push y el email no
+     * tienen dónde ponerlos. Es lo que permite que el aviso y la decisión sean
+     * el mismo mensaje — quien lo recibe resuelve con el pulgar, sin volver a
+     * la oficina.
+     */
+    accionesTelegram?: BotonTelegram[];
+  },
+  /**
+   * La empresa a la que le concierne el evento. Con esto, un destinatario
+   * configurado como `empresa` en /ordenes/avisos se resuelve a LOS TELÉFONOS
+   * DE ESA CONTRATISTA y no al rol entero. La URL que le llega a la empresa es
+   * la de su portal, que es la única que puede abrir.
+   */
+  opciones: { empresaId?: number; urlEmpresa?: string } = {},
 ): Promise<ResultadoAviso> {
-  const resultado: ResultadoAviso = { push: 0, emails: 0, saltados: [] };
+  const resultado: ResultadoAviso = { push: 0, emails: 0, telegram: 0, saltados: [] };
   try {
     const destinos = (await getDb().execute(sql`
       select canal, destino from avisos_destinatarios
@@ -84,7 +194,9 @@ export async function notificarEvento(
     const rolesPush = destinos
       .filter((d) => d.canal === "push")
       .map((d) => d.destino)
-      .filter((d): d is RolUsuario => (ROLES_USUARIO as readonly string[]).includes(d));
+      // "empresa" como rol NO entra acá: sería avisarle a las trece
+      // contratistas de la orden de una. Se resuelve aparte, abajo.
+      .filter((d): d is RolUsuario => d !== "empresa" && (ROLES_USUARIO as readonly string[]).includes(d));
     if (rolesPush.length > 0) {
       // Se informa lo ENTREGADO, no lo configurado: sin VAPID o sin nadie
       // suscripto, el número honesto es 0.
@@ -92,6 +204,20 @@ export async function notificarEvento(
       resultado.push = envio.enviadas;
       if (envio.enviadas === 0) {
         resultado.saltados.push(`push a ${rolesPush.join(", ")}: nadie suscripto (o VAPID sin configurar)`);
+      }
+    }
+
+    const quiereEmpresa = destinos.some((d) => d.canal === "push" && d.destino === "empresa");
+    if (quiereEmpresa && opciones.empresaId != null) {
+      const envio = await notificarEmpresa(opciones.empresaId, {
+        titulo: carga.titulo,
+        cuerpo: carga.cuerpo,
+        url: opciones.urlEmpresa ?? "/empresa",
+        tag: carga.tag,
+      });
+      resultado.push += envio.enviadas;
+      if (envio.enviadas === 0) {
+        resultado.saltados.push(`push a la empresa #${opciones.empresaId}: ningún teléfono suscripto`);
       }
     }
 
@@ -103,6 +229,22 @@ export async function notificarEvento(
       });
       if (r.ok) resultado.emails++;
       else resultado.saltados.push(`${d.destino}: ${r.motivo}`);
+    }
+
+    /* Telegram va con el cuerpo corto, no con el de email: el de email lleva
+       HTML y está pensado para leerse sentado. Acá el aviso tiene que
+       entenderse de un vistazo, en la calle. */
+    for (const d of destinos.filter((x) => x.canal === "telegram")) {
+      const r = await enviarTelegram({
+        chatId: d.destino,
+        texto: `${carga.titulo}\n\n${carga.cuerpo}`,
+        // carga.url es una ruta (/ordenes/123): se completa con la base, igual
+        // que hace htmlAviso, o el enlace llega inservible.
+        url: carga.url ? `${basePublica()}${carga.url}` : undefined,
+        ...(carga.accionesTelegram?.length ? { botones: carga.accionesTelegram } : {}),
+      });
+      if (r.ok) resultado.telegram++;
+      else resultado.saltados.push(`telegram ${d.destino}: ${r.motivo}`);
     }
   } catch (e) {
     // El aviso nunca rompe a quien lo dispara: se anota y sigue.

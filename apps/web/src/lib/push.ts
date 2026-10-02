@@ -78,3 +78,26 @@ export async function notificarRoles(roles: RolUsuario[], carga: CargaPush) {
   `)) as unknown as FilaSuscripcion[];
   return enviarA(filas, carga);
 }
+
+/**
+ * NOTIFICAR A UNA EMPRESA CONTRATISTA, a todos sus teléfonos.
+ *
+ * Hasta acá los avisos iban por ROL, y el rol "empresa" son trece
+ * contratistas: mandarle "te emitieron la OT-0026" al rol entero era avisarle
+ * a doce empresas de una orden ajena, así que nunca se hizo — y las empresas
+ * no recibían nada. Cero suscripciones de empresas en toda la base.
+ *
+ * Cada usuario de contratista lleva `empresa_id` en su perfil (los @cimba.com
+ * creados para cada una); acá se busca por eso y no por rol. Si la empresa
+ * tiene dos o tres personas con la app en el teléfono, les llega a todas.
+ */
+export async function notificarEmpresa(empresaId: number, carga: CargaPush) {
+  const db = getDb();
+  const filas = (await db.execute(sql`
+    select ps.id, ps.endpoint, ps.claves
+    from push_suscripciones ps
+    join perfiles p on p.id = ps.perfil_id
+    where p.empresa_id = ${empresaId} and p.activo
+  `)) as unknown as FilaSuscripcion[];
+  return enviarA(filas, carga);
+}

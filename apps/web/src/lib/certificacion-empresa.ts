@@ -31,13 +31,13 @@ export interface CertificacionEmpresa {
   modalidad: "total" | "muestreo";
   motivo: string;
   /** Trabajo cargado que todavía no entró en ningún acta firmada. */
-  sinCertificar: { items: number; m2: number };
+  sinCertificar: { items: number; m2: number; tn: number };
   /** Lo que ya pasó por acta: es lo único que se certifica a los fines del pago. */
-  certificado: { items: number; m2: number };
+  certificado: { items: number; m2: number; tn: number };
   /** Cargado en los últimos 30 días, para tener una referencia de ritmo. */
-  ultimos30: { items: number; m2: number };
+  ultimos30: { items: number; m2: number; tn: number };
   /** Trabajo cargado sin orden previa: entra igual, pero se mira aparte. */
-  sinOrden: { items: number; m2: number };
+  sinOrden: { items: number; m2: number; tn: number };
   ultimaActa: string | null;
   ultimaDesviacion: number | null;
   actas: Array<{
@@ -66,12 +66,22 @@ export async function certificacionDeEmpresa(
         coalesce((select sum(oi.superficie_m2) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as sin_m2,
+        /* TONELADAS: la unidad con la que se certifica el pago. Sale del
+           volumen (columna generada) por la densidad de la mezcla, 2,4 t/m³.
+           Los m² se muestran igual porque son lo tangible, pero el acta se
+           firma por tonelada y hasta ahora había que sacarla a mano. */
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as sin_tn,
         (select count(*) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is not null)::int as cert_items,
         coalesce((select sum(oi.superficie_m2) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is not null), 0) as cert_m2,
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is not null), 0) as cert_tn,
         (select count(*) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho'
@@ -80,6 +90,10 @@ export async function certificacionDeEmpresa(
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho'
             and oi.reportado_en >= now() - interval '30 days'), 0) as m30_m2,
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and oi.estado = 'hecho'
+            and oi.reportado_en >= now() - interval '30 days'), 0) as m30_tn,
         /* La carga libre no cuelga de ninguna orden: se cuenta por el nombre
            de la empresa en metadata, que es la misma clave con la que entran
            las cargas del Apps Script y las de SIGOV. */
@@ -89,6 +103,9 @@ export async function certificacionDeEmpresa(
         coalesce((select sum(v.superficie_m2) from intervenciones v
           where v.estado = 'finalizada' and v.metadata->>'sin_orden' = 'true'
             and v.metadata->>'contratista' = e.nombre), 0) as libre_m2,
+        coalesce((select sum(v.volumen_m3) * 2.4 from intervenciones v
+          where v.estado = 'finalizada' and v.metadata->>'sin_orden' = 'true'
+            and v.metadata->>'contratista' = e.nombre), 0) as libre_tn,
         (select max(a.fecha) from actas_medicion a
           where a.empresa_id = e.id and a.estado = 'firmada') as ultima_acta,
         (select min(a.fecha) from actas_medicion a
@@ -133,10 +150,10 @@ export async function certificacionDeEmpresa(
       empresa: String(f.nombre),
       modalidad,
       motivo,
-      sinCertificar: { items: Number(f.sin_items ?? 0), m2: Number(f.sin_m2 ?? 0) },
-      certificado: { items: Number(f.cert_items ?? 0), m2: Number(f.cert_m2 ?? 0) },
-      ultimos30: { items: Number(f.m30_items ?? 0), m2: Number(f.m30_m2 ?? 0) },
-      sinOrden: { items: Number(f.libre_items ?? 0), m2: Number(f.libre_m2 ?? 0) },
+      sinCertificar: { items: Number(f.sin_items ?? 0), m2: Number(f.sin_m2 ?? 0), tn: Number(f.sin_tn ?? 0) },
+      certificado: { items: Number(f.cert_items ?? 0), m2: Number(f.cert_m2 ?? 0), tn: Number(f.cert_tn ?? 0) },
+      ultimos30: { items: Number(f.m30_items ?? 0), m2: Number(f.m30_m2 ?? 0), tn: Number(f.m30_tn ?? 0) },
+      sinOrden: { items: Number(f.libre_items ?? 0), m2: Number(f.libre_m2 ?? 0), tn: Number(f.libre_tn ?? 0) },
       ultimaActa: f.ultima_acta != null ? String(f.ultima_acta) : null,
       ultimaDesviacion: desviacion,
       actas: actas.map((a) => ({

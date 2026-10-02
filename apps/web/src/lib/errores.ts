@@ -55,6 +55,7 @@ export function mensajeDeError(e: unknown, porDefecto: string): string {
   if (typeof digest === "string" && digest.startsWith(MARCA)) {
     return digest.slice(MARCA.length);
   }
+  if (esFalloDeRed(e)) return MENSAJE_RED;
   if (e instanceof Error && e.message) {
     // En producción esto es el párrafo de React, que no sirve para nadie.
     if (e.message.startsWith("An error occurred in the Server Components render")) {
@@ -63,4 +64,39 @@ export function mensajeDeError(e: unknown, porDefecto: string): string {
     return e.message;
   }
   return porDefecto;
+}
+
+export const MENSAJE_RED =
+  "Se cortó la conexión antes de que llegara la respuesta. No se hizo nada: probá de nuevo.";
+
+/**
+ * SE CORTÓ LA RED, NO SE ROMPIÓ EL SISTEMA.
+ *
+ * Cuando una server action se va por la red —wifi que salta a datos móviles,
+ * DNS que no resuelve, el túnel de la oficina— el navegador tira un
+ * `TypeError: Failed to fetch` y Next lo propaga como si fuera el error de la
+ * acción. La pantalla mostraba entonces "No se pudo recalcular" / "Error", y
+ * quien lo leía concluía razonablemente que la función estaba rota: pasó
+ * exactamente eso con el recálculo del IPI, que del lado del servidor tarda
+ * 0,4 segundos y no falla nunca.
+ *
+ * Distinguirlo importa por una razón práctica: ante un error del sistema no
+ * hay nada que hacer, pero ante un corte de red la acción se reintenta y
+ * anda. Y decir "no se hizo nada" también importa — sin eso, nadie se anima a
+ * reintentar una acción que escribe.
+ */
+export function esFalloDeRed(e: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  if (!(e instanceof Error)) return false;
+  const m = `${e.name}: ${e.message}`.toLowerCase();
+  return (
+    m.includes("failed to fetch") ||
+    m.includes("networkerror") ||
+    m.includes("network request failed") ||
+    m.includes("load failed") || // Safari
+    m.includes("err_name_not_resolved") ||
+    m.includes("err_network_changed") ||
+    m.includes("err_internet_disconnected") ||
+    m.includes("err_connection")
+  );
 }

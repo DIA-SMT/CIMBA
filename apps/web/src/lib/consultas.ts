@@ -1,6 +1,6 @@
 import { conRls, getDb, sql } from "@cimba/db";
 import type { EstadoIncidente, FuenteDemanda, TipoProblema } from "@cimba/domain";
-import { ESTADOS_DEMANDA, FUENTES_DEMANDA, TIPOS_INTERVENCION } from "@cimba/domain";
+import { ESTADOS_DEMANDA, FUENTES_DEMANDA, TIPOS_INTERVENCION, grupoSigov, materialSigov } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 
@@ -225,6 +225,12 @@ export async function sugerenciasParaDemanda(
            lateral sugerir_incidente(d.geom, coalesce(d.tipo, 'bache'::tipo_problema), d.creado_en) s
       join incidentes i on i.id = s.incidente_id
       where d.id = ${demandaId} and d.geom is not null
+        /* LO QUE ALGUIEN YA DIJO QUE NO ERA, NO SE VUELVE A SUGERIR.
+           La sugerencia es por cercanía y tipo: a 40 metros conviven el bache
+           de la esquina y el de media cuadra, y son dos. Sin poder decir "no
+           es el mismo", el operador tenía que ignorar la fila cada vez que
+           entraba, y la próxima persona volvía a dudar lo mismo. */
+        and not (coalesce(d.metadata->'no_es_el_mismo', '[]'::jsonb) @> to_jsonb(s.incidente_id))
       order by s.score desc
       limit 8
     `)) as unknown as Array<Record<string, unknown>>;
@@ -394,7 +400,16 @@ export interface IntervencionResumen {
 
 export async function listarIntervenciones(
   sesion: Sesion,
-  filtros: { estado?: string; ejecutor?: string; tipoIntervencion?: string; q?: string; limite?: number; pagina?: number },
+  filtros: {
+    estado?: string;
+    ejecutor?: string;
+    tipoIntervencion?: string;
+    q?: string;
+    /** Solo los trabajos sin superficie cargada: los que Avance cuenta como "sin medida". */
+    sinMedida?: boolean;
+    limite?: number;
+    pagina?: number;
+  },
 ): Promise<{ filas: IntervencionResumen[]; total: number }> {
   const limite = Math.min(filtros.limite ?? 50, 10000);
   const offset = ((filtros.pagina ?? 1) - 1) * limite;
@@ -404,11 +419,13 @@ export async function listarIntervenciones(
   // URL no puede reventar el cast (22P02) — se ignora, como el resto de filtros.
   const tipoIntervencion = filtroEnum(filtros.tipoIntervencion, TIPOS_INTERVENCION);
   const q = filtro(filtros.q);
+  const sinMedida = filtros.sinMedida === true;
   return conRls(claims(sesion), async (tx) => {
     const cond = sql`
       where (${estado}::text is null or iv.estado = (${estado})::estado_intervencion)
         and (${tipoIntervencion}::text is null or iv.tipo_intervencion = (${tipoIntervencion})::tipo_intervencion)
         and (${q}::text is null or i.direccion ilike '%' || ${q ?? ""} || '%')
+        and (${sinMedida}::boolean is not true or coalesce(iv.superficie_m2, 0) = 0)
         and (${ejecutor}::text is null
              or coalesce((select cu.nombre from cuadrillas cu where cu.id = iv.cuadrilla_id),
                          iv.metadata->>'contratista',
@@ -1160,19 +1177,20 @@ export async function geodata(sesion: Sesion) {
               * "¿cómo quedó?". Si todavía no hay, se muestra el antes, que al
               * menos dice qué se encontró.
               */
-             (select f.url_externa from fotografias f
-               join intervenciones iv on iv.id = f.intervencion_id
-               where iv.incidente_id = i.id and f.url_externa is not null
-               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
-                        f.tomada_en desc nulls last
-               limit 1) as foto,
-             (select f.momento::text from fotografias f
-               join intervenciones iv on iv.id = f.intervencion_id
-               where iv.incidente_id = i.id and f.url_externa is not null
-               order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
-                        f.tomada_en desc nulls last
-               limit 1) as foto_momento
+             fi.url as foto, fi.momento as foto_momento
       from incidentes i
+      /* Una sola búsqueda de la foto por punto (antes eran dos subconsultas
+         idénticas, una para la URL y otra para el momento) y con el índice de
+         la 0036: el mapa tardaba 6 a 8 segundos en abrir por esto. */
+      left join lateral (
+        select f.url_externa as url, f.momento::text as momento
+        from intervenciones iv
+        join fotografias f on f.intervencion_id = iv.id
+        where iv.incidente_id = i.id and f.url_externa is not null
+        order by case f.momento when 'despues' then 0 when 'antes' then 1 else 2 end,
+                 f.tomada_en desc nulls last
+        limit 1
+      ) fi on true
     `)) as unknown as Array<Record<string, unknown>>;
 
     const demandas = (await tx.execute(sql`
@@ -1199,15 +1217,9 @@ export async function geodata(sesion: Sesion) {
               * distancia y si fue antes o después: el rótulo lo explica en vez
               * de desmentir al color.
               */
-             coalesce(
-               (select f.url_externa from fotografias f
-                 where f.demanda_id = d.id and f.url_externa is not null limit 1),
-               rep.url
-             ) as foto,
+             coalesce(fr.url, rep.url) as foto,
              case
-               when exists (select 1 from fotografias f
-                            where f.demanda_id = d.id and f.url_externa is not null)
-                 then 'reclamo'
+               when fr.url is not null then 'reclamo'
                when rep.url is null then null
                when rep.posterior then 'reparacion_posterior'
                else 'reparacion_anterior'
@@ -1238,6 +1250,13 @@ export async function geodata(sesion: Sesion) {
                else 'sin_atencion'
              end as brecha
       from demandas d
+      /* La foto que mandó quien reclamó, buscada una sola vez (antes, una vez
+         para la URL y otra para saber si existía). */
+      left join lateral (
+        select f.url_externa as url from fotografias f
+        where f.demanda_id = d.id and f.url_externa is not null
+        limit 1
+      ) fr on true
       /* La reparación fotografiada más cercana, con su distancia y su fecha:
          se elige la MÁS CERCANA (no una cualquiera) para que el rótulo pueda
          decir "a X metros" sin mentir. */
@@ -1299,6 +1318,41 @@ export async function geodata(sesion: Sesion) {
             ? "inactivo"
             : "abierto";
 
+    /**
+     * LAS OBRAS DEL SIGOV COMO CAPA PROPIA.
+     *
+     * "Las obras del SIGOV deberían aparecer más significativas en el mapa
+     * dado que son intervenciones importantes y definitivas. Podría ser una
+     * capa separada o un grupo separado donde esté dividido por hormigón y
+     * asfalto" — Dirección de Bacheo, 12/09.
+     *
+     * Hasta ahora eran un anillo celeste sobre el punto del incidente: se
+     * perdían entre 2.900 puntos de bacheo, cuando son la intervención que de
+     * verdad cambia una calle. Van con su propia geometría (geom_ejecucion,
+     * que las 472 tienen), su estado agrupado y su material.
+     */
+    const obrasSigov = (await tx.execute(sql`
+      select iv.id,
+             st_x(st_centroid(iv.geom_ejecucion)) as lon,
+             st_y(st_centroid(iv.geom_ejecucion)) as lat,
+             iv.superficie_m2, iv.tipo_intervencion::text as tipo_intervencion,
+             iv.metadata->>'estado_sigov' as estado_sigov,
+             iv.metadata->>'licitacion' as licitacion,
+             iv.metadata->>'contratista' as contratista,
+             iv.metadata->>'obra_id' as obra_id,
+             i.direccion
+      from intervenciones iv
+      left join incidentes i on i.id = iv.incidente_id
+      where iv.metadata ? 'estado_sigov'
+        and iv.geom_ejecucion is not null
+        /* Las anuladas no se dibujan: son obras que SIGOV dio de baja y
+           pintarlas de amarillo diría que están planificadas. El flag viene
+           como booleano JSON (true), no como '1' — comparar contra '1' no
+           atrapaba ninguna de las 16 y entraban todas al mapa. */
+        and iv.estado <> 'anulada'
+        and coalesce((iv.metadata->>'cancelada')::boolean, false) = false
+    `)) as unknown as Array<Record<string, unknown>>;
+
     return {
       porFuente: porFuente.map((f) => ({
         fuente: String(f.fuente),
@@ -1306,6 +1360,24 @@ export async function geodata(sesion: Sesion) {
         abiertas: Number(f.abiertas ?? 0),
         sinUbicacion: Number(f.sin_ubicacion ?? 0),
       })),
+      /** Las obras contratadas, en su propia capa: tres estados y dos materiales. */
+      obrasSigov: coleccion(
+        obrasSigov.map((f) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [Number(f.lon), Number(f.lat)] },
+          properties: {
+            id: Number(f.id),
+            obra: (f.obra_id as string) ?? null,
+            grupo: grupoSigov((f.estado_sigov as string) ?? null),
+            estadoSigov: (f.estado_sigov as string) ?? null,
+            material: materialSigov((f.tipo_intervencion as string) ?? null),
+            m2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
+            licitacion: (f.licitacion as string) ?? null,
+            contratista: (f.contratista as string) ?? null,
+            direccion: (f.direccion as string) ?? null,
+          },
+        })),
+      ),
       incidentes: coleccion(
         incidentes.map((f) => ({
           type: "Feature",

@@ -27,7 +27,13 @@ export default async function PaginaClave() {
         titulo="Tu clave"
         sub="Si entraste con una clave temporal, cambiala ahora: es tuya y no se la digas a nadie."
       />
-      <FormularioClave nombre={sesion.nombre} />
+      {/* La empresa no puede abrir /mapa: el middleware la rebota. Después de
+          cambiar la clave tiene que caer en su portal, no en una puerta
+          cerrada. */}
+      <FormularioClave
+        nombre={sesion.nombre}
+        destino={sesion.rol_cimba === "empresa" || sesion.rol_cimba === "cuadrilla" ? "/empresa" : "/mapa"}
+      />
     </div>
   );
 }

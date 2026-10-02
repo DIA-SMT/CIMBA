@@ -1,9 +1,11 @@
 import { conRls, sql, getDb } from "@cimba/db";
+import { entraEnOrden, type TipoOrden } from "@cimba/domain";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
 import { filtroEnum } from "./consultas";
 import { urlFoto } from "./fotos";
+import { toneladasDe, volumenDe } from "./medicion";
 import { parametrosDesdeJson, type ParametrosCapacidad } from "./capacidad";
 
 /**
@@ -90,14 +92,47 @@ export interface PendienteCircuito {
 }
 
 /** Las cuatro formas de delimitar el trabajo, más el colector para lo pluvial. */
-export type AmbitoOrden = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
+export type AmbitoOrden =
+  | "distrito"
+  | "circuito"
+  | "corredor"
+  | "barrio"
+  | "colector"
+  | "zona"
+  /** El área dibujada a mano sobre el mapa: vive en ordenes_trabajo.poligono. */
+  | "poligono";
+
+/**
+ * El polígono dibujado, como anillo cerrado de [lon, lat].
+ *
+ * Se arma acá y no en cada llamador para que el cierre —repetir el primer
+ * vértice al final— se haga en un solo lugar: un anillo abierto hace fallar a
+ * PostGIS con un error de geometría inválida que no dice nada útil.
+ */
+export function poligonoSql(anillo: Array<[number, number]>) {
+  const cerrado =
+    anillo[0] && anillo[anillo.length - 1] &&
+    anillo[0][0] === anillo[anillo.length - 1]![0] &&
+    anillo[0][1] === anillo[anillo.length - 1]![1]
+      ? anillo
+      : [...anillo, anillo[0]!];
+  return sql`st_setsrid(st_geomfromgeojson(${JSON.stringify({
+    type: "Polygon",
+    coordinates: [cerrado],
+  })}), 4326)`;
+}
 
 /**
  * El WHERE de cada ámbito. El corredor y el barrio no tienen columna propia en
  * incidentes, así que se resuelven contra su geometría: el corredor por
  * cercanía (es una línea) y el barrio por contención (es un polígono).
  */
-function filtroAmbito(ambito: AmbitoOrden, refId: number) {
+function filtroAmbito(ambito: AmbitoOrden, refId: number, poligono?: Array<[number, number]>) {
+  /* El polígono dibujado no tiene id: el recorte ES la geometría. */
+  if (ambito === "poligono") {
+    if (!poligono || poligono.length < 3) return sql`false`;
+    return sql`st_contains(${poligonoSql(poligono)}, i.geom)`;
+  }
   if (ambito === "circuito") return sql`i.circuito_id = ${refId}`;
   if (ambito === "distrito") return sql`i.distrito_id = ${refId}`;
   if (ambito === "barrio") {
@@ -128,11 +163,25 @@ function filtroAmbito(ambito: AmbitoOrden, refId: number) {
  * barrio — "son esas cuatro alternativas". El corredor filtra por cercanía
  * (30 m) porque es una línea, no un polígono con incidentes adentro.
  */
+export interface PendientesDelAmbito {
+  pendientes: PendienteCircuito[];
+  /**
+   * Lo que hay en la zona y NO entra en esta orden, contado por tipo. No se
+   * esconde: se cuenta y se dice. Sacar 59 pérdidas de agua de la lista sin
+   * avisar sería cambiar un problema (ofrecer lo que no corresponde) por otro
+   * peor (que el Director no sepa que están ahí).
+   */
+  fueraDeAlcance: Array<{ tipo: TipoProblema; n: number }>;
+}
+
 export async function pendientesEnAmbito(
   sesion: Sesion,
   ambito: AmbitoOrden,
   refId: number,
-): Promise<PendienteCircuito[]> {
+  tipoOrden: TipoOrden = "bacheo",
+  /** Solo para el ámbito "poligono": el anillo dibujado en el mapa. */
+  poligono?: Array<[number, number]>,
+): Promise<PendientesDelAmbito> {
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
@@ -149,13 +198,13 @@ export async function pendientesEnAmbito(
                  and ot.estado in ('borrador','emitida','en_ejecucion')
              ) as en_orden
       from incidentes i
-      where ${filtroAmbito(ambito, refId)}
+      where ${filtroAmbito(ambito, refId, poligono)}
         and i.estado in ('detectado','priorizado','programado','en_ejecucion')
         and i.geom is not null
       order by reclamos desc, i.score_prioridad desc nulls last, i.detectado_en
     `)) as unknown as Array<Record<string, unknown>>;
 
-    return filas.map((f) => ({
+    const todos = filas.map((f) => ({
       incidenteId: Number(f.id),
       tipo: f.tipo as TipoProblema,
       estado: String(f.estado),
@@ -169,6 +218,26 @@ export async function pendientesEnAmbito(
       lon: Number(f.lon),
       enOrden: Boolean(f.en_orden),
     }));
+
+    /**
+     * EL TIPO DE ORDEN MANDA. Antes este filtro no existía y una orden de
+     * bacheo ofrecía exactamente lo mismo que una de imbornales: todo lo
+     * abierto de la zona. Por eso las pérdidas de agua y las tapas de registro
+     * —que son de la SAT— aparecían listas para mandárselas a una contratista
+     * que no puede resolverlas.
+     */
+    const pendientes = todos.filter((p) => entraEnOrden(tipoOrden, p.tipo));
+    const cuenta = new Map<TipoProblema, number>();
+    for (const p of todos) {
+      if (entraEnOrden(tipoOrden, p.tipo)) continue;
+      cuenta.set(p.tipo, (cuenta.get(p.tipo) ?? 0) + 1);
+    }
+    return {
+      pendientes,
+      fueraDeAlcance: [...cuenta.entries()]
+        .map(([tipo, n]) => ({ tipo, n }))
+        .sort((a, b) => b.n - a.n),
+    };
   });
 }
 
@@ -263,6 +332,15 @@ export interface OrdenResumen {
   empresaId: number;
   empresaNombre: string;
   circuitoCodigo: string | null;
+  /**
+   * POR DÓNDE SE DEFINIÓ. El listado mostraba una columna "Circuito" que para
+   * la mayoría decía "—", porque la mayoría de las órdenes no se arman por
+   * circuito sino por distrito o barrio. Mismo arreglo que ya tenían el
+   * detalle y la hoja impresa: acá faltaba, y es la pantalla por la que se
+   * entra a todo.
+   */
+  ambito: AmbitoOrden;
+  ambitoNombre: string | null;
   /** TODOS los items de la orden, incluido lo que la empresa propuso y
    *  todavía no se validó. Casi nunca es lo que hay que mostrar. */
   items: number;
@@ -281,9 +359,48 @@ export interface OrdenResumen {
   cerrados: number;
   hechos: number;
   m2Reportados: number;
+  /** Toneladas de asfalto: la unidad con la que se certifica el pago. Sale del
+   *  volumen (columna generada) por la densidad de la mezcla, 2,4 t/m³. */
+  tnReportadas: number;
   emitidaEn: string | null;
   venceEn: string | null;
   creadoEn: string;
+  /**
+   * ORDEN ABIERTA: se emitió sin lista de puntos. La empresa barre la zona y
+   * carga los baches que encuentra. No se cierra sola —si no, el primer bache
+   * reportado la cerraría— y por eso hay que poder distinguirla en pantalla.
+   */
+  abierta: boolean;
+}
+
+/**
+ * El nombre del ámbito según cuál sea. Una sola función para el listado y el
+ * detalle: si cada uno lo resolviera por su cuenta, la lista y la ficha de la
+ * misma orden podrían terminar diciendo cosas distintas.
+ */
+function nombreDelAmbito(f: Record<string, unknown>): string | null {
+  switch ((f.ambito as AmbitoOrden) ?? "circuito") {
+    case "distrito":
+      return f.distrito_id != null ? String(f.distrito_id) : null;
+    case "barrio":
+      return (f.barrio_nombre as string) ?? null;
+    case "corredor":
+      return (f.corredor_nombre as string) ?? null;
+    case "zona":
+      return (f.zona_nombre as string) ?? null;
+    case "colector":
+      return (f.colector as string) ?? null;
+    case "poligono":
+      /* El área dibujada no tiene nombre; lo que se puede decir de ella es
+         cuánto mide, y eso es lo que sirve en un papel: "Área dibujada
+         (12,4 ha)". Sin las hectáreas —cuando la consulta no las trae— al
+         menos que diga que es un área y no un circuito sin nombre. */
+      return f.poligono_ha != null
+        ? `Área dibujada (${Number(f.poligono_ha).toLocaleString("es-AR", { maximumFractionDigits: 1 })} ha)`
+        : "Área dibujada";
+    default:
+      return (f.circuito_codigo as string) ?? null;
+  }
 }
 
 export async function listarOrdenes(
@@ -297,17 +414,27 @@ export async function listarOrdenes(
       select ot.id, ot.numero, ot.estado, ot.prioridad, ot.titulo, ot.empresa_id,
              e.nombre as empresa_nombre, c.codigo as circuito_codigo,
              ot.emitida_en, ot.vence_en::text as vence_en, ot.creado_en,
+             ot.ambito, ot.distrito_id, ot.colector, ot.metadata,
+             round((st_area(ot.poligono::geography) / 10000)::numeric, 1) as poligono_ha,
+             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
              (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
                 and oi.estado not in ('propuesto','rechazado'))::int as en_plan,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
-                and oi.estado in ('hecho','no_encontrado','ya_resuelto'))::int as cerrados,
+                and oi.estado in ('hecho','no_encontrado','ya_resuelto','no_ejecutable'))::int as cerrados,
              (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'hecho')::int as hechos,
              (select round(coalesce(sum(oi.superficie_m2), 0))::int from orden_items oi
-                where oi.orden_id = ot.id and oi.estado = 'hecho') as m2
+                where oi.orden_id = ot.id and oi.estado = 'hecho') as m2,
+             -- Toneladas: volumen × densidad de la mezcla (2,4 t/m³). El
+             -- volumen ya es columna generada, así que esto no duplica dato.
+             (select round(coalesce(sum(oi.volumen_m3), 0) * 2.4, 2) from orden_items oi
+                where oi.orden_id = ot.id and oi.estado = 'hecho') as tn
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
+      left join barrios b on b.id = ot.barrio_id
+      left join corredores co on co.id = ot.corredor_id
+      left join zonas_bacheo z on z.id = ot.zona_id
       where (${estado}::text is null or ot.estado = (${estado})::estado_orden)
         and (${empresaId}::bigint is null or ot.empresa_id = ${empresaId})
       order by ot.creado_en desc
@@ -323,16 +450,25 @@ export async function listarOrdenes(
       empresaId: Number(f.empresa_id),
       empresaNombre: String(f.empresa_nombre),
       circuitoCodigo: (f.circuito_codigo as string) ?? null,
+      ambito: ((f.ambito as AmbitoOrden) ?? "circuito"),
+      ambitoNombre: nombreDelAmbito(f),
       items: Number(f.items ?? 0),
       enPlan: Number(f.en_plan ?? 0),
       cerrados: Number(f.cerrados ?? 0),
       hechos: Number(f.hechos ?? 0),
       m2Reportados: Number(f.m2 ?? 0),
+      tnReportadas: Number(f.tn ?? 0),
       emitidaEn: f.emitida_en != null ? String(f.emitida_en) : null,
       venceEn: f.vence_en != null ? String(f.vence_en) : null,
       creadoEn: String(f.creado_en),
+      abierta: esAbierta(f.metadata),
     }));
   });
+}
+
+/** La marca que deja crearOrden cuando la orden nace sin puntos. */
+function esAbierta(metadata: unknown): boolean {
+  return (metadata as { orden_abierta?: unknown } | null)?.orden_abierta === true;
 }
 
 export interface ItemOrden {
@@ -344,6 +480,10 @@ export interface ItemOrden {
   anchoM: number | null;
   largoM: number | null;
   espesorCm: number | null;
+  /** Ya entró en un acta de medición firmada: certificado, no se corrige. */
+  actaId: number | null;
+  /** Modalidad del protocolo DOV con la que se certifica (planificado, extendido…). */
+  tipoObra: string | null;
   superficieM2: number | null;
   intervencionId: number | null;
   /** Cómo se resolvió (bacheo / pano_hormigon / carpeta / enripiado); null si no se reportó. */
@@ -359,7 +499,23 @@ export interface ItemOrden {
 }
 
 export interface OrdenDetalle extends OrdenResumen {
+  /**
+   * EL ÁREA DIBUJADA A MANO, cuando el ámbito es "poligono". Es el alcance de
+   * esta orden y de ninguna otra: no se guarda como zona reutilizable.
+   */
+  poligono: { type: "Polygon"; coordinates: Array<Array<[number, number]>> } | null;
   circuitoId: number | null;
+  /**
+   * POR DÓNDE SE DEFINIÓ la orden: lo que el Director eligió en el paso "2 ·
+   * Por dónde se define". La hoja impresa decía siempre "Circuito: —" porque
+   * solo miraba `circuitoCodigo`, y una orden armada por distrito o por barrio
+   * —que son la mayoría— salía a la calle sin decir de qué distrito era. El
+   * capataz recibía un papel con siete direcciones y ninguna referencia de
+   * zona.
+   */
+  ambito: AmbitoOrden;
+  /** El nombre del ámbito elegido: "12", "Néstor Kirchner", "C-14"… */
+  ambitoNombre: string | null;
   indicaciones: string | null;
   /** N° de contrato o decreto que respalda la orden (va en la hoja impresa). */
   contratoDecreto: string | null;
@@ -375,10 +531,21 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
   const empresaEjecutora = await empresaDelEjecutor(sesion);
   return conRls(claims(sesion), async (tx) => {
     const cab = (await tx.execute(sql`
-      select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo
+      select ot.*, ot.vence_en::text as vence_en_txt, e.nombre as empresa_nombre, c.codigo as circuito_codigo,
+             b.nombre as barrio_nombre, co.nombre as corredor_nombre, z.nombre as zona_nombre,
+             round((st_area(ot.poligono::geography) / 10000)::numeric, 1) as poligono_ha,
+             -- El área dibujada, para que el mapa de la orden la muestre: la
+             -- empresa tiene que ver el pedazo de ciudad que le tocó, no solo
+             -- los puntos sueltos que hay adentro.
+             st_asgeojson(ot.poligono)::json as poligono_geojson
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
+      -- Para que la hoja impresa pueda decir de qué distrito/barrio/corredor
+      -- es la orden y no un "Circuito: —" que no informa nada.
+      left join barrios b on b.id = ot.barrio_id
+      left join corredores co on co.id = ot.corredor_id
+      left join zonas_bacheo z on z.id = ot.zona_id
       where ot.id = ${id}
         ${
           empresaEjecutora != null
@@ -389,8 +556,25 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
     const o = cab[0];
     if (!o) return null;
 
+    /**
+     * st_centroid() y no `oi.geom` pelado: un item puede ser un TRAMO, y un
+     * tramo se guarda como LINESTRING (migración 0017), no como punto. ST_Y()
+     * sobre una línea no devuelve null — tira `Argument to ST_Y() must have
+     * type POINT` y se lleva puesta la página entera. El Director armaba una
+     * orden con un tramo de avenida, la abría, y veía un error de servidor sin
+     * nada que le dijera qué item lo había causado; la orden quedaba en
+     * borrador para siempre porque nunca llegaba al botón de emitir.
+     *
+     * El centroide de un punto ES el punto, así que para los items puntuales
+     * —que son casi todos— no cambia nada; para un tramo da el medio de la
+     * línea, que es donde corresponde plantar el marcador.
+     *
+     * Ojo: el mismo st_y(oi.geom) estaba en otros cinco lugares (el reporte de
+     * la empresa, el cierre, la exportación). Se arreglaron todos juntos: con
+     * uno solo sin tocar, el tramo se podía ver pero no reportar.
+     */
     const items = (await tx.execute(sql`
-      select oi.*, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+      select oi.*, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              (select v.tipo_intervencion::text from intervenciones v where v.id = oi.intervencion_id) as tipo_intervencion,
         coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos
       from orden_items oi
@@ -429,6 +613,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       anchoM: f.ancho_m != null ? Number(f.ancho_m) : null,
       largoM: f.largo_m != null ? Number(f.largo_m) : null,
       espesorCm: f.espesor_cm != null ? Number(f.espesor_cm) : null,
+      actaId: f.acta_id != null ? Number(f.acta_id) : null,
+      tipoObra: (f.tipo_obra as string) ?? null,
       superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
       intervencionId: f.intervencion_id != null ? Number(f.intervencion_id) : null,
       tipoIntervencion: (f.tipo_intervencion as string) ?? null,
@@ -448,7 +634,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       (i) => i.estado !== "propuesto" && i.estado !== "rechazado",
     ).length;
     const cerrados = itemsDetalle.filter((i) =>
-      ["hecho", "no_encontrado", "ya_resuelto"].includes(i.estado),
+      ["hecho", "no_encontrado", "ya_resuelto", "no_ejecutable"].includes(i.estado),
     ).length;
     return {
       id: Number(o.id),
@@ -460,6 +646,30 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       empresaNombre: String(o.empresa_nombre),
       circuitoId: o.circuito_id != null ? Number(o.circuito_id) : null,
       circuitoCodigo: (o.circuito_codigo as string) ?? null,
+      ambito: ((o.ambito as AmbitoOrden) ?? "circuito"),
+      /**
+       * El nombre según el ámbito, resuelto acá y no en la pantalla: la hoja
+       * impresa y la cabecera tienen que decir lo mismo, y si cada una lo
+       * arma por su cuenta terminan divergiendo. El distrito no tiene tabla de
+       * nombres —son 20 numerados— así que su "nombre" es el número.
+       */
+      ambitoNombre:
+        ((): string | null => {
+          switch ((o.ambito as AmbitoOrden) ?? "circuito") {
+            case "distrito":
+              return o.distrito_id != null ? String(o.distrito_id) : null;
+            case "barrio":
+              return (o.barrio_nombre as string) ?? null;
+            case "corredor":
+              return (o.corredor_nombre as string) ?? null;
+            case "zona":
+              return (o.zona_nombre as string) ?? null;
+            case "colector":
+              return (o.colector as string) ?? null;
+            default:
+              return (o.circuito_codigo as string) ?? null;
+          }
+        })(),
       indicaciones: (o.indicaciones as string) ?? null,
       // La cabecera selecciona ot.*: la columna ya viene, solo faltaba mapearla.
       contratoDecreto: (o.contrato_decreto as string) ?? null,
@@ -468,6 +678,18 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       cerrados,
       hechos,
       m2Reportados: Math.round(itemsDetalle.reduce((a, i) => a + (i.superficieM2 ?? 0), 0)),
+      // Ídem el listado: toneladas = Σ(superficie × espesor/100) × 2,4. Se suma
+      // item por item y no sobre el total, porque cada bache tiene su espesor.
+      tnReportadas: toneladasDe(
+        itemsDetalle.reduce(
+          (a, i) => a + volumenDe(i.superficieM2 ?? 0, i.espesorCm ?? 0),
+          0,
+        ),
+      ),
+      abierta: esAbierta(o.metadata),
+      /* El área dibujada, si la orden se armó así. Va como GeoJSON crudo: lo
+         consume el mapa, que es lo único que la necesita. */
+      poligono: (o.poligono_geojson as OrdenDetalle["poligono"]) ?? null,
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,
       // vence_en es una columna date pura: viene ya como "YYYY-MM-DD" (::text),
       // no como el Date-a-medianoche-UTC que String() corrompería un día.
@@ -821,6 +1043,24 @@ export interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /**
+   * QUÉ EMPRESAS TRABAJAN ACÁ, según las zonas del contrato de bacheo integral.
+   *
+   * Un distrito casi nunca cae entero en una sola zona: el 9 es 66% de
+   * CALLERI, 31% de UOCRA y 3% de INGECO-1. Por eso no es una empresa sino una
+   * lista, ordenada por cuánto del ámbito le toca a cada una, y por eso el
+   * porcentaje viaja: "casi todo tuyo" y "un pedacito tuyo" son decisiones
+   * distintas para quien arma la orden.
+   *
+   * Vacío significa dos cosas distintas y las dos son válidas: el ámbito no
+   * pisa ninguna zona, o la empresa que lo va a hacer no trabaja por zonas
+   * (Administración cubre toda la ciudad; las contratistas de SIGOV van por
+   * obra). Por eso esto NO filtra: informa.
+   */
+  empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
+  /** Solo corredores: jerarquía vial (1 = troncal) e índice de priorización. */
+  nivel?: number | null;
+  ipi?: number | null;
 }
 
 /**
@@ -835,7 +1075,16 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
         ? sql`
             select d.id, 'Distrito ' || d.id as etiqueta,
                    (select count(*) from incidentes i where i.distrito_id = d.id
-                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes
+                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom)))
+                                     / nullif(st_area(st_makevalid(d.geom)), 0))
+                      ) order by st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(d.geom, z.geom)
+                        and st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom)))
+                            > 0.05 * st_area(st_makevalid(d.geom))) as empresas
             from distritos d order by d.id`
         : ambito === "zona"
           ? sql`
@@ -843,30 +1092,99 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                    z.nombre || coalesce(' · ' || z.empresa, '') as etiqueta,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes
+                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                      'empresaId', z.empresa_id, 'nombre', coalesce(e2.nombre, z.empresa), 'pct', 100
+                    )), '[]'::json) from empresas e2 where e2.id = z.empresa_id) as empresas
             from zonas_bacheo z order by z.nombre`
         : ambito === "barrio"
           ? sql`
             select b.id, b.nombre as etiqueta,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes
+                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
+                                     / nullif(st_area(st_makevalid(b.geom)), 0))
+                      ) order by st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(b.geom, z.geom)
+                        and st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
+                            > 0.05 * st_area(st_makevalid(b.geom))) as empresas
             from barrios b order by b.nombre`
           : sql`
+            /* Los MISMOS corredores que lista el IPI, y con sus datos: el
+               Director pidió "que aparezcan todos los del filtro del IPI"
+               para poder dar tramos de guía a recorrer. El nivel y el índice
+               son lo que le permite elegir cuál: sin eso son 149 nombres de
+               calle en una lista. */
             select c.id,
                    c.nombre || coalesce(' · ' || s.sector, '') as etiqueta,
+                   c.nivel, c.ipi,
                    (select count(*) from incidentes i
                       where i.estado in ('detectado','priorizado','programado','en_ejecucion')
                         and i.geom is not null
-                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes
+                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes,
+                   (select coalesce(json_agg(json_build_object(
+                        'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
+                        'pct', round(100 * st_length(st_intersection(c.geom, st_makevalid(z.geom))::geography)
+                                     / nullif(st_length(c.geom::geography), 0))
+                      ) order by st_length(st_intersection(c.geom, st_makevalid(z.geom))) desc), '[]'::json)
+                      from zonas_bacheo z left join empresas e on e.id = z.empresa_id
+                      where st_intersects(c.geom, z.geom)
+                        and st_length(st_intersection(c.geom, st_makevalid(z.geom))::geography)
+                            > 0.05 * st_length(c.geom::geography)) as empresas
             from corredores c
             left join sectores_licitacion s on s.id = c.sector_id
             order by c.nivel, c.nombre`;
 
     const filas = (await tx.execute(consulta)) as unknown as Array<Record<string, unknown>>;
-    return filas
-      .map((f) => ({ id: Number(f.id), etiqueta: String(f.etiqueta), pendientes: Number(f.pendientes ?? 0) }))
-      .filter((o) => o.pendientes > 0);
+    /**
+     * TODOS los ámbitos, tengan o no pendientes. Acá había un
+     * `.filter((o) => o.pendientes > 0)` y escondía la mitad del territorio:
+     * `pendientes` cuenta INCIDENTES, y un incidente solo existe después de
+     * consolidar los reclamos. Con 2.700 reclamos todavía sin consolidar, un
+     * distrito con 35 pedidos reales figuraba en cero y directamente no
+     * aparecía en la lista — el Director elegía un distrito que sabía cargado
+     * de reclamos y el selector se lo negaba, sin decirle por qué.
+     *
+     * Pedido explícito de la Dirección de Bacheo (14/09): que estén los 20
+     * distritos, todos los barrios y todos los circuitos, al menos hasta que
+     * esté la conexión con Atención Ciudadana. Un ámbito en cero es
+     * información —"acá no hay nada cargado"— y no un motivo para ocultarlo.
+     */
+    return filas.map((f) => ({
+      id: Number(f.id),
+      etiqueta: String(f.etiqueta),
+      pendientes: Number(f.pendientes ?? 0),
+      nivel: f.nivel != null ? Number(f.nivel) : null,
+      ipi: f.ipi != null ? Number(f.ipi) : null,
+      /**
+       * Se suman las zonas de una MISMA empresa. INGECO tiene dos por contrato
+       * (Centro-Este y SE), así que el distrito 10 salía diciendo "INGECO S.A.
+       * 55%, INGECO S.A. 45%" — dos veces la misma empresa, como si fueran
+       * rivales repartiéndose el distrito. Para la pregunta que esto contesta
+       * —"¿a quién se lo doy?"— son la misma: INGECO S.A. 100%.
+       */
+      empresas: Object.values(
+        ((f.empresas as Array<{ empresaId: number | null; nombre: string | null; pct: number | null }>) ?? [])
+          .filter((e) => e.nombre)
+          .reduce<Record<string, { empresaId: number | null; nombre: string; pct: number }>>((acc, e) => {
+            const clave = e.empresaId != null ? `id:${e.empresaId}` : `n:${e.nombre}`;
+            const previo = acc[clave];
+            if (previo) previo.pct += Number(e.pct ?? 0);
+            else {
+              acc[clave] = {
+                empresaId: e.empresaId != null ? Number(e.empresaId) : null,
+                nombre: String(e.nombre),
+                pct: Number(e.pct ?? 0),
+              };
+            }
+            return acc;
+          }, {}),
+      ).sort((a, b) => b.pct - a.pct),
+    }));
   });
 }
 
@@ -892,4 +1210,246 @@ export async function contarOrdenesVencidas(sesion: Sesion): Promise<number> {
     `)) as unknown as Array<{ n: number }>;
     return Number(filas[0]?.n ?? 0);
   });
+}
+
+/**
+ * Vive acá y NO en acciones-ordenes.ts porque ese archivo es "use server":
+ * cualquier export suyo es una server action que el cliente puede invocar, y
+ * esta función recibe la sesión como argumento — publicarla habría dejado que
+ * el navegador dijera quién es. Acá adentro es una consulta común, llamada
+ * desde un server component que ya resolvió la sesión.
+ *
+ * El historial de correcciones de un item: quién tocó qué y por qué. Sale de
+ * `auditoria`, que ya venía registrando todo por trigger — no hace falta una
+ * tabla nueva para contestar "esto lo cambió alguien, ¿quién?".
+ */
+export async function historialItem(
+  sesion: Sesion,
+  itemId: number,
+): Promise<Array<{ accion: string; cuando: string; por: string | null; motivo: string | null; antes: unknown; despues: unknown }>> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select a.accion, a.ocurrido_en, a.diff, p.nombre as actor_nombre
+      from auditoria a
+      left join perfiles p on p.id = a.actor
+      where a.entidad in ('orden_item', 'orden_items') and a.entidad_id = ${itemId}
+        and a.accion <> 'insert'
+      order by a.ocurrido_en desc
+      limit 50
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => {
+      const diff = (f.diff ?? {}) as Record<string, unknown>;
+      return {
+        accion: String(f.accion),
+        cuando: String(f.ocurrido_en),
+        por: (diff.por as string) ?? (f.actor_nombre as string) ?? null,
+        motivo: (diff.motivo as string) ?? null,
+        antes: diff.antes ?? null,
+        despues: diff.despues ?? null,
+      };
+    });
+  });
+}
+
+export interface PropuestoParaResolver {
+  itemId: number;
+  direccion: string | null;
+  tipoTrabajo: string | null;
+  superficieM2: number | null;
+  espesorCm: number | null;
+  /**
+   * El dato que cambia la decisión. Un propuesto SIN medidas se valida y va a
+   * la cola de pendientes. Uno CON medidas se da por hecho: crea el trabajo
+   * terminado y habilita la certificación a la empresa, y eso no se deshace
+   * desde CIMBA. Quien muestre un botón "Validar" tiene que decir cuál de las
+   * dos cosas va a pasar, o la decisión no es informada.
+   */
+  habilitaCertificacion: boolean;
+  ordenId: number;
+  numero: string;
+  empresa: string;
+  propuestoPor: string | null;
+}
+
+/**
+ * El bache propuesto, con lo que hace falta para decidir sobre él.
+ *
+ * Es la misma consulta que resolverPropuesto ya hace adentro de su transacción
+ * (para decidir si crea la intervención), expuesta para que quien vaya a
+ * ofrecer la decisión —la pantalla o un botón de Telegram— muestre lo mismo
+ * que la acción va a usar. Devuelve null si el item ya no está propuesto: lo
+ * resolvió otro, o el mensaje de Telegram quedó viejo.
+ */
+export async function propuestoParaResolver(
+  sesion: Sesion,
+  itemId: number,
+): Promise<PropuestoParaResolver | null> {
+  const filas = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.id, oi.direccion, oi.superficie_m2, oi.espesor_cm, oi.tipo_trabajo::text as tipo_trabajo,
+             oi.metadata, ot.id as orden_id, ot.numero, e.nombre as empresa
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.id = ${itemId} and oi.estado = 'propuesto'
+    `)) as unknown as Array<Record<string, unknown>>,
+  ))[0];
+  if (!filas) return null;
+
+  const metadata = (filas.metadata ?? {}) as { propuesto?: { por?: string } };
+  const superficie = filas.superficie_m2 != null ? Number(filas.superficie_m2) : null;
+  const espesor = filas.espesor_cm != null ? Number(filas.espesor_cm) : null;
+
+  return {
+    itemId: Number(filas.id),
+    direccion: (filas.direccion as string | null) ?? null,
+    tipoTrabajo: (filas.tipo_trabajo as string | null) ?? null,
+    superficieM2: superficie,
+    espesorCm: espesor,
+    habilitaCertificacion: superficie != null && espesor != null,
+    ordenId: Number(filas.orden_id),
+    numero: String(filas.numero),
+    empresa: String(filas.empresa),
+    propuestoPor: metadata.propuesto?.por ?? null,
+  };
+}
+
+export interface Pendientes {
+  /** Los que esperan una decisión suya, con lo necesario para tomarla. */
+  propuestos: PropuestoParaResolver[];
+  /** Cuántos hay en total: `propuestos` viene acotado. */
+  propuestosTotal: number;
+  ordenesVencidas: Array<{ ordenId: number; numero: string; empresa: string; vence: string; itemsPendientes: number }>;
+  cierresPendientes: number;
+}
+
+/**
+ * Todo lo que está esperando una decisión de esta persona, en una consulta.
+ *
+ * Es la bandeja del Director: lo que hoy solo se ve entrando a tres pantallas
+ * distintas —los baches propuestos de cada orden, las órdenes vencidas, los
+ * reclamos listos para cerrar— junto y ordenado por cuán suya es la decisión.
+ *
+ * Los tres criterios son EXACTAMENTE los del control diario
+ * (api/cron/vencimientos): si la bandeja contara distinto que el aviso que
+ * llega a las 7, uno de los dos estaría mintiendo y nadie sabría cuál.
+ *
+ * `limite` acota los propuestos porque cada uno se muestra como un mensaje
+ * aparte con sus botones: veinte mensajes de golpe no son una bandeja, son una
+ * avalancha. El total va aparte para poder decir cuántos quedaron afuera.
+ */
+export async function pendientesDe(sesion: Sesion, limite = 8): Promise<Pendientes> {
+  return conRls(claims(sesion), async (tx) => {
+    const propuestos = (await tx.execute(sql`
+      select oi.id, oi.direccion, oi.superficie_m2, oi.espesor_cm, oi.tipo_trabajo::text as tipo_trabajo,
+             oi.metadata, ot.id as orden_id, ot.numero, e.nombre as empresa
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.estado = 'propuesto'
+      order by oi.id desc
+      limit ${limite}
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    const total = (await tx.execute(sql`
+      select count(*)::int as n from orden_items where estado = 'propuesto'
+    `)) as unknown as Array<{ n: number }>;
+
+    const vencidas = (await tx.execute(sql`
+      select ot.id, ot.numero, ot.vence_en::text as vence, e.nombre as empresa,
+        (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')::int as pendientes
+      from ordenes_trabajo ot
+      join empresas e on e.id = ot.empresa_id
+      where ot.estado in ('emitida', 'en_ejecucion')
+        and ot.vence_en is not null
+        and ot.vence_en <= current_date
+      order by ot.vence_en asc
+      limit 10
+    `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; pendientes: number }>;
+
+    const cerrables = (await tx.execute(sql`
+      select count(distinct d.id)::int as n
+      from demandas d
+      join demanda_incidente di on di.demanda_id = d.id
+      join incidentes i on i.id = di.incidente_id
+      where d.estado in ('recibida','en_validacion','vinculada')
+        and i.estado in ('reparado','verificado')
+    `)) as unknown as Array<{ n: number }>;
+
+    return {
+      propuestos: propuestos.map((f) => {
+        const metadata = (f.metadata ?? {}) as { propuesto?: { por?: string } };
+        const superficie = f.superficie_m2 != null ? Number(f.superficie_m2) : null;
+        const espesor = f.espesor_cm != null ? Number(f.espesor_cm) : null;
+        return {
+          itemId: Number(f.id),
+          direccion: (f.direccion as string | null) ?? null,
+          tipoTrabajo: (f.tipo_trabajo as string | null) ?? null,
+          superficieM2: superficie,
+          espesorCm: espesor,
+          habilitaCertificacion: superficie != null && espesor != null,
+          ordenId: Number(f.orden_id),
+          numero: String(f.numero),
+          empresa: String(f.empresa),
+          propuestoPor: metadata.propuesto?.por ?? null,
+        };
+      }),
+      propuestosTotal: Number(total[0]?.n ?? 0),
+      ordenesVencidas: vencidas.map((v) => ({
+        ordenId: Number(v.id),
+        numero: v.numero,
+        empresa: v.empresa,
+        vence: v.vence,
+        itemsPendientes: Number(v.pendientes),
+      })),
+      cierresPendientes: Number(cerrables[0]?.n ?? 0),
+    };
+  });
+}
+
+export interface OrdenParaDecidir {
+  ordenId: number;
+  numero: string;
+  empresa: string;
+  estado: string;
+  vence: string | null;
+  itemsPendientes: number;
+  /** Las que pueden recibirla: respeta baja de empresa y límite de contrato. */
+  empresasPosibles: Array<{ id: number; nombre: string }>;
+}
+
+/**
+ * Una orden, con lo justo para decidir sobre ella desde un teléfono.
+ *
+ * Las empresas posibles salen de empresasParaTipo, que es la misma función que
+ * usa el alta: así la lista que se ofrece por Telegram no puede incluir a una
+ * empresa que después la acción va a rechazar. Ofrecer un botón que falla es
+ * peor que no ofrecerlo.
+ */
+export async function ordenParaDecidir(sesion: Sesion, ordenId: number): Promise<OrdenParaDecidir | null> {
+  const fila = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select ot.id, ot.numero, ot.estado::text as estado, ot.tipo::text as tipo,
+             ot.vence_en::text as vence, e.nombre as empresa, ot.empresa_id,
+        (select count(*) from orden_items oi
+          where oi.orden_id = ot.id and oi.estado in ('pendiente','propuesto'))::int as pendientes
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${ordenId}
+    `)) as unknown as Array<Record<string, unknown>>,
+  ))[0];
+  if (!fila) return null;
+
+  const posibles = await empresasParaTipo(sesion, String(fila.tipo));
+  return {
+    ordenId: Number(fila.id),
+    numero: String(fila.numero),
+    empresa: String(fila.empresa),
+    estado: String(fila.estado),
+    vence: (fila.vence as string | null) ?? null,
+    itemsPendientes: Number(fila.pendientes),
+    // La actual no se ofrece: reasignar a la misma empresa lo rechaza la acción.
+    empresasPosibles: posibles
+      .filter((e) => e.id !== Number(fila.empresa_id))
+      .map((e) => ({ id: e.id, nombre: e.nombre })),
+  };
 }

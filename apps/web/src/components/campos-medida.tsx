@@ -5,6 +5,8 @@ import {
   ETIQUETA_MEDICION,
   MEDICIONES,
   type Medicion,
+  formatoToneladas,
+  toneladasDe,
   volumenDe,
 } from "@/lib/medicion";
 
@@ -55,13 +57,26 @@ export function resumenMedida(v: ValorMedida): {
   falta: string | null;
 } {
   const espesor = aNumero(v.espesor);
-  const sinEspesor = !(espesor > 0);
+  /**
+   * PISO DE 1 CM, y no "mayor que cero". Una carpeta de medio centímetro no
+   * existe: 18 cargas con 0,5 en vez de 5 certificaron la décima parte de lo
+   * que se colocó, porque el espesor entra directo en las toneladas que se
+   * pagan. El servidor lo rechaza igual; acá se avisa antes de subir la foto.
+   */
+  const sinEspesor = !(espesor >= 1);
 
   if (v.medicion === "lados") {
     const a = aNumero(v.ancho);
     const l = aNumero(v.largo);
     if (!(a > 0) || !(l > 0) || sinEspesor) {
-      return { superficie: null, volumen: null, falta: "Cargá el ancho, el largo y el espesor." };
+      return {
+        superficie: null,
+        volumen: null,
+        falta:
+          espesor > 0 && espesor < 1
+            ? "El espesor no puede ser menor a 1 cm: ¿quisiste poner 5?"
+            : "Cargá el ancho, el largo y el espesor.",
+      };
     }
     const superficie = Math.round(a * l * 100) / 100;
     return { superficie, volumen: volumenDe(superficie, espesor), falta: null };
@@ -70,7 +85,14 @@ export function resumenMedida(v: ValorMedida): {
   if (v.medicion === "superficie") {
     const s = aNumero(v.superficie);
     if (!(s > 0) || sinEspesor) {
-      return { superficie: null, volumen: null, falta: "Cargá la superficie en m² y el espesor." };
+      return {
+        superficie: null,
+        volumen: null,
+        falta:
+          espesor > 0 && espesor < 1
+            ? "El espesor no puede ser menor a 1 cm: ¿quisiste poner 5?"
+            : "Cargá la superficie en m² y el espesor.",
+      };
     }
     const superficie = Math.round(s * 100) / 100;
     return { superficie, volumen: volumenDe(superficie, espesor), falta: null };
@@ -154,25 +176,48 @@ export function CamposMedida({
         {extra}
       </div>
 
-      {/* Cómo se puede medir ESTE bache. Targets grandes: se elige con guantes. */}
-      <div className="mb-2 grid grid-cols-3 gap-2">
-        {MEDICIONES.map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => set({ medicion: m })}
-            title={AYUDA_MEDICION[m]}
-            className={`min-h-11 rounded-xl border-2 px-2 py-2 text-[12px] leading-tight font-bold transition active:scale-[0.99] ${
-              valor.medicion === m
-                ? "border-azul bg-azul/15 text-celeste"
-                : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
-            }`}
-          >
-            {ETIQUETA_MEDICION[m]}
-          </button>
-        ))}
+      {/**
+       * Las tres formas de medir, UNA DEBAJO DE OTRA y no en tres columnas.
+       *
+       * En tres columnas los rótulos no miden lo mismo —"Superficie" entra en
+       * una línea y "Volumen de mezcla" en tres— así que los botones salían de
+       * alturas distintas, con el texto apretado y cortado en el teléfono, que
+       * es donde se usa. Apilados entran enteros, se tocan con guantes, y cada
+       * uno puede llevar al lado su explicación en vez de esconderla en un
+       * title que en el celular no existe.
+       */}
+      <div className="mb-2 flex flex-col gap-1.5">
+        {MEDICIONES.map((m) => {
+          const elegido = valor.medicion === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => set({ medicion: m })}
+              aria-pressed={elegido}
+              className={`flex min-h-11 items-center gap-2.5 rounded-xl border-2 px-3 py-2 text-left transition active:scale-[0.99] ${
+                elegido
+                  ? "border-azul bg-azul/15"
+                  : "border-borde-2 bg-panel-2 hover:border-celeste/60"
+              }`}
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
+                  elegido ? "border-azul" : "border-borde-2"
+                }`}
+              >
+                {elegido && <span className="h-2 w-2 rounded-full bg-azul" />}
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-[13px] font-bold ${elegido ? "text-celeste" : "text-texto"}`}>
+                  {ETIQUETA_MEDICION[m]}
+                </span>
+                <span className="block text-[11px] leading-snug text-texto-3">{AYUDA_MEDICION[m]}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <p className="mb-2 text-[11px] leading-snug text-texto-3">{AYUDA_MEDICION[valor.medicion]}</p>
 
       {valor.medicion === "lados" && (
         <div className="grid grid-cols-3 gap-2">
@@ -205,14 +250,48 @@ export function CamposMedida({
         </div>
       )}
 
+      {/**
+        * EL ESPESOR EN METROS: el error que vació las toneladas.
+        *
+        * El 15/09, un capataz cargó 16 baches con espesor 0,05 — los metros,
+        * no los centímetros. La columna guarda un decimal, así que quedaron en
+        * 0,1 cm: un milímetro de asfalto. El volumen dio 0,00 m³ y esos 16
+        * trabajos iban a certificar CERO toneladas, que es justo el dato que
+        * la certificación pidió que no falte.
+        *
+        * No se bloquea —el criterio del que está parado sobre el pozo manda—
+        * pero se avisa fuerte y se dice cuál es la conversión, porque el error
+        * es silencioso: nada en la pantalla se veía mal.
+        */}
+      {(() => {
+        const e = aNumero(valor.espesor);
+        if (!(e > 0) || e >= 2.5) return null;
+        return (
+          <p className="mt-2 rounded-lg border border-peligro/50 bg-peligro/10 px-3 py-2 text-[12px] leading-snug">
+            <b className="text-peligro">¿{valor.espesor} cm?</b>{" "}
+            <span className="text-texto-2">
+              Un bacheo va de 4 a 8 cm. Si lo estás midiendo en metros, el espesor en centímetros es{" "}
+              <b className="num text-texto">{Math.round(e * 100)}</b>. Con {valor.espesor} cm el trabajo
+              certifica casi cero toneladas.
+            </span>
+          </p>
+        );
+      })()}
+
+      {/* Los m² primero porque son lo que el capataz acaba de medir, la
+          tonelada al lado porque es la unidad con la que se certifica el pago:
+          quien firma el acta no tendría que hacer la cuenta en un papel. */}
       {superficie != null && (
         <p className="num mt-2 text-xl font-extrabold text-celeste">
           = {superficie.toLocaleString("es-AR", { maximumFractionDigits: 2 })} m²
           {volumen != null && (
-            <span className="text-texto-2">
-              {" "}
-              · {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
-            </span>
+            <>
+              <span className="text-texto-2">
+                {" "}
+                · {volumen.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³
+              </span>
+              <span className="text-amarillo"> · {formatoToneladas(toneladasDe(volumen))}</span>
+            </>
           )}
         </p>
       )}
@@ -220,7 +299,8 @@ export function CamposMedida({
       <p className="mt-1 text-xs leading-relaxed text-texto-3">
         {derivada
           ? "La superficie se calcula con la mezcla y el espesor: es una estimación, y así queda anotada."
-          : "Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero."}
+          : "Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero."}{" "}
+        Las toneladas salen del volumen a 2,4 t/m³: es lo que se certifica.
       </p>
     </div>
   );

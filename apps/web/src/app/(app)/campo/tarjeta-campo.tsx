@@ -8,6 +8,22 @@ import { comprimirFoto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { mensajeDeError } from "@/lib/errores";
+import { mejorPosicion } from "@/lib/gps";
+import { hoyISO, minimoEjecucion } from "@/lib/formato";
+import { MENSAJE_SESION, avisarSesionVencida, sesionVigente } from "@/lib/sesion-cliente";
+
+/**
+ * El mensaje de un error, salvo que la causa sea la sesión cerrada: ahí se
+ * dice eso y se muestra el cartel para volver a entrar, en vez de un "Error"
+ * que no explica nada (lo que le pasaba a Leo el 23/9).
+ */
+async function mensajeOSesion(e: unknown, siNo: string): Promise<string> {
+  if (!(await sesionVigente())) {
+    avisarSesionVencida();
+    return MENSAJE_SESION;
+  }
+  return mensajeDeError(e, siNo);
+}
 
 export interface Trabajo {
   id: number;
@@ -20,15 +36,14 @@ export interface Trabajo {
   fotos: number;
 }
 
-function obtenerGps(): Promise<{ lat: number; lon: number } | null> {
-  return new Promise((resolver) => {
-    if (!navigator.geolocation) return resolver(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolver({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => resolver(null),
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
-  });
+/** El mejor fix de unos segundos, o null: la foto se sube igual, sin punto. */
+async function obtenerGps(): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const fix = await mejorPosicion({ esperaMs: 6_000 });
+    return { lat: fix.lat, lon: fix.lon };
+  } catch {
+    return null;
+  }
 }
 
 export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
@@ -37,6 +52,13 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
   const [error, setError] = useState<string | null>(null);
   const [m2, setM2] = useState("");
   const [obs, setObs] = useState("");
+  /**
+   * EL DÍA EN QUE SE HIZO EL TRABAJO. La carga viene atrasada —las fotos
+   * llegan por WhatsApp y se suben días después—, y con la fecha automática
+   * el parte diario mentía: nada el lunes, cuatro días juntos el jueves.
+   * Arranca en hoy, así que cargar al día no tiene un paso más.
+   */
+  const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   const [subiendo, setSubiendo] = useState<string | null>(null);
   const refAntes = useRef<HTMLInputElement>(null);
   const refDespues = useRef<HTMLInputElement>(null);
@@ -48,7 +70,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
         await fn();
         router.refresh();
       } catch (e) {
-        setError(mensajeDeError(e, "Error"));
+        setError(await mensajeOSesion(e, "Error"));
       }
     });
   };
@@ -82,7 +104,7 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
       await subirFoto(fd);
       router.refresh();
     } catch (e) {
-      setError(mensajeDeError(e, "No se pudo subir la foto"));
+      setError(await mensajeOSesion(e, "No se pudo subir la foto"));
     } finally {
       setSubiendo(null);
     }
@@ -184,6 +206,25 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
             />
           </div>
 
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-texto-2">
+              Día en que se hizo el trabajo
+            </span>
+            <input
+              type="date"
+              value={fechaEjecucion}
+              max={hoyISO()}
+              min={minimoEjecucion()}
+              onChange={(e) => setFechaEjecucion(e.target.value)}
+              className="num w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm"
+            />
+            {fechaEjecucion !== hoyISO() && (
+              <span className="mt-1 block text-[11px] font-semibold text-amarillo">
+                Se va a registrar con fecha {fechaEjecucion.split("-").reverse().join("/")}, no la de hoy.
+              </span>
+            )}
+          </label>
+
           <button
             disabled={pendiente}
             onClick={() =>
@@ -192,6 +233,9 @@ export function TarjetaCampo({ intervencion }: { intervencion: Trabajo }) {
                   intervencionId: intervencion.id,
                   superficieM2: m2 ? Number(m2.replace(",", ".")) : undefined,
                   observaciones: obs || undefined,
+                  // Solo si no es hoy: así "fecha puesta a mano" queda
+                  // reservado para las cargas que de verdad lo son.
+                  fechaEjecucion: fechaEjecucion !== hoyISO() ? fechaEjecucion : undefined,
                 }),
               )
             }

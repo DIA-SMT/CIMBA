@@ -1,0 +1,16 @@
+{
+  "name": "@bots/cimba",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "El canal de Telegram de CIMBA: recibe lo que escribe la Dirección de Bacheo y se lo pasa a CIMBA, que responde con los permisos de quien preguntó.",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node --env-file=.env src/index.ts",
+    "dev": "node --env-file=.env --watch src/index.ts"
+  },
+  "dependencies": {
+    "@bots/core": "workspace:*",
+    "grammy": "^1.32.0"
+  }
+}

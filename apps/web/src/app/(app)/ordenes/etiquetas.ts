@@ -64,6 +64,23 @@ export const COLOR_PRIORIDAD: Record<PrioridadVial, string> = {
   terciaria: "var(--color-texto-2)",
 };
 
+/**
+ * Cómo se llama cada forma de delimitar el trabajo. Una sola fuente para la
+ * hoja impresa, la cabecera de la orden y el formulario: si divergen, el papel
+ * que firma la empresa dice una cosa y la pantalla otra.
+ */
+export const ETIQUETA_AMBITO: Record<string, string> = {
+  circuito: "Circuito",
+  distrito: "Distrito",
+  barrio: "Barrio",
+  corredor: "Corredor",
+  zona: "Zona",
+  colector: "Colector",
+  /* La orden dibujada a mano sobre el mapa: no es un recorte del territorio
+     con nombre, es el área de ESTA orden. */
+  poligono: "Área",
+};
+
 export const ETIQUETA_TIPO_TRABAJO: Record<string, string> = {
   bache: "Bache",
   carpeta: "Carpeta",
@@ -77,6 +94,7 @@ export const ETIQUETA_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
   propuesto: "Propuesto por la empresa",
   rechazado: "Rechazado",
   ya_resuelto: "Ya estaba resuelto",
+  no_ejecutable: "No se puede ejecutar",
 };
 
 export const COLOR_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
@@ -97,4 +115,10 @@ export const COLOR_ESTADO_ITEM: Record<EstadoItemOrden, string> = {
    * porque la empresa y el Director tienen que ver lo mismo. Se cambian juntos.
    */
   ya_resuelto: "color-mix(in srgb, var(--color-hecho) 65%, var(--color-inactivo))",
+  /**
+   * Amarillo, el mismo que "propuesto": las dos cosas esperan que una persona
+   * decida algo. Gris habría sido mentir por omisión —el punto no se
+   * desestimó, sigue roto en la calle— y verde, mentir del todo.
+   */
+  no_ejecutable: "var(--color-amarillo)",
 };

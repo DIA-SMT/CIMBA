@@ -10,6 +10,7 @@ import {
   resumenCircuitos,
 } from "@/lib/ordenes";
 import { estaVencida, fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { FilaVacia, Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { AsignacionCircuito } from "./asignacion-circuito";
@@ -20,6 +21,7 @@ import {
   COLOR_ESTADO_ORDEN,
   fondoTenue,
   COLOR_PRIORIDAD,
+  ETIQUETA_AMBITO,
   ETIQUETA_ESTADO_ORDEN,
   ETIQUETA_PRIORIDAD,
 } from "./etiquetas";
@@ -29,7 +31,7 @@ export const dynamic = "force-dynamic";
 export default async function PaginaOrdenes({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string }>;
+  searchParams: Promise<{ estado?: string; empresa?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -48,12 +50,21 @@ export default async function PaginaOrdenes({
     ? (filtros.estado as EstadoOrden)
     : undefined;
   const soloVencidas = filtros.estado === "vencidas";
-  const ordenesFiltradas = soloVencidas
-    ? ordenes.filter(estaVencida)
-    : estadoFiltro
-      ? ordenes.filter((o) => o.estado === estadoFiltro)
-      : ordenes;
-  const hayFiltro = Boolean(estadoFiltro) || soloVencidas;
+  /**
+   * Filtro por empresa: con doce contratistas trabajando a la vez, buscar las
+   * órdenes de una sola en una lista de doscientas se hacía a ojo. Se valida
+   * contra las empresas que existen — un id cualquiera en la URL no filtra a
+   * la nada, simplemente no filtra.
+   */
+  const empresaFiltro = empresas.some((e) => e.id === Number(filtros.empresa))
+    ? Number(filtros.empresa)
+    : undefined;
+  const ordenesFiltradas = ordenes
+    .filter((o) =>
+      soloVencidas ? estaVencida(o) : estadoFiltro ? o.estado === estadoFiltro : true,
+    )
+    .filter((o) => empresaFiltro == null || o.empresaId === empresaFiltro);
+  const hayFiltro = Boolean(estadoFiltro) || soloVencidas || empresaFiltro != null;
 
   // KPIs del tablero
   const ordenesActivas = ordenes.filter((o) => o.estado === "emitida" || o.estado === "en_ejecucion");
@@ -106,7 +117,7 @@ export default async function PaginaOrdenes({
                 </Link>
                 <Link href="/ordenes/avisos" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Avisos
-                  <span className="block text-[11px] font-normal text-texto-3">Quién se entera de qué, por push o email</span>
+                  <span className="block text-[11px] font-normal text-texto-3">Quién se entera de qué, y por dónde</span>
                 </Link>
                 <Link href="/ordenes/empresas" className="block rounded-lg px-3 py-2 font-medium transition hover:bg-panel-3">
                   Empresas y accesos
@@ -145,7 +156,186 @@ export default async function PaginaOrdenes({
         <Kpi n={empresasConCarga} etiqueta="empresas con carga" color="var(--color-amarillo)" nota={`de ${empresas.length} registradas`} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      {/* Listado de órdenes */}
+      <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">
+        Órdenes <span className="font-normal text-texto-3 normal-case">— las últimas 200</span>
+      </h2>
+      <form className="mb-3 flex flex-wrap items-center gap-2" action="/ordenes" method="get">
+        <select
+          name="estado"
+          defaultValue={soloVencidas ? "vencidas" : (estadoFiltro ?? "")}
+          className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
+        >
+          <option value="">Todos los estados</option>
+          {/* Vencidas no es un estado de la orden sino un cruce con la fecha,
+              pero para quien mira el tablero es una categoría más — y acá es
+              donde la va a buscar. */}
+          <option value="vencidas">Vencidas</option>
+          {ESTADOS_ORDEN.map((e) => (
+            <option key={e} value={e}>
+              {ETIQUETA_ESTADO_ORDEN[e]}
+            </option>
+          ))}
+        </select>
+        {/* Por empresa: con doce contratistas en la calle, "las de Calleri"
+            es la pregunta más frecuente de esta pantalla y se contestaba
+            leyendo la columna a ojo. Van TODAS, no solo las activas: una
+            empresa dada de baja sigue teniendo órdenes viejas que consultar. */}
+        <select
+          name="empresa"
+          defaultValue={empresaFiltro != null ? String(empresaFiltro) : ""}
+          className="max-w-56 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
+        >
+          <option value="">Todas las empresas</option>
+          {[...empresas]
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+            .map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nombre}
+              </option>
+            ))}
+        </select>
+        <button className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste">
+          Filtrar
+        </button>
+        {/* Cuántas quedaron a la vista: sin esto, un filtro que deja 3 de 200
+            se lee igual que una lista vacía de verdad. */}
+        {hayFiltro && (
+          <span className="text-[12px] text-texto-3">
+            <b className="num text-texto-2">{numero(ordenesFiltradas.length)}</b> de{" "}
+            <b className="num">{numero(ordenes.length)}</b>
+          </span>
+        )}
+        {hayFiltro && (
+          <Link href="/ordenes" className="text-sm text-texto-2 hover:text-texto">
+            Limpiar
+          </Link>
+        )}
+      </form>
+      <PanelTabla>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
+              <th className="px-4 py-3">Número</th>
+              <th className="px-4 py-3">Estado</th>
+              <th className="px-4 py-3">Empresa</th>
+              {/* "Circuito" decía "—" en casi todas: la mayoría de las
+                  órdenes se arman por distrito o por barrio. Ahora la columna
+                  dice cuál es el ámbito y cuál su nombre. */}
+              <th className="px-4 py-3">Ámbito</th>
+              <th className="px-4 py-3">Prioridad</th>
+              <th className="px-4 py-3">Progreso</th>
+              <th className="num px-4 py-3 text-right">m²</th>
+              {/* La unidad con la que se certifica el pago. "No se olviden de
+                  cargar volúmenes, así podemos certificar las TN colocadas"
+                  (15/09): estaba en la ficha y en certificación, pero no en la
+                  pantalla por la que se entra. */}
+              <th className="num px-4 py-3 text-right">Toneladas</th>
+              <th className="px-4 py-3">Vence</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {ordenesFiltradas.map((o) => {
+              // El denominador es el trabajo ENCARGADO (enPlan), el mismo que
+              // usa el detalle: dividiendo por o.items, lo que la empresa propuso
+              // y todavía nadie validó inflaba el total y la lista decía "8 de 13"
+              // donde el detalle decía "8 de 10".
+              const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
+              const vencida = estaVencida(o);
+              return (
+                <tr key={o.id} className="border-b border-borde/60 transition hover:bg-panel-2">
+                  <td className="px-4 py-2.5">
+                    <Link href={`/ordenes/${o.id}`} className="num font-bold text-celeste hover:underline">
+                      {o.numero}
+                    </Link>
+                    {vencida && (
+                      <span className="ml-1.5 text-[10px] font-bold text-peligro">VENCIDA</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[11px] font-bold"
+                      style={{ background: fondoTenue(COLOR_ESTADO_ORDEN[o.estado]), color: COLOR_ESTADO_ORDEN[o.estado] }}
+                    >
+                      {ETIQUETA_ESTADO_ORDEN[o.estado]}
+                    </span>
+                  </td>
+                  <td className="max-w-44 truncate px-4 py-2.5" title={o.empresaNombre}>
+                    {o.empresaNombre}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {o.ambitoNombre ? (
+                      <>
+                        <span className="text-[11px] text-texto-3">
+                          {ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"}
+                        </span>{" "}
+                        <span className="font-semibold">{o.ambitoNombre}</span>
+                      </>
+                    ) : (
+                      <span className="text-texto-3">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
+                    {ETIQUETA_PRIORIDAD[o.prioridad]}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="num text-xs text-texto-2">
+                        {numero(o.hechos)}/{numero(o.enPlan)}
+                      </span>
+                      <span className="h-1.5 w-20 overflow-hidden rounded-full bg-panel-3">
+                        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: "#199e70" }} />
+                      </span>
+                    </div>
+                  </td>
+                  <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
+                    {o.m2Reportados > 0 ? numero(o.m2Reportados) : "—"}
+                  </td>
+                  <td
+                    className="num px-4 py-2.5 text-right font-semibold"
+                    style={{ color: o.tnReportadas > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}
+                  >
+                    {o.tnReportadas > 0 ? formatoToneladas(o.tnReportadas) : "—"}
+                  </td>
+                  <td className={`num px-4 py-2.5 ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>
+                    {fechaCorta(o.venceEn)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <Link href={`/ordenes/${o.id}`} className="text-xs font-semibold text-celeste hover:underline">
+                      Abrir →
+                    </Link>
+                  </td>
+                </tr>
+              );
+            })}
+            {ordenesFiltradas.length === 0 && (
+              <FilaVacia
+                columnas={9}
+                titulo={
+                  soloVencidas
+                    ? "Ninguna orden activa está vencida"
+                    : estadoFiltro
+                      ? "No hay órdenes en este estado"
+                      : "Todavía no hay ninguna orden"
+                }
+                detalle={
+                  hayFiltro
+                    ? undefined
+                    : "La orden es el papel que viaja a la empresa con la lista de baches a tapar."
+                }
+                accion={
+                  hayFiltro
+                    ? { texto: "Ver todas las órdenes", href: "/ordenes" }
+                    : { texto: "Crear la primera orden", href: "/ordenes/nueva" }
+                }
+              />
+            )}
+          </tbody>
+        </table>
+      </PanelTabla>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_340px]">
         {/* Tabla de circuitos: la vista de relevamiento del Director */}
         <div className="min-w-0">
           <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
@@ -240,134 +430,6 @@ export default async function PaginaOrdenes({
           </p>
         </div>
       </div>
-
-      {/* Listado de órdenes */}
-      <h2 className="mt-8 mb-3 text-sm font-bold tracking-wide uppercase">
-        Órdenes <span className="font-normal text-texto-3 normal-case">— las últimas 200</span>
-      </h2>
-      <form className="mb-3 flex flex-wrap items-center gap-2" action="/ordenes" method="get">
-        <select
-          name="estado"
-          defaultValue={soloVencidas ? "vencidas" : (estadoFiltro ?? "")}
-          className="rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
-        >
-          <option value="">Todos los estados</option>
-          {/* Vencidas no es un estado de la orden sino un cruce con la fecha,
-              pero para quien mira el tablero es una categoría más — y acá es
-              donde la va a buscar. */}
-          <option value="vencidas">Vencidas</option>
-          {ESTADOS_ORDEN.map((e) => (
-            <option key={e} value={e}>
-              {ETIQUETA_ESTADO_ORDEN[e]}
-            </option>
-          ))}
-        </select>
-        <button className="rounded-lg border border-borde-2 px-4 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste">
-          Filtrar
-        </button>
-        {hayFiltro && (
-          <Link href="/ordenes" className="text-sm text-texto-2 hover:text-texto">
-            Limpiar
-          </Link>
-        )}
-      </form>
-      <PanelTabla>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
-              <th className="px-4 py-3">Número</th>
-              <th className="px-4 py-3">Estado</th>
-              <th className="px-4 py-3">Empresa</th>
-              <th className="px-4 py-3">Circuito</th>
-              <th className="px-4 py-3">Prioridad</th>
-              <th className="px-4 py-3">Progreso</th>
-              <th className="num px-4 py-3 text-right">m²</th>
-              <th className="px-4 py-3">Vence</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {ordenesFiltradas.map((o) => {
-              // El denominador es el trabajo ENCARGADO (enPlan), el mismo que
-              // usa el detalle: dividiendo por o.items, lo que la empresa propuso
-              // y todavía nadie validó inflaba el total y la lista decía "8 de 13"
-              // donde el detalle decía "8 de 10".
-              const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
-              const vencida = estaVencida(o);
-              return (
-                <tr key={o.id} className="border-b border-borde/60 transition hover:bg-panel-2">
-                  <td className="px-4 py-2.5">
-                    <Link href={`/ordenes/${o.id}`} className="num font-bold text-celeste hover:underline">
-                      {o.numero}
-                    </Link>
-                    {vencida && (
-                      <span className="ml-1.5 text-[10px] font-bold text-peligro">VENCIDA</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className="rounded-md px-2 py-0.5 text-[11px] font-bold"
-                      style={{ background: fondoTenue(COLOR_ESTADO_ORDEN[o.estado]), color: COLOR_ESTADO_ORDEN[o.estado] }}
-                    >
-                      {ETIQUETA_ESTADO_ORDEN[o.estado]}
-                    </span>
-                  </td>
-                  <td className="max-w-44 truncate px-4 py-2.5" title={o.empresaNombre}>
-                    {o.empresaNombre}
-                  </td>
-                  <td className="px-4 py-2.5 font-semibold">{o.circuitoCodigo ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-xs" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
-                    {ETIQUETA_PRIORIDAD[o.prioridad]}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="num text-xs text-texto-2">
-                        {numero(o.hechos)}/{numero(o.enPlan)}
-                      </span>
-                      <span className="h-1.5 w-20 overflow-hidden rounded-full bg-panel-3">
-                        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: "#199e70" }} />
-                      </span>
-                    </div>
-                  </td>
-                  <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
-                    {o.m2Reportados > 0 ? numero(o.m2Reportados) : "—"}
-                  </td>
-                  <td className={`num px-4 py-2.5 ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>
-                    {fechaCorta(o.venceEn)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Link href={`/ordenes/${o.id}`} className="text-xs font-semibold text-celeste hover:underline">
-                      Abrir →
-                    </Link>
-                  </td>
-                </tr>
-              );
-            })}
-            {ordenesFiltradas.length === 0 && (
-              <FilaVacia
-                columnas={9}
-                titulo={
-                  soloVencidas
-                    ? "Ninguna orden activa está vencida"
-                    : estadoFiltro
-                      ? "No hay órdenes en este estado"
-                      : "Todavía no hay ninguna orden"
-                }
-                detalle={
-                  hayFiltro
-                    ? undefined
-                    : "La orden es el papel que viaja a la empresa con la lista de baches a tapar."
-                }
-                accion={
-                  hayFiltro
-                    ? { texto: "Ver todas las órdenes", href: "/ordenes" }
-                    : { texto: "Crear la primera orden", href: "/ordenes/nueva" }
-                }
-              />
-            )}
-          </tbody>
-        </table>
-      </PanelTabla>
     </div>
   );
 }

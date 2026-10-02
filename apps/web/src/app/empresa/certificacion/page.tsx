@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { certificacionDeEmpresa } from "@/lib/certificacion-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { Panel } from "@/components/ui";
 import { resolverVistaPortal } from "../vista";
 
@@ -69,24 +70,28 @@ export default async function PaginaCertificacionEmpresa({
         <Cifra
           valor={m2(c.sinCertificar.m2)}
           unidad="m² sin certificar"
+          toneladas={c.sinCertificar.tn}
           detalle={`${conc(c.sinCertificar.items, "punto cargado", "puntos cargados")} que ${c.sinCertificar.items === 1 ? "todavía no entró" : "todavía no entraron"} en un acta`}
           color="var(--color-en-cola)"
         />
         <Cifra
           valor={m2(c.certificado.m2)}
           unidad="m² ya en acta"
+          toneladas={c.certificado.tn}
           detalle={conc(c.certificado.items, "punto medido y certificado", "puntos medidos y certificados")}
           color="var(--color-resuelto)"
         />
         <Cifra
           valor={m2(c.ultimos30.m2)}
           unidad="m² en 30 días"
+          toneladas={c.ultimos30.tn}
           detalle={`${conc(c.ultimos30.items, "punto cargado", "puntos cargados")} en el último mes`}
           color="var(--color-celeste)"
         />
         <Cifra
           valor={m2(c.sinOrden.m2)}
           unidad="m² sin orden"
+          toneladas={c.sinOrden.tn}
           detalle={`${conc(c.sinOrden.items, "trabajo cargado", "trabajos cargados")} sin orden previa: ${c.sinOrden.items === 1 ? "se mira" : "se miran"} aparte`}
           color="var(--color-texto-2)"
         />
@@ -136,14 +141,23 @@ export default async function PaginaCertificacionEmpresa({
   );
 }
 
+/**
+ * Dos unidades en la misma cifra, y el orden importa: la superficie arriba
+ * porque es lo que la empresa midio en la calle, la TONELADA debajo porque es
+ * la unidad con la que se firma el acta y se cobra. Antes solo estaba la
+ * superficie y la conversion se hacia a mano en un papel al costado, justo en
+ * la pantalla que existe para contestar "esto se puede cobrar?".
+ */
 function Cifra({
   valor,
   unidad,
+  toneladas,
   detalle,
   color,
 }: {
   valor: string;
   unidad: string;
+  toneladas: number;
   detalle: string;
   color: string;
 }) {
@@ -153,6 +167,7 @@ function Cifra({
         {valor}
       </p>
       <p className="text-[12px] font-semibold text-texto-2">{unidad}</p>
+      <p className="num mt-0.5 text-[13px] font-bold text-amarillo">{formatoToneladas(toneladas)}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-texto-3">{detalle}</p>
     </Panel>
   );

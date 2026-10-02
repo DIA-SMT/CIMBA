@@ -10,6 +10,7 @@ import {
   regimenPorEmpresa,
 } from "@/lib/certificacion";
 import { fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { Panel, TituloPagina } from "@/components/ui";
 import { FilaInspeccion } from "./fila-inspeccion";
 import { PanelTabla } from "@/components/tabla-deslizable";
@@ -94,6 +95,7 @@ export default async function PaginaCertificacion() {
                 <th className="px-3 py-2">Régimen de medición</th>
                 <th className="px-3 py-2 text-right">Puntos</th>
                 <th className="px-3 py-2 text-right">m²</th>
+                <th className="px-3 py-2 text-right">Toneladas</th>
                 <th className="px-5 py-2">Última acta</th>
               </tr>
             </thead>
@@ -112,6 +114,8 @@ export default async function PaginaCertificacion() {
                   </td>
                   <td className="num px-3 py-2.5 text-right font-bold">{numero(r.itemsSinCertificar)}</td>
                   <td className="num px-3 py-2.5 text-right">{numero(Math.round(r.m2SinCertificar))}</td>
+                  {/* La unidad con la que se firma el acta y se paga. */}
+                  <td className="num px-3 py-2.5 text-right font-bold text-amarillo">{formatoToneladas(r.tnSinCertificar)}</td>
                   <td className="px-5 py-2.5 text-[12px] text-texto-2">
                     {r.ultimaActa ? fechaCorta(r.ultimaActa) : "—"}
                     {r.ultimaDesviacion != null && (

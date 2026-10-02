@@ -64,7 +64,7 @@ export async function trabajosDeEmpresa(
              oi.metadata->>'capataz' as capataz,
              oi.metadata->>'ticket_147' as ticket_147,
              oi.observaciones,
-             st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+             st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              (oi.acta_id is not null) as certificado,
              (select f.url_externa from fotografias f
                 where f.intervencion_id = oi.intervencion_id and f.momento = 'antes'

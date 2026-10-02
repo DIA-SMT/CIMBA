@@ -2,15 +2,19 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
-import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
+import { listarEmpresas, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
+import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
+import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
 import { ResolverPropuesto } from "./resolver-propuesto";
+import { BorrarItem } from "./borrar-item";
+import { CorregirMedidas } from "./corregir-medidas";
 import { SelectTipoIntervencion } from "./select-tipo-intervencion";
 import { ETIQUETA_TIPO_INTERVENCION } from "./tipos-intervencion";
 import { PanelTabla } from "@/components/tabla-deslizable";
@@ -19,6 +23,7 @@ import {
   COLOR_ESTADO_ORDEN,
   fondoTenue,
   COLOR_PRIORIDAD,
+  ETIQUETA_AMBITO,
   ETIQUETA_ESTADO_ITEM,
   ETIQUETA_ESTADO_ORDEN,
   ETIQUETA_PRIORIDAD,
@@ -69,6 +74,28 @@ function datosPropuesto(metadata: Record<string, unknown>): { por: string | null
   };
 }
 
+/**
+ * Lo que la cuadrilla cargó cuando propuso el bache YA TAPADO: la foto del
+ * después, cómo lo midió y quién lo hizo. Sin esto, validar era decidir a
+ * ciegas — "faltaría poder acceder al registro para ver las fotos y los datos
+ * que cargaron, o que aparezca la foto del antes y después ahí para comparar
+ * y validar con más confianza" (15/09).
+ */
+function datosYaEjecutado(metadata: Record<string, unknown>): {
+  fotoDespues: string | null;
+  medicion: string | null;
+  capataz: string | null;
+} {
+  const y = metadata.ya_ejecutado as
+    | { foto_despues?: unknown; medicion?: unknown; capataz?: unknown }
+    | undefined;
+  return {
+    fotoDespues: typeof y?.foto_despues === "string" ? y.foto_despues : null,
+    medicion: typeof y?.medicion === "string" ? y.medicion : null,
+    capataz: typeof y?.capataz === "string" ? y.capataz : null,
+  };
+}
+
 /** Ruta en Storage de la foto que mandó la cuadrilla al proponer (si mandó). */
 function fotoPropuesta(metadata: Record<string, unknown>): string | null {
   return typeof metadata.foto_propuesta === "string" ? metadata.foto_propuesta : null;
@@ -82,6 +109,11 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   if (!o) notFound();
 
   const puedePlanificar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "planificacion";
+  /* Para poder pasarle la orden a otra empresa. Solo las activas: a una dada
+     de baja no se le asigna trabajo nuevo. */
+  const empresas = puedePlanificar
+    ? (await listarEmpresas(sesion)).filter((e) => e.activa).map((e) => ({ id: e.id, nombre: e.nombre }))
+    : [];
   // Supervisión también valida propuestos (resolverPropuesto lo permite); la
   // corrección del tipo de intervención queda para admin/planificación.
   const puedeSupervisar = puedePlanificar || sesion.rol_cimba === "supervision";
@@ -92,6 +124,32 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   const itemsPapel = o.itemsDetalle.filter((i) => i.estado !== "propuesto" && i.estado !== "rechazado");
   // o.enPlan es itemsPapel.length calculado en la consulta: se usa el del
   // servidor para que el listado y el detalle no puedan divergir nunca.
+  /**
+   * LOS TOTALES DE LA ORDEN. Solo suman los items que TIENEN medidas: un
+   * pendiente sin cargar no aporta cero metros, aporta "todavía no se sabe", y
+   * mezclarlos haría que el total baje de sentido a medida que se emiten
+   * órdenes nuevas. Las toneladas salen del volumen a 2,4 t/m³, la misma
+   * constante con la que se certifica (ver lib/medicion.ts).
+   *
+   * Dos totales y no uno: la pantalla muestra también lo rechazado y lo no
+   * encontrado, y el papel es el plan que se firma. Si compartieran el número,
+   * uno de los dos estaría mal.
+   */
+  const sumar = (items: typeof o.itemsDetalle) =>
+    items.reduce(
+      (acc, it) => {
+        if (it.superficieM2 == null || it.espesorCm == null) return acc;
+        return {
+          items: acc.items + 1,
+          m2: acc.m2 + it.superficieM2,
+          toneladas: acc.toneladas + toneladasDe(volumenDe(it.superficieM2, it.espesorCm)),
+        };
+      },
+      { items: 0, m2: 0, toneladas: 0 },
+    );
+  const totales = sumar(o.itemsDetalle.filter((i) => i.estado !== "propuesto"));
+  const totalesPapel = sumar(itemsPapel);
+
   const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
 
@@ -142,9 +200,10 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <span className="text-xs font-semibold" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
                 Prioridad {ETIQUETA_PRIORIDAD[o.prioridad].toLowerCase()}
               </span>
-              {o.circuitoCodigo && (
+              {/* Mismo dato que la hoja impresa, misma fuente. */}
+              {o.ambitoNombre && (
                 <span className="rounded-md border border-borde-2 px-2 py-0.5 text-xs font-semibold">
-                  Circuito {o.circuitoCodigo}
+                  {ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"} {o.ambitoNombre}
                 </span>
               )}
             </div>
@@ -160,7 +219,15 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.cerradaEn && <> · cerrada {fechaCorta(o.cerradaEn)}</>}
             </p>
           </div>
-          <AccionesOrden ordenId={o.id} estado={o.estado} puedePlanificar={puedePlanificar} />
+          <AccionesOrden
+            ordenId={o.id}
+            estado={o.estado}
+            puedePlanificar={puedePlanificar}
+            itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente" || i.estado === "propuesto").length}
+            emitidaEn={o.emitidaEn ? o.emitidaEn.slice(0, 10) : null}
+            empresaId={o.empresaId}
+            empresas={empresas}
+          />
         </div>
 
         {o.indicaciones && (
@@ -214,15 +281,31 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 const prop = datosPropuesto(it.metadata);
                 const ruta = fotoPropuesta(it.metadata);
                 const urlPropuesta = ruta ? urlFoto({ storagePath: ruta, urlExterna: null }) : null;
-                const fotosPropuesto: FotoVisor[] = urlPropuesta
-                  ? [
-                      {
-                        url: urlPropuesta,
-                        alt: "Foto del bache propuesto",
-                        etiqueta: `PROPUESTO · ${it.direccion ?? `Item #${it.id}`}`,
-                      },
-                    ]
-                  : [];
+                const ejec = datosYaEjecutado(it.metadata);
+                const urlDespues = ejec.fotoDespues
+                  ? urlFoto({ storagePath: ejec.fotoDespues, urlExterna: null })
+                  : null;
+                /* ANTES y DESPUÉS juntos, en ese orden: validar es comparar. */
+                const fotosPropuesto: FotoVisor[] = [
+                  ...(urlPropuesta
+                    ? [
+                        {
+                          url: urlPropuesta,
+                          alt: "Foto del bache propuesto",
+                          etiqueta: `ANTES · ${it.direccion ?? `Item #${it.id}`}`,
+                        },
+                      ]
+                    : []),
+                  ...(urlDespues
+                    ? [
+                        {
+                          url: urlDespues,
+                          alt: "Foto del trabajo terminado",
+                          etiqueta: `DESPUÉS · ${it.direccion ?? `Item #${it.id}`}`,
+                        },
+                      ]
+                    : []),
+                ];
                 return (
                   <Panel key={it.id} className="border-amarillo/40 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -241,9 +324,59 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         {it.observaciones && (
                           <p className="mt-1 text-sm text-texto-2">{it.observaciones}</p>
                         )}
+
+                        {/**
+                          * LO QUE CARGARON, A LA VISTA DE QUIEN VALIDA.
+                          *
+                          * Si la cuadrilla lo propuso YA TAPADO, validar no es
+                          * "¿existe este bache?" sino "¿le creo la medida?" — y
+                          * eso no se puede contestar sin ver la medida. Va con
+                          * las toneladas calculadas, que es lo que se certifica:
+                          * validar esto es habilitar un pago.
+                          */}
+                        {it.superficieM2 != null && it.espesorCm != null && (
+                          <div className="mt-2 rounded-lg border border-amarillo/40 bg-amarillo/5 px-3 py-2 text-[12px] leading-relaxed">
+                            <b className="text-amarillo">Ya lo taparon y lo midieron.</b>{" "}
+                            <span className="num font-semibold">
+                              {numero(it.superficieM2)} m²
+                            </span>{" "}
+                            · espesor <span className="num">{numero(it.espesorCm)} cm</span> ·{" "}
+                            <span className="num font-semibold text-amarillo">
+                              {formatoToneladas(toneladasDe(volumenDe(it.superficieM2, it.espesorCm)))}
+                            </span>
+                            {it.anchoM != null && it.largoM != null && (
+                              <>
+                                {" "}
+                                · <span className="num">{numero(it.anchoM)} × {numero(it.largoM)} m</span>
+                              </>
+                            )}
+                            {ejec.medicion && <> · medido por {ejec.medicion}</>}
+                            {ejec.capataz && (
+                              <>
+                                {" "}
+                                · capataz <b className="text-texto-2">{ejec.capataz}</b>
+                              </>
+                            )}
+                            <span className="mt-0.5 block text-texto-3">
+                              Al validar se crea la intervención con estas medidas y el item pasa a hecho.
+                            </span>
+                          </div>
+                        )}
                         {puedeSupervisar && (
                           <div className="mt-3">
                             <ResolverPropuesto itemId={it.id} />
+                            {/* Corregir ANTES de decidir. Un propuesto con el
+                                pin media cuadra corrido no se podía arreglar:
+                                había que rechazarlo y pedir que lo cargaran de
+                                nuevo, con foto y medidas otra vez. */}
+                            <div className="mt-2">
+                              <CorregirUbicacionItem
+                                itemId={it.id}
+                                lat={it.lat}
+                                lon={it.lon}
+                                direccion={it.direccion}
+                              />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -278,6 +411,9 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 </th>
                 <th className="px-3 py-3" title="Ancho × largo × espesor reportados">Medidas</th>
                 <th className="num px-3 py-3 text-right">m²</th>
+                <th className="num px-3 py-3 text-right text-amarillo" title="Del volumen a 2,4 t/m³: es la unidad con la que se certifica">
+                  Toneladas
+                </th>
                 <th className="px-3 py-3">Reportado</th>
                 <th className="px-3 py-3">Fotos</th>
                 <th className="px-3 py-3" />
@@ -289,8 +425,34 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.itemsDetalle
                 .filter((it) => it.estado !== "propuesto")
                 .map((it) => (
-                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} />
+                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} puedePlanificar={puedePlanificar} />
                 ))}
+              {/**
+                * LA SUMA, AL PIE DE LA COLUMNA QUE SUMA.
+                *
+                * "En los reportes debe aparecer las toneladas de cada bache y
+                * en el cuadro una sumatoria de los m² y las toneladas"
+                * (Dirección de Bacheo, 16/09). Quien certifica sacaba el total
+                * con una calculadora al lado de la pantalla, que es justo
+                * donde se cuela un error de tipeo en un número que es un pago.
+                */}
+              {totales.items > 0 && (
+                <tr className="border-t-2 border-borde bg-panel-2 text-sm font-bold">
+                  <td className="px-3 py-3" colSpan={6}>
+                    Total reportado{" "}
+                    <span className="font-normal text-texto-3">
+                      — {numero(totales.items)} {totales.items === 1 ? "trabajo" : "trabajos"} con medidas
+                    </span>
+                  </td>
+                  <td className="num px-3 py-3 text-right" style={{ color: "#199e70" }}>
+                    {numero(totales.m2)}
+                  </td>
+                  <td className="num px-3 py-3 text-right text-amarillo">
+                    {formatoToneladas(totales.toneladas)}
+                  </td>
+                  <td className="px-3 py-3" colSpan={3} />
+                </tr>
+              )}
             </tbody>
           </table>
         </PanelTabla>
@@ -321,8 +483,14 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <td style={{ width: "34%" }}>
                 <b>Empresa:</b> {o.empresaNombre}
               </td>
+              {/* Por dónde se definió la orden. Antes decía siempre "Circuito"
+                  y leía solo circuitoCodigo: una orden armada por distrito
+                  —que es el caso más común— salía impresa como "Circuito: —" y
+                  el capataz recibía siete direcciones sin ninguna referencia de
+                  zona. Ahora dice lo que se eligió en "2 · Por dónde se
+                  define": "Distrito: 12", "Barrio: Néstor Kirchner"… */}
               <td style={{ width: "22%" }}>
-                <b>Circuito:</b> {o.circuitoCodigo ?? "—"}
+                <b>{ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"}:</b> {o.ambitoNombre ?? "—"}
               </td>
               <td style={{ width: "22%" }}>
                 <b>Emitida:</b> {fechaCorta(o.emitidaEn)}
@@ -367,6 +535,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               <th style={{ width: 62 }}>Largo (m)</th>
               <th style={{ width: 66 }}>Espesor (cm)</th>
               <th style={{ width: 50 }}>m²</th>
+              <th style={{ width: 58 }}>Toneladas</th>
             </tr>
           </thead>
           <tbody>
@@ -394,8 +563,23 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 <td style={{ textAlign: "right" }}>{it.largoM ?? " "}</td>
                 <td style={{ textAlign: "right" }}>{it.espesorCm ?? " "}</td>
                 <td style={{ textAlign: "right" }}>{it.superficieM2 != null ? numero(it.superficieM2) : " "}</td>
+                {/* Las toneladas del bache, al lado de sus m²: es lo que se
+                    certifica, y quien firma el acta no tendría que hacer la
+                    cuenta en el margen de la hoja. */}
+                <td style={{ textAlign: "right" }}>
+                  {it.superficieM2 != null && it.espesorCm != null
+                    ? formatoToneladas(toneladasDe(volumenDe(it.superficieM2, it.espesorCm)))
+                    : " "}
+                </td>
               </tr>
             ))}
+            {totalesPapel.items > 0 && (
+              <tr style={{ fontWeight: 800, borderTop: "2px solid #555" }}>
+                <td colSpan={8} style={{ textAlign: "right" }}>TOTAL</td>
+                <td style={{ textAlign: "right" }}>{numero(totalesPapel.m2)}</td>
+                <td style={{ textAlign: "right" }}>{formatoToneladas(totalesPapel.toneladas)}</td>
+              </tr>
+            )}
           </tbody>
         </table>
 
@@ -434,6 +618,17 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         · <b>{numero(item.superficieM2)} m²</b>
                       </>
                     )}
+                    {/* Las toneladas al lado de la descripción: es la unidad
+                        con la que se certifica el pago, y quien mira la
+                        evidencia para firmar no tendría que ir a buscarla a la
+                        tabla de arriba ni hacer la cuenta al margen. */}
+                    {item.superficieM2 != null && item.espesorCm != null && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <b>{formatoToneladas(toneladasDe(volumenDe(item.superficieM2, item.espesorCm)))}</b>
+                      </>
+                    )}
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4mm" }}>
                     {fotos.map((f, j) => (
@@ -449,7 +644,23 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                              archivos ya se pidieron para los thumbnails, así
                              que en la práctica es caché, no doble descarga. */
                           loading="eager"
-                          style={{ width: "8cm", maxWidth: "100%", height: "6cm", objectFit: "cover", border: "1px solid #555" }}
+                          /**
+                           * NUNCA recortada. Estaba fijada en 8×6 cm con
+                           * object-fit:cover, y el capataz saca las fotos con
+                           * el teléfono en vertical: el recorte a caja
+                           * apaisada se comía la mitad del bache, que es lo
+                           * único que la foto tiene que probar. Ahora la foto
+                           * entra entera —se achica hasta caber, nunca se
+                           * corta— y la caja se adapta a lo que hay.
+                           */
+                          style={{
+                            width: "8cm",
+                            maxWidth: "100%",
+                            height: "auto",
+                            maxHeight: "9cm",
+                            objectFit: "contain",
+                            border: "1px solid #555",
+                          }}
                         />
                         <figcaption style={{ fontSize: 9, marginTop: 2 }}>
                           {(ETIQUETA_MOMENTO[f.momento] ?? f.momento).toUpperCase()} — {o.numero} · item {pos} ·{" "}
@@ -481,7 +692,15 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   );
 }
 
-function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirTipo: boolean }) {
+function FilaItem({
+  item,
+  puedeCorregirTipo,
+  puedePlanificar,
+}: {
+  item: ItemOrden;
+  puedeCorregirTipo: boolean;
+  puedePlanificar: boolean;
+}) {
   const medidas =
     item.anchoM != null && item.largoM != null && item.espesorCm != null
       ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
@@ -548,7 +767,26 @@ function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirT
           <span className="text-xs text-texto-3">—</span>
         )}
       </td>
-      <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">{medidas ?? "—"}</td>
+      <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">
+        <span className="flex items-center gap-1.5">
+          {medidas ?? "—"}
+          {/* "Todos nos equivocamos, seguro cargan mal": la medida entra desde
+              un teléfono con guantes y hasta ahora quedaba fija para siempre.
+              Solo sobre trabajo ya reportado y todavía sin certificar. */}
+          {puedePlanificar && item.estado === "hecho" && item.intervencionId != null && (
+            <CorregirMedidas
+              itemId={item.id}
+              superficieM2={item.superficieM2}
+              espesorCm={item.espesorCm}
+              anchoM={item.anchoM}
+              largoM={item.largoM}
+              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
+              tipoObra={item.tipoObra ?? null}
+              enActa={item.actaId != null}
+            />
+          )}
+        </span>
+      </td>
       <td className="num px-3 py-2.5 text-right" style={{ color: item.superficieM2 != null ? "#199e70" : "#5c6b84" }}>
         {item.superficieM2 != null ? numero(item.superficieM2) : "—"}
       </td>
@@ -569,6 +807,14 @@ function FilaItem({ item, puedeCorregirTipo }: { item: ItemOrden; puedeCorregirT
           >
             #{item.incidenteId} →
           </Link>
+        )}
+        {/* Sacar un punto que no corresponde. Solo mientras no tenga
+            trabajo reportado: detrás de un item hecho hay una intervención
+            con fotos y m², y borrarlo dejaría los números mintiendo. */}
+        {puedePlanificar && item.estado !== "hecho" && item.intervencionId == null && (
+          <span className="mt-1 flex justify-end">
+            <BorrarItem itemId={item.id} direccion={item.direccion} />
+          </span>
         )}
       </td>
     </tr>

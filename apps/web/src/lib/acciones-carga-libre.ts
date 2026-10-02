@@ -7,6 +7,7 @@ import { tipoIntervencionSchema } from "@cimba/domain";
 import { requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
 import { camposMedicion, resolverMedicion, volumenDe } from "./medicion";
 
 /**
@@ -62,6 +63,17 @@ export async function reportarTrabajoLibre(formData: FormData) {
       ticket147: z.string().max(40).optional(),
       /** Solo lo usa el staff en vista espejo; el ejecutor carga como él mismo. */
       empresaId: z.coerce.number().int().positive().optional(),
+      /**
+       * Por qué este trabajo no entra en ninguna orden. Calleri cargó 90
+       * baches como sueltos mientras trabajaba una orden; cuando la empresa
+       * tiene órdenes activas, el portal exige esta frase antes de aceptar
+       * una carga por fuera. Queda en el metadata para que la Dirección sepa
+       * qué le están declarando.
+       */
+      motivoSinOrden: z.string().max(300).optional(),
+      /** El día real del trabajo. Lo fija la cola sin señal al guardar, así un
+       *  bache tapado el lunes que sincroniza el jueves queda con fecha lunes. */
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse({
       direccion: formData.get("direccion"),
@@ -80,7 +92,12 @@ export async function reportarTrabajoLibre(formData: FormData) {
       capataz: formData.get("capataz") || undefined,
       ticket147: formData.get("ticket147") || undefined,
       empresaId: formData.get("empresaId") || undefined,
+      motivoSinOrden: formData.get("motivoSinOrden") || undefined,
+      fechaEjecucion: formData.get("fechaEjecucion") || undefined,
     });
+
+  // Cuándo se hizo: hoy, o el día que diga la carga (ver fecha-ejecucion.ts).
+  const cuando = instanteEjecucion(datos.fechaEjecucion);
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
@@ -134,7 +151,16 @@ export async function reportarTrabajoLibre(formData: FormData) {
   // una carpeta no se promedian con baches de 4 m².
   const esObra =
     tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
-  const tipoObra = datos.tipoObra ?? (superficie > 4 ? "extendido" : "planificado");
+  /**
+   * "Extendido" lo deriva el servidor, igual que en reportarItemHecho: el
+   * protocolo lo define por encima de 4 m², así que es consecuencia de la
+   * medida y no opinión de quien carga. Antes ganaba la elección explícita, y
+   * marcar "Planificado" en un trabajo de 6 m² lo certificaba mal teniendo el
+   * sistema el dato para saberlo. Las otras dos modalidades sí son criterio de
+   * quien ejecuta y se respetan tal cual vienen.
+   */
+  const modalidad = datos.tipoObra ?? "planificado";
+  const tipoObra = modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
 
   /**
    * Las fotos van a Storage ANTES de tocar la base, igual que en el reporte
@@ -179,8 +205,13 @@ export async function reportarTrabajoLibre(formData: FormData) {
         values (
           ${datos.tipoTrabajo === "bache" ? "bache" : "pavimento_deteriorado"},
           'reparado', st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-          ${datos.direccion}, ${superficie}, now(), now(),
-          ${JSON.stringify({ origen: "empresa_libre", sin_orden: true, empresa: empresa.nombre })}::jsonb
+          ${datos.direccion}, ${superficie}, ${cuando}, ${cuando},
+          ${JSON.stringify({
+            origen: "empresa_libre",
+            sin_orden: true,
+            empresa: empresa.nombre,
+            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
+          })}::jsonb
         ) returning id
       `)) as unknown as Array<{ id: number }>;
       const id = Number(inc[0]?.id);
@@ -193,7 +224,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
         ) values (
           ${id}, 'finalizada',
           st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-          now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+          ${cuando}, ${cuando}, ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
           ${JSON.stringify({
             ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
             espesor_cm: medida.espesorCm,
@@ -203,6 +234,7 @@ export async function reportarTrabajoLibre(formData: FormData) {
           ${JSON.stringify({
             origen: "empresa_libre",
             sin_orden: true,
+            ...(datos.motivoSinOrden ? { motivo_sin_orden: datos.motivoSinOrden } : {}),
             // `contratista` es la clave que leen las métricas (misma que usa
             // SIGOV); `empresa` queda como alias por si algo la busca así.
             contratista: empresa.nombre,

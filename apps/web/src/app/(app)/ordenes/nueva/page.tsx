@@ -17,7 +17,7 @@ export const maxDuration = 60;
 export default async function PaginaNuevaOrden({
   searchParams,
 }: {
-  searchParams: Promise<{ recorrido?: string }>;
+  searchParams: Promise<{ recorrido?: string; poligono?: string }>;
 }) {
   const sp = await searchParams;
   /**
@@ -26,6 +26,22 @@ export default async function PaginaNuevaOrden({
    * armado.
    */
   const recorrido = (sp.recorrido ?? "")
+    .split(";")
+    .map((par) => par.split(",").map(Number))
+    .filter(
+      (c): c is [number, number] =>
+        c.length === 2 &&
+        Number.isFinite(c[0]) && Number.isFinite(c[1]) &&
+        c[0]! > -65.6 && c[0]! < -64.9 && c[1]! > -27.2 && c[1]! < -26.5,
+    )
+    .slice(0, 500);
+  /**
+   * El ÁREA dibujada en el mapa, cuando el recorrido se cerró en polígono.
+   * Mismo formato y misma validación que el recorrido —no se confía en el
+   * query— pero significa otra cosa: no un tramo de calle sino un pedazo de
+   * ciudad, y lo que cae adentro entra en la orden.
+   */
+  const poligono = (sp.poligono ?? "")
     .split(";")
     .map((par) => par.split(",").map(Number))
     .filter(
@@ -77,6 +93,7 @@ export default async function PaginaNuevaOrden({
         empresas={empresas}
         parametros={parametros}
         recorrido={recorrido.length >= 2 ? recorrido : undefined}
+        poligono={poligono.length >= 3 ? poligono : undefined}
       />
     </div>
   );

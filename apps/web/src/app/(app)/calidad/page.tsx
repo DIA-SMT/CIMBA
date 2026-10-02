@@ -95,6 +95,18 @@ export default async function PaginaCalidad() {
           descripcion={`Pérdidas de agua, tapas y sumideros: se derivan todos juntos con la nota administrativa numerada al Director de la S.A.T. (${numero(diag.satConFoto)} traen foto).`}
           href="/calidad/tratamiento/derivar_sat"
         />
+        <TarjetaProblema
+          n={diag.pidePavimento}
+          titulo="Piden pavimentación"
+          descripcion="En la descripción u observación piden pavimentar la calle: no es bacheo ni enripiado, es obra nueva. La tipificación de origen se hace con el título; la verdad está en el texto del vecino."
+          href="/calidad/tratamiento/pide_pavimento"
+        />
+        <TarjetaProblema
+          n={diag.puntoDudoso}
+          titulo="El punto no coincide con la dirección"
+          descripcion="La dirección escrita cae a más de 300 m del pin, según el callejero municipal. En los reclamos sanos las dos cosas coinciden dentro de 18 m: cuando se van a cuadras, mandar una cuadrilla es mandarla a otro barrio."
+          href="/calidad/tratamiento/punto_dudoso"
+        />
       </div>
 
       {/* Problemas de calidad */}

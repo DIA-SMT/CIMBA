@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
+import { enviarOEncolar } from "@/lib/cola-envios";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { Panel } from "@/components/ui";
 import {
@@ -36,10 +37,16 @@ const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }
   { valor: "enripiado", etiqueta: "Enripiado" },
 ];
 
+/**
+ * Las mismas tres que la tarjeta del item (ver empresa/orden/[id]/tarjeta-item):
+ * "Extendido" no se elige, lo deriva el servidor de la superficie porque el
+ * protocolo lo define por encima de 4 m². Si estas dos listas divergen, la
+ * misma empresa ve dos criterios distintos para el mismo dato según entre por
+ * la orden o por la carga libre — y la certificación recibe los dos.
+ */
 const OPCIONES_OBRA: Array<{ valor: string; etiqueta: string }> = [
   { valor: "planificado", etiqueta: "Planificado" },
   { valor: "provisorio", etiqueta: "Provisorio (urgencia)" },
-  { valor: "extendido", etiqueta: "Extendido (+4 m²)" },
   { valor: "sobre_adoquin", etiqueta: "Sobre adoquín" },
 ];
 
@@ -50,11 +57,25 @@ const aNumero = (s: string) => Number(s.trim().replace(",", "."));
  *  (no la de una orden) porque acá no hay orden: ver memoria-carga.ts. */
 const CLAVE_MEMORIA = "cimba:carga-libre";
 
-export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
+export function FormularioLibre({
+  empresaId,
+  exigirMotivo = false,
+}: {
+  empresaId: number | null;
+  /**
+   * Con órdenes activas, cargar por fuera de todas es la excepción y tiene
+   * que costar una frase: por qué este trabajo no es de ninguna. Sin órdenes
+   * activas no hay nada que explicar.
+   */
+  exigirMotivo?: boolean;
+}) {
   const router = useRouter();
   const [pendiente, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [hecho, setHecho] = useState<number | null>(null);
+  /** Quedó guardado en el teléfono, no enviado: se dice con esas palabras. */
+  const [guardadoLocal, setGuardadoLocal] = useState(false);
+  const [motivoSinOrden, setMotivoSinOrden] = useState("");
 
   const [direccionTexto, setDireccionTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<UbicacionElegida | null>(null);
@@ -66,7 +87,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
   const [tipoObra, setTipoObra] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const [capataz, setCapataz] = useState("");
-  const [ticket, setTicket] = useState("");
 
   const refDespues = useRef<HTMLInputElement>(null);
   const refAntes = useRef<HTMLInputElement>(null);
@@ -139,6 +159,10 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
 
   const enviar = () => {
     setError(null);
+    if (exigirMotivo && motivoSinOrden.trim().length < 5) {
+      setError("Contá en una frase por qué este trabajo no es de ninguna de tus órdenes.");
+      return;
+    }
     if (direccionTexto.trim().length < 4) {
       setError("Cargá la dirección del trabajo (podés dictarla).");
       return;
@@ -166,14 +190,19 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     if (capataz.trim()) fd.set("capataz", capataz.trim());
-    if (ticket.trim()) fd.set("ticket147", ticket.trim());
+    if (motivoSinOrden.trim()) fd.set("motivoSinOrden", motivoSinOrden.trim());
     if (empresaId != null) fd.set("empresaId", String(empresaId));
     fd.set("foto", fotoDespues);
     if (fotoAntes) fd.set("fotoAntes", fotoAntes);
 
     startTransition(async () => {
       try {
-        const r = await reportarTrabajoLibre(fd);
+        const { encolado } = await enviarOEncolar(
+          "reportarTrabajoLibre",
+          fd,
+          { direccion: direccionTexto.trim() },
+          (f) => reportarTrabajoLibre(f),
+        );
         try {
           localStorage.setItem(
             CLAVE_MEMORIA,
@@ -189,12 +218,12 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         }
         // Reset de lo que cambia entre baches; lo repetido queda puesto para
         // el siguiente, que es el caso normal: se cargan varios seguidos.
-        setHecho(r.incidenteId);
+        setGuardadoLocal(encolado);
+        setHecho(encolado ? -1 : 1);
         setDireccionTexto("");
         setUbicacion(null);
         setMedida((v) => ({ ...medidaVacia(v.medicion), espesor: v.espesor }));
         setObs("");
-        setTicket("");
         void elegirFoto("despues", undefined, setFotoDespues, setPreviewDespues, previewDespues);
         void elegirFoto("antes", undefined, setFotoAntes, setPreviewAntes, previewAntes);
         router.refresh();
@@ -210,7 +239,9 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3">
           <Check size={18} className="shrink-0 text-resuelto" />
           <p className="min-w-0 flex-1 text-sm font-semibold text-resuelto">
-            Cargado. Ya está en el mapa y cuenta como trabajo hecho.
+            {guardadoLocal
+              ? "Guardado en el teléfono. Se manda solo cuando haya señal."
+              : "Cargado. Ya está en el mapa y cuenta como trabajo hecho."}
           </p>
           <Link href={`/empresa`} className="shrink-0 text-sm font-semibold text-celeste hover:underline">
             volver a mis órdenes
@@ -305,6 +336,9 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
 
         <div>
           <p className="mb-1.5 text-xs font-semibold tracking-wider text-texto-3 uppercase">Fotos</p>
+          {/* Antes a la izquierda y después a la derecha, igual que en el item de
+              una orden: el mismo capataz carga en las dos pantallas y no puede
+              tener que acordarse de que el orden cambia. Ver tarjeta-item.tsx. */}
           <div className="grid grid-cols-2 gap-2">
             <input
               ref={refDespues}
@@ -326,35 +360,6 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
                 void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)
               }
             />
-            <button
-              type="button"
-              onClick={() => refDespues.current?.click()}
-              disabled={cuadroOcupado.despues}
-              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
-                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
-              }`}
-            >
-              <Achicando visible={cuadroOcupado.despues} />
-              {previewDespues ? (
-                <>
-                  <img
-                    src={previewDespues}
-                    alt="Foto del trabajo terminado"
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
-                    DESPUÉS ✓ — tocá para cambiar
-                  </span>
-                </>
-              ) : (
-                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
-                  <Camera size={22} className="text-resuelto" />
-                  Cómo quedó
-                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
-                </span>
-              )}
-            </button>
             <button
               type="button"
               onClick={() => refAntes.current?.click()}
@@ -384,10 +389,53 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
+              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
+                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
+              }`}
+            >
+              <Achicando visible={cuadroOcupado.despues} />
+              {previewDespues ? (
+                <>
+                  <img
+                    src={previewDespues}
+                    alt="Foto del trabajo terminado"
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                    DESPUÉS ✓ — tocá para cambiar
+                  </span>
+                </>
+              ) : (
+                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                  <Camera size={22} className="text-resuelto" />
+                  Cómo quedó
+                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        {exigirMotivo && (
+          <label className="block rounded-xl border border-amarillo/40 bg-amarillo/5 p-3">
+            <span className="mb-1 block text-xs font-bold text-amarillo">
+              ¿Por qué no es de ninguna orden?
+            </span>
+            <input
+              value={motivoSinOrden}
+              onChange={(e) => setMotivoSinOrden(e.target.value)}
+              placeholder="Ej.: urgencia por pedido del inspector Pérez"
+              className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+            />
+          </label>
+        )}
+
+        <div className="grid grid-cols-1 gap-2">
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
             <input
@@ -397,16 +445,10 @@ export function FormularioLibre({ empresaId }: { empresaId: number | null }) {
               className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
             />
           </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-texto-2">N° de ticket 147</span>
-            <input
-              value={ticket}
-              onChange={(e) => setTicket(e.target.value)}
-              inputMode="numeric"
-              placeholder="si lo tenés"
-              className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:font-sans placeholder:text-texto-3"
-            />
-          </label>
+          {/* El N° de ticket 147 se fue de acá igual que de la tarjeta del
+              item: lo emite Atención Ciudadana, que es el único sistema que los
+              genera. Pedírselo al capataz era pedirle un dato que el sistema ya
+              tiene, con la única garantía de que a veces lo iba a tipear mal. */}
         </div>
 
         <textarea

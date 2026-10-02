@@ -195,7 +195,28 @@ export async function ingestarDemandas(
       r.errores.push({ idRemoto: d.idRemoto, error: describirError(e) });
     }
   }
+  await refrescarCallejero(db);
   return r;
+}
+
+/**
+ * El callejero municipal al día después de cada importación.
+ *
+ * Es una vista materializada sobre las direcciones con altura de incidentes,
+ * pedidos e items: cada tanda que entra le agrega puntos, y de ahí sale la
+ * precisión con la que se geocodifica lo siguiente. Sin este refresco, una
+ * importación de mil baches con GPS no mejora nada hasta el cron del día
+ * siguiente.
+ *
+ * Nunca rompe la ingesta: los datos ya entraron, y un callejero de ayer es
+ * exactamente lo que había hace un minuto.
+ */
+async function refrescarCallejero(db: ReturnType<typeof getDb>): Promise<void> {
+  try {
+    await db.execute(sql`select refrescar_callejero()`);
+  } catch {
+    /* sin refresco: el callejero sigue contestando con lo que ya tenía */
+  }
 }
 
 /**
@@ -306,11 +327,11 @@ export async function ingestarIntervenciones(
             /* El trigger de territorio solo completa lo que está en NULL, así
                que al mover el punto hay que recalcular a mano: si no, el
                incidente se muda de lugar pero sigue sumando en el distrito y
-               el cuadrante viejos. */
-            distrito_id = (select d.id from distritos d
-              where st_contains(d.geom, ${punto}) limit 1),
-            cuadrante_id = (select c.id from cuadrantes c
-              where st_contains(c.geom, ${punto}) limit 1),
+               el cuadrante viejos. distrito_de/cuadrante_de (migración 0031)
+               toleran el borde: st_contains deja sin territorio al punto que
+               cae justo sobre el límite. */
+            distrito_id = distrito_de(${punto}),
+            cuadrante_id = cuadrante_de(${punto}),
             cerrado_en = case
               when estado = 'verificado' then cerrado_en
               else ${fechaParam(iv.estado === "finalizada" ? iv.finalizadaEn : null)}::timestamptz end
@@ -366,6 +387,7 @@ export async function ingestarIntervenciones(
       r.errores.push({ idRemoto: iv.idRemoto, error: e instanceof Error ? e.message : String(e) });
     }
   }
+  await refrescarCallejero(db);
   return r;
 }
 

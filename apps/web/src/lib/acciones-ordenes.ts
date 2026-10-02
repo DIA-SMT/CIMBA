@@ -4,11 +4,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
-import { prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
+import { EMPRESAS_HABILITADAS_AGUA, prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
-import { empresaDelEjecutor } from "./ordenes";
+import { empresaDelEjecutor, poligonoSql } from "./ordenes";
 import { ErrorVisible } from "./errores";
+import { hoyISO } from "./formato";
+import { campoFechaEjecucion, instanteEjecucion } from "./fecha-ejecucion";
 import { camposMedicion, resolverMedicion } from "./medicion";
+import { MOTIVO_POR_VALOR, VALORES_MOTIVO } from "./problemas-calle";
 
 /**
  * Acciones del ciclo de la orden de trabajo. El principio rector: cuando la
@@ -59,13 +62,29 @@ export async function crearOrden(entrada: {
   /** Bocas de tormenta, cuando la orden es de la red pluvial. */
   imbornalIds?: number[];
   tramos?: Array<z.infer<typeof tramoSchema>>;
+  poligono?: Array<[number, number]>;
 }) {
   const sesion = await requerirRol("planificacion");
   const datos = z
     .object({
       empresaId: z.number().int().positive(),
-      tipo: z.enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio"]).default("bacheo"),
-      ambito: z.enum(["distrito","circuito","corredor","barrio","colector","zona"]).default("circuito"),
+      tipo: z
+        .enum(["bacheo","pano_hormigon","carpeta","cordon_cuneta","imbornales","tapas","ripio","perdida_agua"])
+        .default("bacheo"),
+      ambito: z
+        .enum(["distrito", "circuito", "corredor", "barrio", "colector", "zona", "poligono"])
+        .default("circuito"),
+      /**
+       * El área dibujada a mano en el mapa, como anillo de [lon, lat]. Solo
+       * tiene sentido con ambito = "poligono". El tope de 500 vértices es el
+       * mismo que el del recorrido: un dibujo a mano no tiene más, y sin tope
+       * un POST armado a mano puede mandar una geometría de megabytes.
+       */
+      poligono: z
+        .array(z.tuple([z.number().min(-65.6).max(-64.9), z.number().min(-27.2).max(-26.5)]))
+        .min(3)
+        .max(500)
+        .optional(),
       ambitoRef: z.union([z.number().int().positive(), z.string().max(120)]).optional(),
       circuitoId: z.number().int().positive().optional(),
       prioridad: prioridadVialSchema,
@@ -79,8 +98,50 @@ export async function crearOrden(entrada: {
     })
     .parse(entrada);
 
-  if (datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0) {
-    throw new ErrorVisible("La orden necesita al menos un punto: un bache, un tramo o una boca de tormenta");
+  /**
+   * LA ORDEN ABIERTA: una zona, sin lista de puntos.
+   *
+   * "Que pueda generar una orden para Villa Tuquito aunque no tenga ningún
+   * reclamo pendiente, para que carguen los baches nuevos que encuentren."
+   * Es cómo se trabaja de verdad media ciudad: la cuadrilla barre la zona y
+   * lo que hay lo encuentra ahí, no en la planilla. Antes había que inventar
+   * un tramo falso para poder emitir el papel.
+   *
+   * La condición es que la orden diga DÓNDE: una orden sin puntos y sin zona
+   * no es una orden, es un papel en blanco. Con el ámbito, la empresa sabe
+   * qué barrer y la certificación sabe a qué zona imputar lo cargado.
+   */
+  if (datos.ambito === "poligono" && (!datos.poligono || datos.poligono.length < 3)) {
+    throw new ErrorVisible("El área dibujada necesita al menos tres puntos para cerrarse");
+  }
+  const sinPuntos =
+    datos.incidenteIds.length === 0 && datos.tramos.length === 0 && datos.imbornalIds.length === 0;
+  if (sinPuntos && datos.ambitoRef == null && datos.circuitoId == null && datos.ambito !== "poligono") {
+    throw new ErrorVisible(
+      "Una orden sin puntos tiene que decir dónde se trabaja: elegí el distrito, barrio, corredor, circuito o zona",
+    );
+  }
+
+  /**
+   * LA RED DE AGUA SOLO LA TOCAN UOCRA E INGECO.
+   *
+   * Es una restricción del contrato, no una preferencia de la pantalla: las
+   * demás contratistas no están habilitadas. El formulario ya no las ofrece,
+   * pero esto es lo que la hace cierta — un POST armado a mano entra por acá
+   * igual, y el resto de las acciones de este archivo confían en que la orden
+   * que existe es una orden válida.
+   */
+  if (datos.tipo === "perdida_agua") {
+    const filas = (await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`select slug from empresas where id = ${datos.empresaId}`)) as unknown as Array<{
+        slug: string;
+      }>,
+    ))[0];
+    if (!filas || !(EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(filas.slug)) {
+      throw new ErrorVisible(
+        "Las pérdidas de agua son de la SAT: por contrato solo las pueden ejecutar UOCRA e INGECO",
+      );
+    }
   }
 
   /**
@@ -96,7 +157,8 @@ export async function crearOrden(entrada: {
     const creada = (await tx.execute(sql`
       insert into ordenes_trabajo (
         numero, empresa_id, tipo, ambito, circuito_id, distrito_id, barrio_id, corredor_id, zona_id, colector,
-        prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por
+        poligono,
+        prioridad, titulo, indicaciones, contrato_decreto, vence_en, creada_por, metadata
       )
       values (
         /* El número sale de siguiente_numero_orden() (migración 0018) y no de
@@ -111,9 +173,17 @@ export async function crearOrden(entrada: {
         ${datos.ambito === "corredor" ? refNum : null},
         ${datos.ambito === "zona" ? refNum : null},
         ${datos.ambito === "colector" && typeof ref === "string" ? ref : null},
+        /* El área dibujada: el alcance de ESTA orden. Cerrar el anillo lo hace
+           poligonoSql — un anillo abierto hace fallar a PostGIS con un error
+           de geometría inválida que no le dice nada a nadie. */
+        ${datos.ambito === "poligono" && datos.poligono ? poligonoSql(datos.poligono) : sql`null`},
         ${datos.prioridad},
         ${datos.titulo ?? null}, ${datos.indicaciones ?? null}, ${datos.contratoDecreto ?? null}, ${datos.venceEn ?? null},
-        ${sesion.sub}::uuid
+        ${sesion.sub}::uuid,
+        /* La orden abierta se marca acá: sin la marca, el primer bache que
+           cargue la empresa la cerraría sola —no quedarían pendientes— y la
+           cuadrilla se encontraría la orden cerrada a mitad de la cuadra. */
+        ${JSON.stringify(sinPuntos ? { orden_abierta: true } : {})}::jsonb
       ) returning id
     `)) as unknown as Array<{ id: number }>;
     const orden = creada[0];
@@ -226,18 +296,26 @@ export async function emitirOrden(entrada: { ordenId: number }) {
   try {
     const datosOt = (await conRls(claims(sesion), async (tx) =>
       (await tx.execute(sql`
-        select ot.numero, e.nombre as empresa,
+        select ot.numero, ot.empresa_id, e.nombre as empresa, ot.vence_en::text as vence,
           (select count(*) from orden_items oi where oi.orden_id = ot.id)::int as items
         from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id where ot.id = ${ordenId}
-      `)) as unknown as Array<{ numero: string; empresa: string; items: number }>,
+      `)) as unknown as Array<{ numero: string; empresa_id: number; empresa: string; vence: string | null; items: number }>,
     ))[0];
     if (datosOt) {
       const { notificarEvento } = await import("./notificar");
-      await notificarEvento("orden_emitida", {
-        titulo: `${datosOt.numero} emitida a ${datosOt.empresa}`,
-        cuerpo: `${datosOt.items} item(s) para trabajar`,
-        url: `/ordenes/${ordenId}`,
-      });
+      /* El mismo evento le llega a la Dirección (por rol) y a la EMPRESA (por
+         su empresa_id), cada uno con la URL que puede abrir: la contratista no
+         entra a /ordenes, entra a su portal. */
+      await notificarEvento(
+        "orden_emitida",
+        {
+          titulo: `${datosOt.numero} emitida a ${datosOt.empresa}`,
+          cuerpo: `${datosOt.items} item(s) para trabajar${datosOt.vence ? ` · vence el ${datosOt.vence}` : ""}`,
+          url: `/ordenes/${ordenId}`,
+          tag: `orden-${ordenId}`,
+        },
+        { empresaId: Number(datosOt.empresa_id), urlEmpresa: `/empresa/orden/${ordenId}` },
+      );
     }
   } catch {
     // sin aviso, pero emitida: el tablero de avisos muestra el estado real
@@ -275,6 +353,283 @@ export async function anularOrden(entrada: { ordenId: number; motivo: string }) 
 }
 
 // ── Asignación de circuitos y prioridades ────────────────────────────────────
+
+/**
+ * CERRAR LA ORDEN A MANO, con la fecha real y lo que haya que dejar escrito.
+ *
+ * Hasta ahora una orden solo se cerraba sola —cuando el último item dejaba de
+ * estar pendiente— o se anulaba. En la calle pasa otra cosa muy seguido: la
+ * cuadrilla terminó lo que se pudo hacer, el resto no se hizo (quedó agua,
+ * cambió la prioridad, se acabó el plazo del contrato) y la orden tiene que
+ * darse por terminada igual, con la fecha del día en que efectivamente se
+ * dejó de trabajar, que casi nunca es el día en que alguien se acuerda de
+ * entrar al sistema.
+ *
+ * Cerrar NO es anular: lo hecho queda hecho y certificable. Lo que quedó
+ * pendiente vuelve a la cola —igual que en una anulación—, porque un bache
+ * que no se tapó sigue siendo deuda de la ciudad y tiene que poder entrar en
+ * la próxima orden. Si se quedara 'programado' desaparecería de la brecha sin
+ * que nadie lo haya arreglado.
+ */
+/** La versión para la pantalla: la sesión sale de la cookie. */
+export async function cerrarOrden(entrada: {
+  ordenId: number;
+  /** Día en que se terminó de trabajar, 'YYYY-MM-DD'. Sin esto, hoy. */
+  fecha?: string;
+  observacion?: string;
+}) {
+  return cerrarOrdenConSesion(await requerirRol("planificacion"), entrada);
+}
+
+/** La misma, con la sesión en la mano: el bot llega sin cookie. */
+export async function cerrarOrdenConSesion(
+  sesion: Sesion,
+  entrada: {
+    ordenId: number;
+    fecha?: string;
+    observacion?: string;
+  },
+) {
+  const datos = z
+    .object({
+      ordenId: z.number().int().positive(),
+      fecha: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha tiene que ser un día del calendario")
+        .optional(),
+      observacion: z.string().max(1000).optional(),
+    })
+    .parse(entrada);
+
+  /**
+   * Una orden no se puede cerrar en el futuro —sería certificar trabajo que
+   * todavía no pasó— ni antes de haberse emitido. Los dos límites se validan
+   * contra el día de Tucumán, no contra UTC: a las 21:30 de acá ya es el día
+   * siguiente en UTC y "hoy" habría sido rechazado por futuro.
+   */
+  const hoy = hoyISO();
+  const fecha = datos.fecha ?? hoy;
+  if (fecha > hoy) throw new ErrorVisible("La fecha de cierre no puede ser posterior a hoy");
+
+  const resultado = await conRls(claims(sesion), async (tx) => {
+    const previa = (await tx.execute(sql`
+      select estado::text, emitida_en::date::text as emitida
+      from ordenes_trabajo where id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string; emitida: string | null }>;
+    const o = previa[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado === "completada") throw new ErrorVisible("La orden ya estaba cerrada");
+    if (o.estado === "borrador") {
+      throw new ErrorVisible("La orden todavía no se emitió: no hay nada que cerrar");
+    }
+    if (o.estado === "anulada") throw new ErrorVisible("La orden está anulada");
+    if (o.emitida && fecha < o.emitida) {
+      throw new ErrorVisible(`La orden se emitió el ${o.emitida}: no se puede cerrar antes de esa fecha`);
+    }
+
+    // Lo que quedó sin hacer, contado ANTES de moverlo: es el dato que se deja
+    // escrito en la orden y el que se le muestra a quien cierra.
+    const pend = (await tx.execute(sql`
+      select count(*)::int as n from orden_items
+      where orden_id = ${datos.ordenId} and estado in ('pendiente','propuesto')
+    `)) as unknown as Array<{ n: number }>;
+    const pendientes = Number(pend[0]?.n ?? 0);
+
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        estado = 'completada',
+        -- La fecha que dice quien cierra, a mediodía de Tucumán para que el
+        -- día no se corra al guardarse como timestamp con zona.
+        cerrada_en = (${fecha}::date + time '12:00') at time zone 'America/Argentina/Tucuman',
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'cierre_manual', jsonb_build_object(
+            'por', ${sesion.nombre}::text,
+            'en', now()::text,
+            'fecha', ${fecha}::text,
+            'observacion', ${datos.observacion?.trim() || null}::text,
+            'pendientes_al_cerrar', ${pendientes}::int
+          )
+        )
+      where id = ${datos.ordenId}
+    `);
+
+    // Lo no hecho vuelve a la cola, exactamente como en una anulación.
+    await tx.execute(sql`
+      update incidentes set estado = 'priorizado'
+      from orden_items oi
+      where oi.orden_id = ${datos.ordenId} and oi.incidente_id = incidentes.id
+        and oi.estado in ('pendiente','propuesto') and incidentes.estado = 'programado'
+    `);
+
+    const cab = (await tx.execute(sql`
+      select numero, empresa_id from ordenes_trabajo where id = ${datos.ordenId}
+    `)) as unknown as Array<{ numero: string; empresa_id: number }>;
+    return {
+      pendientes,
+      numero: cab[0]?.numero ?? "",
+      empresaId: cab[0] ? Number(cab[0].empresa_id) : null,
+    };
+  });
+
+  // La empresa se entera de que la orden se cerró: lo pendiente ya no se
+  // puede cargar ahí, y lo hecho queda firme para el acta.
+  if (resultado.empresaId != null) {
+    try {
+      const { notificarEvento } = await import("./notificar");
+      await notificarEvento(
+        "orden_cerrada",
+        {
+          titulo: `${resultado.numero} cerrada`,
+          cuerpo:
+            resultado.pendientes > 0
+              ? `Cerrada con fecha ${fecha}. ${resultado.pendientes} item(s) quedaron sin hacer y vuelven a la cola de la ciudad.`
+              : `Cerrada con fecha ${fecha}. Lo cargado queda firme para la certificación.`,
+          url: `/ordenes/${datos.ordenId}`,
+          tag: `orden-${datos.ordenId}`,
+        },
+        { empresaId: resultado.empresaId, urlEmpresa: `/empresa/orden/${datos.ordenId}` },
+      );
+    } catch {
+      /* sin aviso, pero cerrada */
+    }
+  }
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  return { ok: true, ...resultado };
+}
+
+/**
+ * PASARLE LA ORDEN A OTRA EMPRESA.
+ *
+ * Pasa seguido: la contratista a la que se le asignó el circuito no llega,
+ * cambia el reparto de zonas, o la orden se armó con la empresa equivocada y
+ * ya se emitió. Hasta ahora la única salida era anular y volver a armarla
+ * entera, perdiendo el número y —si ya se había trabajado— el trabajo cargado.
+ *
+ * Lo ya reportado NO cambia de dueño. Cada intervención guarda en su metadata
+ * el `contratista` que la ejecutó en el momento de reportarla, así que la
+ * certificación y las métricas por empresa siguen contando ese trabajo para
+ * quien lo hizo. Lo que cambia de manos es lo que falta.
+ */
+/** La versión para la pantalla: la sesión sale de la cookie. */
+export async function reasignarOrden(entrada: {
+  ordenId: number;
+  empresaId: number;
+  motivo?: string;
+}) {
+  return reasignarOrdenConSesion(await requerirRol("planificacion"), entrada);
+}
+
+/** La misma, con la sesión en la mano: el bot llega sin cookie. */
+export async function reasignarOrdenConSesion(
+  sesion: Sesion,
+  entrada: {
+    ordenId: number;
+    empresaId: number;
+    motivo?: string;
+  },
+) {
+  const datos = z
+    .object({
+      ordenId: z.number().int().positive(),
+      empresaId: z.number().int().positive(),
+      motivo: z.string().max(500).optional(),
+    })
+    .parse(entrada);
+
+  const resultado = await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select ot.estado::text, ot.tipo::text, ot.empresa_id, e.nombre as empresa_nombre
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string; tipo: string; empresa_id: number; empresa_nombre: string }>;
+    const o = filas[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado === "completada" || o.estado === "anulada") {
+      throw new ErrorVisible("Una orden cerrada o anulada no se reasigna: su historia ya está cerrada");
+    }
+    if (Number(o.empresa_id) === datos.empresaId) {
+      throw new ErrorVisible("La orden ya es de esa empresa");
+    }
+
+    const nueva = (await tx.execute(sql`
+      select nombre, slug, activa from empresas where id = ${datos.empresaId}
+    `)) as unknown as Array<{ nombre: string; slug: string; activa: boolean }>;
+    const n = nueva[0];
+    if (!n) throw new ErrorVisible("La empresa no existe");
+    if (!n.activa) throw new ErrorVisible(`${n.nombre} está dada de baja: no se le puede asignar trabajo`);
+    // El mismo límite de contrato que valida el alta: las pérdidas de agua
+    // son de la SAT y por contrato solo las ejecutan dos empresas. Sin esto,
+    // reasignar era la puerta de atrás para saltearlo.
+    if (o.tipo === "perdida_agua" && !(EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(n.slug)) {
+      throw new ErrorVisible(
+        "Las pérdidas de agua son de la SAT: por contrato solo las pueden ejecutar UOCRA e INGECO",
+      );
+    }
+
+    // Lo que efectivamente cambia de manos, para poder decirlo.
+    const p = (await tx.execute(sql`
+      select count(*)::int as n from orden_items
+      where orden_id = ${datos.ordenId} and estado in ('pendiente','propuesto')
+    `)) as unknown as Array<{ n: number }>;
+
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        empresa_id = ${datos.empresaId},
+        -- La traza completa en el historial de la orden: un array, no una
+        -- clave sola, porque una orden puede pasar de mano más de una vez y
+        -- la anterior no se puede perder.
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'reasignaciones',
+          coalesce(metadata->'reasignaciones', '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+            'de', ${o.empresa_nombre}::text,
+            'de_id', ${Number(o.empresa_id)}::int,
+            'a', ${n.nombre}::text,
+            'a_id', ${datos.empresaId}::int,
+            'por', ${sesion.nombre}::text,
+            'en', now()::text,
+            'motivo', ${datos.motivo?.trim() || null}::text
+          ))
+        )
+      where id = ${datos.ordenId}
+    `);
+
+    const cab = (await tx.execute(sql`
+      select numero from ordenes_trabajo where id = ${datos.ordenId}
+    `)) as unknown as Array<{ numero: string }>;
+    return {
+      de: o.empresa_nombre,
+      a: n.nombre,
+      pendientes: Number(p[0]?.n ?? 0),
+      numero: cab[0]?.numero ?? "",
+    };
+  });
+
+  // La empresa NUEVA se entera de que tiene trabajo: después del commit y sin
+  // poder romper la reasignación.
+  try {
+    const { notificarEvento } = await import("./notificar");
+    await notificarEvento(
+      "orden_reasignada",
+      {
+        titulo: `${resultado.numero} pasó a ${resultado.a}`,
+        cuerpo: `Venía de ${resultado.de} · ${resultado.pendientes} item(s) pendientes${datos.motivo ? ` · ${datos.motivo}` : ""}`,
+        url: `/ordenes/${datos.ordenId}`,
+        tag: `orden-${datos.ordenId}`,
+      },
+      { empresaId: datos.empresaId, urlEmpresa: `/empresa/orden/${datos.ordenId}` },
+    );
+  } catch {
+    /* sin aviso, pero reasignada */
+  }
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  return { ok: true, ...resultado };
+}
 
 export async function asignarCircuito(entrada: {
   circuitoId: number;
@@ -352,6 +707,14 @@ export async function reportarItemHecho(formData: FormData) {
        * cercanía a 40 m, que es como se adivina hoy.
        */
       ticket147: z.string().max(40).optional(),
+      /**
+       * EL DÍA EN QUE SE HIZO EL BACHE, que no es el día en que se carga.
+       * La Dirección viene atrasada con la carga —las fotos llegan por
+       * WhatsApp y se cargan días después—, así que sin este campo el parte
+       * diario y el acta de medición fechan todo el día en que alguien tuvo
+       * tiempo de sentarse. Ver lib/fecha-ejecucion.ts.
+       */
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse({
       itemId: formData.get("itemId"),
@@ -369,6 +732,7 @@ export async function reportarItemHecho(formData: FormData) {
       tipoObra: formData.get("tipoObra") || undefined,
       capataz: formData.get("capataz") || undefined,
       ticket147: formData.get("ticket147") || undefined,
+      fechaEjecucion: formData.get("fechaEjecucion") || undefined,
     });
 
   /**
@@ -481,8 +845,9 @@ export async function reportarItemHecho(formData: FormData) {
     // ve los suyos, pero se revalida acá para dar errores claros.
     const items = (await tx.execute(sql`
       select oi.id, oi.orden_id, oi.incidente_id, oi.direccion, oi.tipo_trabajo, oi.estado,
-             st_y(oi.geom) as lat, st_x(oi.geom) as lon,
-             ot.estado as orden_estado, ot.numero, ot.empresa_id, e.nombre as empresa_nombre
+             st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+             ot.estado as orden_estado, ot.numero, ot.empresa_id, e.nombre as empresa_nombre,
+             (ot.emitida_en at time zone 'America/Argentina/Tucuman')::date::text as emitida_dia
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
       join empresas e on e.id = ot.empresa_id
@@ -524,6 +889,18 @@ export async function reportarItemHecho(formData: FormData) {
     }
     const direccion = datos.direccionCorregida ?? ((item.direccion as string) || null);
 
+    /**
+     * Cuándo se hizo. Todo lo que se escribe abajo —la intervención, el cierre
+     * del incidente, el reportado_en del item— usa este mismo instante: si la
+     * fecha manual se aplicara solo a una parte, el acta y el parte diario
+     * dirían días distintos del mismo bache. El piso es la emisión de la
+     * orden: no se puede haber bacheado por una orden que todavía no existía.
+     */
+    const cuando = instanteEjecucion(datos.fechaEjecucion, {
+      fecha: (item.emitida_dia as string) ?? null,
+      que: "la emisión de la orden",
+    });
+
     // Incidente: el del item, o uno nuevo si el item era un tramo sin incidente.
     let incidenteId = item.incidente_id != null ? Number(item.incidente_id) : null;
     if (incidenteId == null) {
@@ -539,7 +916,7 @@ export async function reportarItemHecho(formData: FormData) {
         values (
           ${String(item.tipo_trabajo) === "bache" ? "bache" : "pavimento_deteriorado"},
           'reparado', st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-          ${direccion}, ${superficie}, now(), now(),
+          ${direccion}, ${superficie}, ${cuando}, ${cuando},
           ${JSON.stringify({ origen: "orden_trabajo", orden: item.numero })}::jsonb
         ) returning id
       `)) as unknown as Array<{ id: number }>;
@@ -560,12 +937,18 @@ export async function reportarItemHecho(formData: FormData) {
     const esObra =
       tipoIntervencion === "carpeta" || tipoIntervencion === "pano_hormigon" || superficie >= 50;
     /**
-     * Tipo de obra del protocolo DOV. Si la empresa no lo declara se infiere
-     * con la única regla objetiva que da el protocolo: pasado los 4 m² el
-     * bacheo es "extendido". El resto (provisorio, sobre adoquín) depende del
-     * criterio de quien ejecuta y no se adivina.
+     * Tipo de obra del protocolo DOV. "Extendido" NO se pregunta más: el
+     * protocolo lo define por encima de 4 m², así que es una consecuencia de la
+     * medida y lo deriva el servidor. Antes se ofrecía como botón y ganaba la
+     * elección explícita: un capataz que tocaba "Planificado" en un bache de 6
+     * m² lo certificaba mal, y el sistema tenía el dato para saberlo.
+     *
+     * Las otras dos modalidades sí son criterio de quien ejecuta —el régimen de
+     * urgencia y el adoquín— y esas se respetan tal cual vienen.
      */
-    const tipoObra = datos.tipoObra ?? (superficie > 4 ? "extendido" : "planificado");
+    const modalidad = datos.tipoObra ?? "planificado";
+    const tipoObra =
+      modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
     const volumen = Math.round(superficie * (datos.espesorCm / 100) * 100) / 100;
     const iv = (await tx.execute(sql`
       insert into intervenciones (
@@ -574,7 +957,7 @@ export async function reportarItemHecho(formData: FormData) {
       ) values (
         ${incidenteId}, 'finalizada',
         st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-        now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+        ${cuando}, ${cuando}, ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
         ${JSON.stringify({
           ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
           espesor_cm: medida.espesorCm,
@@ -611,7 +994,7 @@ export async function reportarItemHecho(formData: FormData) {
     }
 
     await tx.execute(sql`
-      update incidentes set estado = 'reparado', cerrado_en = now(),
+      update incidentes set estado = 'reparado', cerrado_en = ${cuando},
         superficie_m2 = coalesce(${superficie}, superficie_m2)
       where id = ${incidenteId} and estado <> 'verificado'
     `);
@@ -623,11 +1006,23 @@ export async function reportarItemHecho(formData: FormData) {
         superficie_m2 = ${superficie},
         tipo_obra = ${tipoObra}::tipo_obra_bacheo,
         intervencion_id = ${intervencionId},
-        reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+        reportado_en = ${cuando}, reportado_por = ${sesion.sub}::uuid,
         metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
           medicion: medida.medicion,
           ...(datos.capataz ? { capataz: datos.capataz } : {}),
           ...(datos.ticket147 ? { ticket_147: datos.ticket147 } : {}),
+          /* Que la fecha la puso una persona queda escrito: un acta con
+             fechas cargadas a mano no es lo mismo que una automática, y quien
+             la firma tiene derecho a distinguirlas. */
+          ...(datos.fechaEjecucion
+            ? {
+                fecha_manual: {
+                  fecha: datos.fechaEjecucion,
+                  por: sesion.nombre,
+                  en: new Date().toISOString(),
+                },
+              }
+            : {}),
         })}::jsonb,
         observaciones = ${datos.observaciones ?? null},
         direccion = coalesce(${datos.direccionCorregida ?? null}, direccion),
@@ -648,9 +1043,16 @@ export async function reportarItemHecho(formData: FormData) {
       update ordenes_trabajo set estado = 'en_ejecucion'
       where id = ${Number(item.orden_id)} and estado = 'emitida'
     `);
+    /**
+     * Una ORDEN ABIERTA no se cierra sola. El cierre automático dispara cuando
+     * no quedan items pendientes ni propuestos; en una orden abierta —sin
+     * lista de puntos, la empresa carga lo que encuentra— eso pasa apenas se
+     * reporta el PRIMER bache, y la cuadrilla se encontraría la orden cerrada
+     * a mitad de la cuadra. Esas las cierra una persona, con su fecha.
+     */
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
+      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
         and not exists (
           select 1 from orden_items oi
           where oi.orden_id = ${Number(item.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -722,7 +1124,7 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
     if (!fila) throw new ErrorVisible("El item no está pendiente o la orden no está activa");
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
+      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
         and not exists (
           select 1 from orden_items oi
           where oi.orden_id = ${Number(fila.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -905,6 +1307,8 @@ export async function proponerItem(formData: FormData) {
       lat: z.coerce.number().min(-27.2).max(-26.5),
       lon: z.coerce.number().min(-65.6).max(-64.9),
       observaciones: z.string().max(1000).optional(),
+      capataz: z.string().max(120).optional(),
+      tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
     })
     .parse({
       ordenId: formData.get("ordenId"),
@@ -913,7 +1317,34 @@ export async function proponerItem(formData: FormData) {
       lat: formData.get("lat"),
       lon: formData.get("lon"),
       observaciones: formData.get("observaciones") || undefined,
+      capataz: formData.get("capataz") || undefined,
+      tipoObra: formData.get("tipoObra") || undefined,
     });
+
+  /**
+   * "YA LO TAPAMOS": el bache nuevo se propone Y se mide en el mismo paso.
+   *
+   * Antes eran dos viajes obligatorios: proponer el bache desde la calle, y
+   * después —otro día, con la orden ya validada— buscarlo en la lista para
+   * cerrarlo. La cuadrilla ya estaba parada encima con la cinta en la mano.
+   *
+   * Las medidas se guardan EN EL ITEM, que para eso tiene las columnas, pero
+   * el item sigue entrando como 'propuesto': el trabajo no cuenta hasta que
+   * Bacheo lo valide. Ese control es el que impide que una contratista se
+   * agregue m² sola, y sacarlo para ahorrar un clic sería cambiar el sentido
+   * del circuito. Al validar, resolverPropuesto() crea la intervención con
+   * estas medidas y el item pasa derecho a 'hecho'.
+   */
+  const medido = formData.get("espesorCm")
+    ? resolverMedicion(z.object(camposMedicion).parse({
+        medicion: formData.get("medicion") || undefined,
+        anchoM: formData.get("anchoM") || undefined,
+        largoM: formData.get("largoM") || undefined,
+        superficieM2: formData.get("superficieM2") || undefined,
+        volumenM3: formData.get("volumenM3") || undefined,
+        espesorCm: formData.get("espesorCm"),
+      }))
+    : null;
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
@@ -944,53 +1375,363 @@ export async function proponerItem(formData: FormData) {
     }
   }
 
-  let rutaFoto: string | null = null;
-  if (foto instanceof File && foto.size > 0) {
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-      process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-    );
-    rutaFoto = `ordenes/propuestos/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
-    const subida = await supabase.storage
-      .from("fotografias")
-      .upload(rutaFoto, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
-    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+  /**
+   * La segunda foto: el DESPUÉS, que solo existe si la cuadrilla ya lo tapó.
+   * Con medidas y sin foto del después no se acepta — es la misma regla que
+   * rige el reporte normal, y sin ella el trabajo no tendría evidencia.
+   */
+  const fotoDespues = formData.get("fotoDespues");
+  if (fotoDespues instanceof File && fotoDespues.size > 0 && !TIPOS[fotoDespues.type]) {
+    throw new ErrorVisible("La foto del después tiene que ser una imagen (JPG, PNG o WEBP)");
+  }
+  if (medido && !(fotoDespues instanceof File && fotoDespues.size > 0)) {
+    throw new ErrorVisible("Si ya lo taparon, falta la foto del trabajo terminado");
   }
 
-  await conRls(claims(sesion), async (tx) => {
-    await tx.execute(sql`
-      insert into orden_items (orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata)
-      values (
-        ${datos.ordenId}, ${datos.direccion},
-        st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
-        ${datos.tipoTrabajo}, 'propuesto', ${datos.observaciones ?? null},
-        ${JSON.stringify({
-          propuesto: { por: sesion.nombre, en: new Date().toISOString() },
-          ...(rutaFoto ? { foto_propuesta: rutaFoto } : {}),
-        })}::jsonb
-      )
-    `);
-  });
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const subidas: string[] = [];
+  const subir = async (archivo: File, sufijo: string) => {
+    const ruta = `ordenes/propuestos/${datos.ordenId}-${Date.now()}-${sufijo}.${TIPOS[archivo.type]}`;
+    const r = await supabase.storage
+      .from("fotografias")
+      .upload(ruta, Buffer.from(await archivo.arrayBuffer()), { contentType: archivo.type, upsert: false });
+    if (r.error) throw new ErrorVisible(`No se pudo subir la foto: ${r.error.message}`);
+    subidas.push(ruta);
+    return ruta;
+  };
+
+  let rutaFoto: string | null = null;
+  let rutaDespues: string | null = null;
+  /* El id del item recién creado: es lo que necesitan los botones del aviso de
+     Telegram para saber sobre qué bache se está decidiendo. */
+  let itemId: number | null = null;
+  try {
+    if (foto instanceof File && foto.size > 0) rutaFoto = await subir(foto, "antes");
+    if (fotoDespues instanceof File && fotoDespues.size > 0) {
+      rutaDespues = await subir(fotoDespues, "despues");
+    }
+
+    itemId = await conRls(claims(sesion), async (tx) => {
+      const filas = (await tx.execute(sql`
+        insert into orden_items (
+          orden_id, direccion, geom, tipo_trabajo, estado, observaciones, metadata,
+          ancho_m, largo_m, espesor_cm, superficie_m2, tipo_obra
+        )
+        values (
+          ${datos.ordenId}, ${datos.direccion},
+          st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+          ${datos.tipoTrabajo}, 'propuesto', ${datos.observaciones ?? null},
+          ${JSON.stringify({
+            propuesto: { por: sesion.nombre, en: new Date().toISOString() },
+            ...(rutaFoto ? { foto_propuesta: rutaFoto } : {}),
+            // Lo que hace falta para convertirlo en intervención al validarlo.
+            ...(medido
+              ? {
+                  ya_ejecutado: {
+                    medicion: medido.medicion,
+                    foto_despues: rutaDespues,
+                    capataz: datos.capataz ?? null,
+                    en: new Date().toISOString(),
+                  },
+                }
+              : {}),
+          })}::jsonb,
+          ${medido?.anchoM ?? null}, ${medido?.largoM ?? null},
+          ${medido?.espesorCm ?? null}, ${medido?.superficieM2 ?? null},
+          ${medido ? (datos.tipoObra ?? "planificado") : null}::tipo_obra_bacheo
+        )
+        returning id
+      `)) as unknown as Array<{ id: number }>;
+      return filas[0] ? Number(filas[0].id) : null;
+    });
+  } catch (e) {
+    if (subidas.length) await supabase.storage.from("fotografias").remove(subidas).catch(() => undefined);
+    throw e;
+  }
 
   const { notificarEvento } = await import("./notificar");
   await notificarEvento("item_propuesto", {
-    titulo: "La cuadrilla propuso un bache nuevo",
-    cuerpo: `${datos.direccion} — espera validación de Bacheo`,
+    titulo: medido ? "La cuadrilla cargó un bache nuevo ya tapado" : "La cuadrilla propuso un bache nuevo",
+    cuerpo: medido
+      ? `${datos.direccion} — ${medido.superficieM2} m², espera validación de Bacheo`
+      : `${datos.direccion} — espera validación de Bacheo`,
     url: `/ordenes/${datos.ordenId}`,
+    /* El aviso y la decisión, en el mismo mensaje: quien lo recibe resuelve con
+       el pulgar sin volver a la oficina. Solo para Telegram — el push y el
+       email no tienen dónde poner un botón. El dato va corto porque Telegram
+       corta el callback_data en 64 bytes y descarta el botón sin avisar. */
+    ...(itemId != null
+      ? {
+          accionesTelegram: [
+            { texto: "✓ Validar", dato: `p:${itemId}:v` },
+            { texto: "✗ Rechazar", dato: `p:${itemId}:r` },
+          ],
+        }
+      : {}),
   });
   revalidatePath("/empresa");
   revalidatePath("/ordenes");
   return { ok: true };
 }
 
+/**
+ * "REPORTAR UN PROBLEMA": lo que la cuadrilla ve en la calle y no es un bache.
+ *
+ * Hermano de proponerItem(), pero termina en otro lado y a propósito. Un bache
+ * propuesto entra como item de la orden porque es trabajo que esa empresa puede
+ * hacer. Una pérdida de agua, una tapa rota o un imbornal tapado NO son trabajo
+ * de nadie todavía: son un PEDIDO nuevo, nacido en la calle, que hay que
+ * derivar. Meterlos como item de una orden de bacheo sería prometer que esa
+ * contratista los va a arreglar.
+ *
+ * Por eso entran como DEMANDA, que es exactamente lo que hace el parser de la
+ * app de la Dirección de Bacheo con sus filas sin superficie (ver
+ * integrations/fuentes/bacheo-empresas.ts): el mismo criterio para el mismo
+ * hecho, venga del formulario viejo o de este.
+ */
+export async function reportarProblemaCalle(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para reportar problemas`);
+  }
+  const datos = z
+    .object({
+      ordenId: z.coerce.number().int().positive(),
+      direccion: z.string().min(4).max(300),
+      motivo: z.enum(VALORES_MOTIVO),
+      lat: z.coerce.number().min(-27.2).max(-26.5),
+      lon: z.coerce.number().min(-65.6).max(-64.9),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({
+      ordenId: formData.get("ordenId"),
+      direccion: formData.get("direccion"),
+      motivo: formData.get("motivo"),
+      lat: formData.get("lat"),
+      lon: formData.get("lon"),
+      observaciones: formData.get("observaciones") || undefined,
+    });
+
+  const definicion = MOTIVO_POR_VALOR.get(datos.motivo);
+  if (!definicion) throw new ErrorVisible("Motivo desconocido");
+
+  const { dentroDeSMT } = await import("@cimba/domain");
+  if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+    throw new ErrorVisible("La ubicación cae fuera de San Miguel de Tucumán: revisá el pin");
+  }
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) {
+    throw new ErrorVisible("La foto es obligatoria: es la prueba para derivar el reclamo");
+  }
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad de la orden desde la que se reporta (traza quién lo vio).
+  const ordenes = await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select ot.id, ot.estado, ot.empresa_id, ot.numero, e.nombre as empresa_nombre
+      from ordenes_trabajo ot join empresas e on e.id = ot.empresa_id
+      where ot.id = ${datos.ordenId}
+    `)) as unknown as Array<Record<string, unknown>>,
+  );
+  const orden = ordenes[0];
+  if (!orden) throw new ErrorVisible("La orden no existe o no es de tu empresa");
+  if (!["emitida", "en_ejecucion"].includes(String(orden.estado))) {
+    throw new ErrorVisible("La orden no está activa");
+  }
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(orden.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("La orden no pertenece a tu empresa");
+    }
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const ruta = `calle/problemas/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    /**
+     * Por la conexión de servicio: la política de insert de demandas no incluye
+     * al rol empresa, y no puede incluirlo — una demanda nueva no está ligada a
+     * ninguna orden que la acote. La propiedad de la orden ya se validó arriba.
+     */
+    const { getDb } = await import("@cimba/db");
+    const filas = (await getDb().execute(sql`
+      insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
+                            solicitante, metadata)
+      values (
+        'carga_manual',
+        ${definicion.tipoProblema ?? "otro"}::tipo_problema,
+        ${datos.observaciones ?? definicion.etiqueta},
+        ${datos.direccion},
+        st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326),
+        1.0,
+        ${String(orden.empresa_nombre)},
+        ${JSON.stringify({
+          origen: "cuadrilla_en_calle",
+          motivo: datos.motivo,
+          familia: definicion.familia,
+          etiqueta: definicion.etiqueta,
+          orden: orden.numero,
+          contratista: orden.empresa_nombre,
+          reportado_por: sesion.nombre,
+          foto: ruta,
+          // Sin traducción honesta al vocabulario: queda el dato crudo para que
+          // el informe no diga "otro" y ya (paño de hormigón, enripiado).
+          ...(definicion.tipoProblema ? {} : { requiere: datos.motivo }),
+        })}::jsonb
+      ) returning id
+    `)) as unknown as Array<{ id: number }>;
+    const demandaId = filas[0]?.id;
+    if (demandaId) {
+      await getDb().execute(sql`
+        insert into fotografias (demanda_id, momento, storage_path, geom, tomada_en)
+        values (${demandaId}, 'antes', ${ruta},
+                st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), now())
+      `);
+    }
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  const { notificarEvento } = await import("./notificar");
+  await notificarEvento("item_propuesto", {
+    titulo:
+      definicion.familia === "sat" ? "La cuadrilla encontró algo para derivar" : "La cuadrilla reportó un problema",
+    cuerpo: `${definicion.etiqueta} — ${datos.direccion}`,
+    url: "/demandas",
+  });
+  revalidatePath("/empresa");
+  revalidatePath("/demandas");
+  return { ok: true };
+}
+
+/**
+ * SACAR UN ITEM QUE NO CORRESPONDE.
+ *
+ * Pedido de la Dirección de Bacheo (14/09): "un botón de borrar elemento si no
+ * corresponde". Pasa seguido al armar la orden — un punto que entró por un
+ * filtro mal puesto, un bache duplicado, una dirección que no era.
+ *
+ * DOS CANDADOS, y los dos importan:
+ *
+ *  1. Un item YA REPORTADO no se borra. Detrás hay una intervención real, con
+ *     medidas, fotos y m² que alimentan la brecha y la certificación; borrar
+ *     el item dejaría la intervención huérfana y los números mentirían sin que
+ *     nadie se entere. Si lo que se cargó está mal, se corrige — no se
+ *     desaparece.
+ *  2. El incidente vuelve a la cola. Al emitir la orden pasó a 'programado';
+ *     si el item se va y el incidente queda programado, ese bache desaparece
+ *     de la vista de todos sin que nadie lo haya arreglado ni desestimado.
+ *
+ * El borrado en sí queda registrado por el trigger auditar() (AFTER DELETE
+ * sobre orden_items), así que la traza no depende de que nos acordemos acá.
+ */
+export async function eliminarItemOrden(entrada: { itemId: number; motivo: string }) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({ itemId: z.number().int().positive(), motivo: z.string().min(3).max(500) })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.incidente_id, oi.intervencion_id, ot.estado as orden_estado
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+    if (item.intervencion_id != null || String(item.estado) === "hecho") {
+      throw new ErrorVisible(
+        "Este item ya tiene trabajo reportado con fotos y medidas: no se puede borrar. Corregí los datos o anulá la orden.",
+      );
+    }
+    if (String(item.orden_estado) === "anulada") {
+      throw new ErrorVisible("La orden está anulada: no se tocan sus items");
+    }
+
+    /**
+     * El incidente vuelve a 'priorizado' —no a 'detectado'— porque ya había
+     * pasado por priorización cuando se armó la orden: mandarlo al principio
+     * de la cola le borraría ese trabajo.
+     */
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set estado = 'priorizado'
+        where id = ${Number(item.incidente_id)} and estado = 'programado'
+      `);
+    }
+
+    // El motivo va a la auditoría antes del delete: después la fila ya no está.
+    await tx.execute(sql`
+      insert into auditoria (entidad, entidad_id, accion, actor, diff)
+      values ('orden_item', ${datos.itemId}, 'eliminado', ${sesion.sub}::uuid,
+              ${JSON.stringify({ motivo: datos.motivo, por: sesion.nombre })}::jsonb)
+    `);
+    await tx.execute(sql`delete from orden_items where id = ${datos.itemId}`);
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/incidentes");
+  return { ok: true };
+}
+
 /** Bacheo decide sobre un item propuesto: validado entra al circuito normal. */
+export interface ResueltoPropuesto {
+  ok: true;
+  /**
+   * Qué pasó de verdad, porque el mismo "validar" hace dos cosas distintas:
+   *  - encolado:    se sumó a los pendientes de la orden, lo reportan cuando lo tapen.
+   *  - certificado: venía con medidas, quedó hecho y ya cuenta para la certificación.
+   *  - rechazado:   no entra a la orden.
+   * Sin esto, quien llama no puede escribir una confirmación veraz — y la
+   * diferencia entre "lo puse en la cola" y "habilité un pago" no es un matiz.
+   */
+  resultado: "encolado" | "certificado" | "rechazado";
+  numero: string | null;
+  direccion: string | null;
+}
+
+/** La versión para la pantalla: la sesión sale de la cookie. */
 export async function resolverPropuesto(entrada: {
   itemId: number;
   decision: "validar" | "rechazar";
   motivo?: string;
-}) {
-  const sesion = await requerirRol("planificacion", "supervision");
+}): Promise<ResueltoPropuesto> {
+  return resolverPropuestoConSesion(await requerirRol("planificacion", "supervision"), entrada);
+}
+
+/**
+ * La misma decisión, con la sesión en la mano.
+ *
+ * Existe aparte porque el bot de Telegram llega sin cookie: su sesión se arma
+ * en el servidor a partir del chat que escribió. El chequeo de rol es el mismo
+ * —lo hace quien llama, con exigirRol o requerirRol— y el cuerpo no se duplica.
+ */
+export async function resolverPropuestoConSesion(
+  sesion: Sesion,
+  entrada: {
+    itemId: number;
+    decision: "validar" | "rechazar";
+    motivo?: string;
+  },
+): Promise<ResueltoPropuesto> {
   const datos = z
     .object({
       itemId: z.number().int().positive(),
@@ -1000,9 +1741,33 @@ export async function resolverPropuesto(entrada: {
     .parse(entrada);
 
   await conRls(claims(sesion), async (tx) => {
+    /**
+     * Un propuesto puede venir con las medidas ya cargadas: la cuadrilla lo
+     * encontró, lo tapó y lo midió en el mismo viaje (ver proponerItem). En ese
+     * caso validarlo no es "ponelo en la cola", es "dalo por hecho" — y hay que
+     * crear la intervención acá, porque nadie va a volver a reportarlo.
+     */
+    const previas = (await tx.execute(sql`
+      select oi.superficie_m2, oi.espesor_cm, oi.tipo_obra, oi.tipo_trabajo, oi.incidente_id,
+             oi.direccion, oi.metadata, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+             ot.numero, ot.id as orden_id, e.nombre as empresa_nombre
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      join empresas e on e.id = ot.empresa_id
+      where oi.id = ${datos.itemId} and oi.estado = 'propuesto'
+    `)) as unknown as Array<Record<string, unknown>>;
+    const previa = previas[0];
+    if (!previa) throw new ErrorVisible("El item no está en estado propuesto");
+
+    const yaEjecutado =
+      datos.decision === "validar" && previa.superficie_m2 != null && previa.espesor_cm != null;
+
     const r = (await tx.execute(sql`
       update orden_items set
-        estado = ${datos.decision === "validar" ? "pendiente" : "rechazado"},
+        estado = ${
+          datos.decision === "rechazar" ? "rechazado" : yaEjecutado ? "hecho" : "pendiente"
+        },
+        ${yaEjecutado ? sql`reportado_en = now(), reportado_por = ${sesion.sub}::uuid,` : sql``}
         metadata = metadata || ${JSON.stringify({
           validacion: {
             decision: datos.decision,
@@ -1016,22 +1781,154 @@ export async function resolverPropuesto(entrada: {
     `)) as unknown as Array<{ orden_id: number }>;
     if (!r[0]) throw new ErrorVisible("El item no está en estado propuesto");
 
+    if (yaEjecutado) {
+      const superficie = Number(previa.superficie_m2);
+      const espesor = Number(previa.espesor_cm);
+      const lat = Number(previa.lat);
+      const lon = Number(previa.lon);
+      const tipoIntervencion = String(previa.tipo_trabajo) === "carpeta" ? "carpeta" : "bacheo";
+      // Misma derivación que el reporte normal: el extendido sale de la medida.
+      const modalidad = (previa.tipo_obra as string) ?? "planificado";
+      const tipoObra = modalidad === "planificado" && superficie > 4 ? "extendido" : modalidad;
+      const volumen = Math.round(superficie * (espesor / 100) * 100) / 100;
+
+      // El propuesto nace sin incidente: se crea ahora, ya reparado.
+      let incidenteId = previa.incidente_id != null ? Number(previa.incidente_id) : null;
+      if (incidenteId == null) {
+        const { getDb } = await import("@cimba/db");
+        const inc = (await getDb().execute(sql`
+          insert into incidentes (tipo, estado, geom, direccion, superficie_m2, detectado_en, cerrado_en, metadata)
+          values (
+            ${String(previa.tipo_trabajo) === "bache" ? "bache" : "pavimento_deteriorado"},
+            'reparado', st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
+            ${(previa.direccion as string) ?? null}, ${superficie}, now(), now(),
+            ${JSON.stringify({ origen: "orden_trabajo", orden: previa.numero, propuesto_por_cuadrilla: true })}::jsonb
+          ) returning id
+        `)) as unknown as Array<{ id: number }>;
+        if (!inc[0]) throw new ErrorVisible("No se pudo crear el incidente del bache propuesto");
+        incidenteId = Number(inc[0].id);
+        await tx.execute(sql`
+          update orden_items set incidente_id = ${incidenteId} where id = ${datos.itemId}
+        `);
+      }
+
+      const meta = (previa.metadata ?? {}) as Record<string, unknown>;
+      const ejec = (meta.ya_ejecutado ?? {}) as Record<string, unknown>;
+      const iv = (await tx.execute(sql`
+        insert into intervenciones (
+          incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
+          superficie_m2, volumen_m3, tipo_obra, tipo_intervencion, materiales, observaciones, metadata
+        ) values (
+          ${incidenteId}, 'finalizada',
+          st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
+          now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+          '{}'::jsonb, ${(previa.metadata as { observaciones?: string })?.observaciones ?? null},
+          ${JSON.stringify({
+            origen: "orden_trabajo",
+            orden: previa.numero,
+            contratista: previa.empresa_nombre,
+            escala: "bache",
+            medicion: ejec.medicion ?? null,
+            capataz: ejec.capataz ?? null,
+            propuesto_por_cuadrilla: true,
+          })}::jsonb
+        ) returning id
+      `)) as unknown as Array<{ id: number }>;
+      const intervencionId = iv[0]?.id;
+      if (intervencionId) {
+        await tx.execute(sql`
+          update orden_items set intervencion_id = ${intervencionId} where id = ${datos.itemId}
+        `);
+        // Las fotos que la cuadrilla ya había sacado pasan a colgar de la
+        // intervención: sin esto quedaban como rutas sueltas en el metadata.
+        for (const [momento, ruta] of [
+          ["antes", meta.foto_propuesta],
+          ["despues", ejec.foto_despues],
+        ] as const) {
+          if (typeof ruta === "string" && ruta) {
+            await tx.execute(sql`
+              insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en)
+              values (${intervencionId}, ${momento}, ${ruta},
+                      st_setsrid(st_makepoint(${lon}, ${lat}), 4326), now())
+            `);
+          }
+        }
+      }
+      await tx.execute(sql`
+        update incidentes set estado = 'reparado', cerrado_en = now()
+        where id = ${incidenteId} and estado <> 'verificado'
+      `);
+    }
+
     /**
      * Cinturón: si la orden ya estaba cerrada (por ejemplo porque se completó
      * antes de que existiera el arreglo de arriba), validar la reabre. Sin
      * esto el item quedaría pendiente sobre una orden completada y la empresa
      * no podría reportarlo nunca.
      */
-    if (datos.decision === "validar") {
+    if (datos.decision === "validar" && !yaEjecutado) {
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'en_ejecucion', cerrada_en = null
         where id = ${Number(r[0].orden_id)} and estado = 'completada'
       `);
     }
   });
+
+  /**
+   * LA EMPRESA SE ENTERA EN EL TELÉFONO. Proponer un bache era mandarlo a un
+   * silencio: la cuadrilla no sabía si lo habían validado —y podía
+   * reportarlo— o rechazado —y había que dejarlo—, salvo entrando a mirar. El
+   * aviso viaja después del commit y jamás rompe la decisión.
+   */
+  /* Se lee fuera del try porque además del aviso arma lo que se devuelve: el
+     estado real con el que quedó el item es lo único que distingue "lo encolé"
+     de "habilité una certificación". */
+  const ctx = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.direccion, oi.estado::text as estado, ot.id as orden_id, ot.numero, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<{ direccion: string | null; estado: string; orden_id: number; numero: string; empresa_id: number }>,
+  ))[0];
+
+  try {
+    if (ctx) {
+      const { notificarEvento } = await import("./notificar");
+      const donde = ctx.direccion ?? "el bache propuesto";
+      await notificarEvento(
+        datos.decision === "validar" ? "item_validado" : "item_rechazado",
+        datos.decision === "validar"
+          ? {
+              titulo: `✓ ${ctx.numero}: validaron ${donde}`,
+              cuerpo:
+                ctx.estado === "hecho"
+                  ? "Quedó como hecho con las medidas que cargaron: ya cuenta para la certificación."
+                  : "Ya está en la lista de pendientes de la orden: pueden reportarlo cuando lo tapen.",
+              url: `/ordenes/${ctx.orden_id}`,
+              tag: `item-${datos.itemId}`,
+            }
+          : {
+              titulo: `✗ ${ctx.numero}: rechazaron ${donde}`,
+              cuerpo: datos.motivo ? `Motivo: ${datos.motivo}` : "Bacheo no lo incluyó en la orden.",
+              url: `/ordenes/${ctx.orden_id}`,
+              tag: `item-${datos.itemId}`,
+            },
+        { empresaId: Number(ctx.empresa_id), urlEmpresa: `/empresa/orden/${ctx.orden_id}` },
+      );
+    }
+  } catch {
+    /* sin aviso, pero decidido: el portal muestra el estado real */
+  }
+
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
-  return { ok: true };
+  return {
+    ok: true,
+    resultado:
+      datos.decision === "rechazar" ? "rechazado" : ctx?.estado === "hecho" ? "certificado" : "encolado",
+    numero: ctx?.numero ?? null,
+    direccion: ctx?.direccion ?? null,
+  };
 }
 
 /**
@@ -1062,7 +1959,7 @@ export async function marcarYaResuelto(formData: FormData) {
   const previa = (
     await conRls(claims(sesion), async (tx) =>
       (await tx.execute(sql`
-        select oi.estado, oi.incidente_id, st_y(oi.geom) as lat, st_x(oi.geom) as lon,
+        select oi.estado, oi.incidente_id, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
                ot.estado as orden_estado, ot.empresa_id, ot.numero, ot.id as orden_id,
                e.nombre as empresa_nombre
         from orden_items oi
@@ -1159,7 +2056,7 @@ export async function marcarYaResuelto(formData: FormData) {
       `);
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-        where id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
           and not exists (
             select 1 from orden_items oi
             where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
@@ -1176,9 +2073,459 @@ export async function marcarYaResuelto(formData: FormData) {
   return { ok: true };
 }
 
+/**
+ * "LLEGAMOS Y NO ES UN BACHE": la tercera salida del capataz.
+ *
+ * Antes de esto la cuadrilla que se encontraba con una pérdida de agua tenía
+ * dos botones y los dos mentían: "no lo encontré" (falso, lo encontró) o
+ * "reportar hecho" (peor: inventa m², cobra un bacheo que no existió y cierra
+ * un reclamo que en la calle sigue abierto). Elegía la menos mala y el dato de
+ * lo que REALMENTE pasa en esa esquina se perdía.
+ *
+ * Ahora el item termina en 'no_ejecutable' con el motivo real y una foto, y de
+ * paso el incidente se reclasifica al vocabulario de CIMBA cuando hay una
+ * traducción honesta (ver lib/problemas-calle.ts). Sin superficie y sin
+ * intervención: no se ejecutó nada, así que no hay m² ni toneladas que sumar.
+ *
+ * La foto es obligatoria a propósito: es lo único que convierte "el capataz
+ * dijo que era una pérdida de agua" en el informe que se le manda a la SAT.
+ */
+export async function reportarItemNoEjecutable(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso`);
+  }
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      motivo: z.enum(VALORES_MOTIVO),
+      observaciones: z.string().max(1000).optional(),
+    })
+    .parse({
+      itemId: formData.get("itemId"),
+      motivo: formData.get("motivo"),
+      observaciones: formData.get("observaciones") || undefined,
+    });
+
+  const definicion = MOTIVO_POR_VALOR.get(datos.motivo);
+  if (!definicion) throw new ErrorVisible("Motivo desconocido");
+
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) {
+    throw new ErrorVisible("La foto es obligatoria: es la prueba de lo que encontraron");
+  }
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad y estado ANTES de tocar Storage (misma regla que el resto).
+  const previa = (
+    await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select oi.estado, oi.incidente_id, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+               ot.estado as orden_estado, ot.empresa_id, ot.numero, ot.id as orden_id,
+               e.nombre as empresa_nombre
+        from orden_items oi
+        join ordenes_trabajo ot on ot.id = oi.orden_id
+        join empresas e on e.id = ot.empresa_id
+        where oi.id = ${datos.itemId}
+      `)) as unknown as Array<Record<string, unknown>>,
+    )
+  )[0];
+  if (!previa) throw new ErrorVisible("El item no existe o no es de tu empresa");
+  if (String(previa.estado) !== "pendiente") throw new ErrorVisible("Este item ya fue reportado");
+  if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
+    throw new ErrorVisible("La orden no está activa");
+  }
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("El item no pertenece a tu empresa");
+    }
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const ruta = `ordenes/${datos.itemId}/no-ejecutable-${Date.now()}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    await conRls(claims(sesion), async (tx) => {
+      const reclamo = (await tx.execute(sql`
+        update orden_items set estado = 'no_ejecutable',
+          reportado_en = now(), reportado_por = ${sesion.sub}::uuid,
+          observaciones = ${datos.observaciones ?? null},
+          metadata = metadata || ${JSON.stringify({
+            no_ejecutable: {
+              motivo: datos.motivo,
+              etiqueta: definicion.etiqueta,
+              familia: definicion.familia,
+              foto: ruta,
+              por: sesion.nombre,
+              en: new Date().toISOString(),
+            },
+          })}::jsonb
+        where id = ${datos.itemId} and estado = 'pendiente'
+        returning incidente_id
+      `)) as unknown as Array<{ incidente_id: number | null }>;
+      if (!reclamo[0]) throw new ErrorVisible("Este item ya fue reportado");
+
+      const incidenteId = reclamo[0].incidente_id != null ? Number(reclamo[0].incidente_id) : null;
+      if (incidenteId != null) {
+        /**
+         * El incidente vuelve a estar sin atender —porque no se atendió— pero
+         * ahora dice la verdad sobre qué es. `tipo` solo se pisa cuando hay una
+         * traducción honesta al vocabulario de CIMBA; cuando no la hay (paño de
+         * hormigón, enripiado) el dato queda en metadata y el tipo no se toca.
+         */
+        await tx.execute(sql`
+          update incidentes set
+            estado = 'detectado',
+            ${
+              definicion.tipoProblema
+                ? sql`tipo = ${definicion.tipoProblema}::tipo_problema,`
+                : sql``
+            }
+            metadata = metadata || ${JSON.stringify({
+              no_ejecutable: {
+                motivo: datos.motivo,
+                familia: definicion.familia,
+                orden: previa.numero,
+                contratista: previa.empresa_nombre,
+                en: new Date().toISOString(),
+              },
+              ...(definicion.tipoProblema ? {} : { requiere: datos.motivo }),
+            })}::jsonb
+          where id = ${incidenteId}
+        `);
+
+        /**
+         * La foto queda en el metadata del item y del incidente, no en
+         * `fotografias`: esa tabla cuelga de una intervención o de una demanda,
+         * y acá no hay ninguna de las dos — no se intervino nada, y el pedido
+         * ya existía. Meterla como intervención con superficie nula habría sido
+         * la salida fácil y habría ensuciado el conteo de trabajo hecho.
+         */
+      }
+
+      // La orden avanza igual: este item ya no está pendiente.
+      await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(previa.orden_id)} for update`);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'en_ejecucion'
+        where id = ${Number(previa.orden_id)} and estado = 'emitida'
+      `);
+      await tx.execute(sql`
+        update ordenes_trabajo set estado = 'completada', cerrada_en = now()
+        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
+          and not exists (
+            select 1 from orden_items oi
+            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
+          )
+      `);
+    });
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  const { notificarEvento } = await import("./notificar");
+  await notificarEvento("item_propuesto", {
+    titulo:
+      definicion.familia === "sat" ? "Un punto no le toca a Bacheo" : "Un punto necesita otro tratamiento",
+    cuerpo: `${previa.numero}: ${definicion.etiqueta}`,
+    url: `/ordenes/${Number(previa.orden_id)}`,
+  });
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  revalidatePath("/incidentes");
+  return { ok: true };
+}
+
 // ── Corrección del tipo de intervención (Bacheo) ─────────────────────────────
 
 /** "Capaz que empieza como bacheo y al final se hizo cambio de paño": Bacheo lo corrige. */
+/**
+ * CORREGIR UN BACHE YA CERRADO.
+ *
+ * "Que luego de hacer el cierre de un bache se puedan corregir los parámetros.
+ * Todos nos equivocamos, seguro cargan mal" — Dirección de Bacheo, 12/09.
+ *
+ * Tenía razón y el sistema no lo contemplaba: la medida entraba una vez, desde
+ * un teléfono, con guantes, y quedaba fija para siempre. Un 2 que salió 20
+ * inflaba los m² de la empresa y las toneladas del acta, y la única salida era
+ * dejarlo mal.
+ *
+ * Corregir toca CUATRO filas y las cuatro tienen que moverse juntas, o los
+ * números se contradicen entre pantallas:
+ *
+ *   orden_items     la medida que ve la empresa y con la que se arma el acta
+ *                   (volumen_m3 es columna generada: se recalcula sola)
+ *   intervenciones  la que alimenta la brecha y las métricas — acá el volumen
+ *                   NO es generado y hay que escribirlo a mano
+ *   incidentes      la superficie del problema físico
+ *   auditoria       quién cambió qué, por qué y cuándo
+ *
+ * NO se corrige lo que ya está en un acta firmada: eso se certificó y se pagó,
+ * y cambiarlo por atrás rompería la correspondencia entre lo que dice CIMBA y
+ * lo que dice el expediente. Para eso está la desviación del acta siguiente.
+ */
+/**
+ * MOVER EL PUNTO DE UN ITEM DE LA ORDEN.
+ *
+ * El pin llega mal muy seguido —el geocodificador pifia media cuadra, el GPS
+ * del teléfono pifia veinte metros bajo los árboles, la dirección del reclamo
+ * estaba mal escrita desde el origen— y hasta ahora, una vez cargado, no había
+ * forma de corregirlo. Lo peor era el item PROPUESTO: la empresa lo mandaba,
+ * quedaba esperando validación, y ni la empresa podía arreglarlo ni el
+ * Director podía tocarlo antes de decidir. La única salida era rechazarlo y
+ * pedir que lo cargaran de nuevo, con la foto y las medidas otra vez.
+ *
+ * Ahora lo pueden mover los dos: la empresa lo suyo, el municipio cualquiera.
+ * El punto viaja a todo lo que cuelga del item —el incidente que alimenta el
+ * mapa y la brecha, y la intervención si ya se reportó—, porque un item
+ * corregido y un incidente en el lugar viejo es peor que no haberlo corregido.
+ */
+export async function corregirUbicacionItem(entrada: {
+  itemId: number;
+  lat: number;
+  lon: number;
+  direccion?: string;
+}) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion", "supervision"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para corregir ubicaciones`);
+  }
+  const datos = z
+    .object({
+      itemId: z.number().int().positive(),
+      lat: z.number().min(-27.2).max(-26.5),
+      lon: z.number().min(-65.6).max(-64.9),
+      direccion: z.string().max(300).optional(),
+    })
+    .parse(entrada);
+
+  // La caja del zod es un margen laxo; la frontera operativa es la ciudad.
+  const { dentroDeSMT } = await import("@cimba/domain");
+  if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
+    throw new ErrorVisible("Ese punto cae fuera de San Miguel de Tucumán: revisá el pin");
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.incidente_id, oi.intervencion_id, oi.acta_id,
+             ot.estado as orden_estado, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    const esEjecutor = empresaEjecutora != null;
+    if (esEjecutor && Number(item.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("El item no pertenece a tu empresa");
+    }
+    if (item.acta_id != null) {
+      throw new ErrorVisible(
+        "Este trabajo ya está en un acta firmada: la ubicación no se puede mover. Avisá a la Dirección.",
+      );
+    }
+    /**
+     * La empresa mueve lo que todavía está en juego —lo pendiente y lo que
+     * propuso y espera validación—, no lo ya reportado: ahí el punto es parte
+     * de la evidencia que se certifica, y lo corrige el municipio.
+     */
+    const editables = esEjecutor
+      ? ["pendiente", "propuesto", "hecho"]
+      : ["pendiente", "propuesto", "hecho", "no_encontrado", "no_ejecutable"];
+    if (!editables.includes(String(item.estado))) {
+      throw new ErrorVisible(
+        esEjecutor
+          ? "Este trabajo ya se cerró sin hacer: pedile a la Dirección que corrija la ubicación"
+          : "Este item no admite corrección de ubicación en su estado actual",
+      );
+    }
+    if (esEjecutor && !["emitida", "en_ejecucion"].includes(String(item.orden_estado))) {
+      throw new ErrorVisible("La orden no está activa");
+    }
+
+    const punto = sql`st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326)`;
+    await tx.execute(sql`
+      update orden_items set
+        geom = ${punto},
+        direccion = coalesce(${datos.direccion?.trim() || null}, direccion),
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          ubicacion_corregida: { por: sesion.nombre, en: new Date().toISOString() },
+        })}::jsonb
+      where id = ${datos.itemId}
+    `);
+
+    /* El incidente sigue al item: es el que dibuja el mapa, el que cuenta en
+       la brecha y el que se cruza con los reclamos por cercanía. Las tres
+       pertenencias territoriales se recalculan — el trigger solo completa lo
+       que está en NULL, así que mover el punto sin esto dejaba el bache
+       sumando en el distrito viejo. */
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set
+          geom = ${punto},
+          direccion = coalesce(${datos.direccion?.trim() || null}, direccion),
+          distrito_id = distrito_de(${punto}),
+          cuadrante_id = cuadrante_de(${punto}),
+          circuito_id = circuito_de(${punto}),
+          barrio_id = barrio_de(${punto})
+        where id = ${Number(item.incidente_id)}
+      `);
+    }
+    if (item.intervencion_id != null) {
+      await tx.execute(sql`
+        update intervenciones set geom_ejecucion = ${punto} where id = ${Number(item.intervencion_id)}
+      `);
+    }
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/mapa");
+  return { ok: true };
+}
+
+export async function corregirMedidasItem(formData: FormData) {
+  /**
+   * También la EMPRESA, sobre lo suyo. Corregir una medida era solo del
+   * municipio: el capataz que tipeó 0,5 en vez de 5 tenía que llamar a la
+   * Dirección para que se lo arreglen —o dejarlo así, que fue lo que pasó
+   * con 18 baches de Calleri. La propiedad se verifica abajo, y lo que ya
+   * entró en un acta firmada no lo toca nadie.
+   */
+  const sesion = await requerirRol("planificacion", "supervision", "empresa", "cuadrilla");
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      ...camposMedicion,
+      tipoObra: z.enum(["provisorio", "planificado", "sobre_adoquin"]).optional(),
+      motivo: z.string().min(3).max(500),
+    })
+    .parse({
+      itemId: formData.get("itemId"),
+      medicion: formData.get("medicion") || undefined,
+      anchoM: formData.get("anchoM") || undefined,
+      largoM: formData.get("largoM") || undefined,
+      superficieM2: formData.get("superficieM2") || undefined,
+      volumenM3: formData.get("volumenM3") || undefined,
+      espesorCm: formData.get("espesorCm"),
+      tipoObra: formData.get("tipoObra") || undefined,
+      motivo: formData.get("motivo"),
+    });
+
+  const medida = resolverMedicion(datos);
+  // Misma derivación que el reporte: el extendido sale de la medida.
+  const modalidad = datos.tipoObra ?? "planificado";
+  const tipoObra = modalidad === "planificado" && medida.superficieM2 > 4 ? "extendido" : modalidad;
+  const volumen = Math.round(medida.superficieM2 * (medida.espesorCm / 100) * 100) / 100;
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.estado, oi.intervencion_id, oi.incidente_id, oi.acta_id,
+             oi.superficie_m2, oi.espesor_cm, oi.tipo_obra, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<Record<string, unknown>>;
+    const item = filas[0];
+    if (!item) throw new ErrorVisible("El item no existe");
+    {
+      // Un ejecutor corrige SOLO lo de su empresa. Como la RLS no corre, esta
+      // línea es lo que impide que una contratista toque las medidas de otra.
+      const empresaEjecutora = await empresaDelEjecutor(sesion);
+      if (empresaEjecutora != null && Number(item.empresa_id) !== empresaEjecutora) {
+        throw new ErrorVisible("Este trabajo no es de tu empresa");
+      }
+    }
+    if (String(item.estado) !== "hecho" || item.intervencion_id == null) {
+      throw new ErrorVisible("Este item no tiene trabajo reportado: no hay medidas que corregir");
+    }
+    if (item.acta_id != null) {
+      throw new ErrorVisible(
+        "Este trabajo ya está en un acta firmada: no se puede corregir. La diferencia se salda en el acta siguiente.",
+      );
+    }
+
+    /**
+     * El ANTES completo a la auditoría, antes de pisarlo. El trigger auditar()
+     * también registra el update, pero sin el motivo: y "por qué se cambió" es
+     * justamente lo que hay que poder contestar cuando una medida cambia
+     * después de que la empresa la firmó.
+     */
+    await tx.execute(sql`
+      insert into auditoria (entidad, entidad_id, accion, actor, diff)
+      values ('orden_item', ${datos.itemId}, 'medidas_corregidas', ${sesion.sub}::uuid,
+              ${JSON.stringify({
+                motivo: datos.motivo,
+                por: sesion.nombre,
+                antes: {
+                  superficie_m2: item.superficie_m2 != null ? Number(item.superficie_m2) : null,
+                  espesor_cm: item.espesor_cm != null ? Number(item.espesor_cm) : null,
+                  tipo_obra: item.tipo_obra ?? null,
+                },
+                despues: {
+                  superficie_m2: medida.superficieM2,
+                  espesor_cm: medida.espesorCm,
+                  tipo_obra: tipoObra,
+                },
+              })}::jsonb)
+    `);
+
+    // volumen_m3 NO se toca: es columna generada sobre superficie y espesor.
+    await tx.execute(sql`
+      update orden_items set
+        ancho_m = ${medida.anchoM}, largo_m = ${medida.largoM},
+        espesor_cm = ${medida.espesorCm}, superficie_m2 = ${medida.superficieM2},
+        tipo_obra = ${tipoObra}::tipo_obra_bacheo,
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          medicion: medida.medicion,
+          correccion: { por: sesion.nombre, en: new Date().toISOString(), motivo: datos.motivo },
+        })}::jsonb
+      where id = ${datos.itemId}
+    `);
+
+    // Acá el volumen SÍ hay que escribirlo: no es generado.
+    await tx.execute(sql`
+      update intervenciones set
+        superficie_m2 = ${medida.superficieM2},
+        volumen_m3 = ${volumen},
+        tipo_obra = ${tipoObra}::tipo_obra_bacheo,
+        materiales = coalesce(materiales, '{}'::jsonb) || ${JSON.stringify({
+          ...(medida.anchoM != null ? { ancho_m: medida.anchoM, largo_m: medida.largoM } : {}),
+          espesor_cm: medida.espesorCm,
+          medicion: medida.medicion,
+        })}::jsonb,
+        metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          correccion: { por: sesion.nombre, en: new Date().toISOString(), motivo: datos.motivo },
+        })}::jsonb
+      where id = ${Number(item.intervencion_id)}
+    `);
+
+    if (item.incidente_id != null) {
+      await tx.execute(sql`
+        update incidentes set superficie_m2 = ${medida.superficieM2}
+        where id = ${Number(item.incidente_id)}
+      `);
+    }
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath("/empresa");
+  revalidatePath("/incidentes");
+  revalidatePath("/intervenciones");
+  return { ok: true };
+}
+
 export async function corregirTipoIntervencion(entrada: { intervencionId: number; tipo: string }) {
   const sesion = await requerirRol("planificacion", "supervision");
   const datos = z

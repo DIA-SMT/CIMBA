@@ -11,6 +11,7 @@ import { fechaCorta, numero } from "@/lib/formato";
 import { BadgeFuente, BadgeTipo } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import { mensajeDeError } from "@/lib/errores";
+import { whatsappDe } from "@/lib/contacto-vecino";
 
 /**
  * EL ÚLTIMO METRO: de la respuesta escrita a la persona que reclamó.
@@ -25,19 +26,8 @@ import { mensajeDeError } from "@/lib/errores";
  * wa.me solo ABRE WhatsApp con el texto puesto; el envío lo hace la persona.
  */
 
-/** Argentina para WhatsApp: 54 + 9 + área + número, sin símbolos.
- *  Devuelve null si el número no tiene la forma esperada — mejor no ofrecer
- *  el botón que abrir un chat con un desconocido. */
-function whatsappDe(tel: string | undefined): string | null {
-  if (!tel) return null;
-  let d = tel.replace(/[^0-9]/g, "").replace(/^00/, "");
-  if (d.startsWith("54")) d = d.slice(2);
-  if (d.startsWith("9")) d = d.slice(1);
-  if (d.startsWith("0")) d = d.slice(1);
-  // Área (2 a 4 dígitos) + el 15 viejo de celular: WhatsApp no lo lleva.
-  d = d.replace(/^(\d{2,4})15(\d{6,8})$/, "$1$2");
-  return d.length === 10 ? `549${d}` : null;
-}
+/* whatsappDe vive en lib/contacto-vecino.ts: el cierre desde el mapa arma el
+   mismo número, con la misma regla. */
 
 /** Cómo se resolvió (intervenciones.tipo_intervencion). Etiquetas locales:
  *  formato.ts no es de esta tarea. */

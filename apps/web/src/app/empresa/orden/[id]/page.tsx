@@ -4,11 +4,15 @@ import { notFound } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
+import { formatoToneladas } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
+import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { CorregirMedidas } from "@/app/(app)/ordenes/[id]/corregir-medidas";
+import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
 
@@ -42,14 +46,17 @@ export default async function PaginaOrdenEmpresa({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ empresa?: string }>;
+  searchParams: Promise<{ empresa?: string; proponer?: string }>;
 }) {
   const { id } = await params;
   const idOrden = Number(id);
   if (!Number.isInteger(idOrden) || idOrden <= 0) notFound();
 
   const sesion = (await leerSesion())!;
-  const resuelta = await resolverVistaPortal(sesion, await searchParams);
+  const sp = await searchParams;
+  const resuelta = await resolverVistaPortal(sesion, sp);
+  /* Viene de "Cargar un bache → esta orden": el panel de proponer abre solo. */
+  const abrirProponer = sp.proponer === "1";
   // obtenerOrden filtra por empresa cuando el rol es 'empresa' (y excluye
   // borradores): si el id es de otra empresa, vuelve null y esto es un 404, no
   // una fuga. El filtro vive en la consulta porque la RLS hoy no se aplica.
@@ -89,6 +96,24 @@ export default async function PaginaOrdenEmpresa({
    * los mismos que usa la lista: restarlos acá en TypeScript era lo que hacía
    * que las dos pantallas mostraran números distintos.
    */
+  /**
+   * Los puntos del mapa de ubicación: todo lo que tenga coordenada, con el
+   * color del avance. Lo cerrado sin trabajo —no encontrado, ya resuelto—
+   * cuenta como hecho a los fines del mapa: lo que importa dibujar es qué
+   * queda por visitar.
+   */
+  const puntosDelMapa = orden.itemsDetalle.flatMap((i) =>
+    i.lat != null && i.lon != null && i.estado !== "rechazado"
+      ? [{
+          id: i.id,
+          lat: i.lat,
+          lon: i.lon,
+          direccion: i.direccion,
+          hecho: i.estado !== "pendiente" && i.estado !== "propuesto",
+        }]
+      : [],
+  );
+
   const enPlan = orden.enPlan;
   const pctHecho = enPlan > 0 ? Math.round((100 * orden.hechos) / enPlan) : 0;
   const pctSinTrabajo =
@@ -144,7 +169,14 @@ export default async function PaginaOrdenEmpresa({
               </span>
             )}
           </span>
-          <span className="num text-texto-2">{numero(orden.m2Reportados)} m²</span>
+          {/* Los m² porque son lo tangible, las toneladas porque son la unidad
+              con la que se certifica el pago (2,4 t/m³). */}
+          <span className="num text-texto-2">
+            {numero(orden.m2Reportados)} m²
+            {orden.tnReportadas > 0 && (
+              <span className="text-amarillo"> · {formatoToneladas(orden.tnReportadas)}</span>
+            )}
+          </span>
         </div>
         <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-panel-3">
           <div className="flex h-full">
@@ -177,6 +209,24 @@ export default async function PaginaOrdenEmpresa({
         )}
       </Panel>
 
+      {/**
+       * DÓNDE QUEDA EL TRABAJO. Antes la empresa recibía una lista de
+       * direcciones y nada más: si está todo en tres cuadras o repartido en
+       * medio distrito, y por dónde conviene arrancar, se armaba en la cabeza
+       * del capataz leyendo direcciones sueltas. El mapa existía pero estaba
+       * escondido dentro de la lista, detrás de un botón que solo aparecía con
+       * cinco o más pendientes — o sea que en la mayoría de las órdenes no
+       * había mapa, y en una terminada tampoco.
+       *
+       * Van TODOS los puntos de la orden, no solo los pendientes: lo rojo es
+       * lo que falta y lo verde lo tapado, que es el avance dibujado.
+       */}
+      {(puntosDelMapa.length > 0 || orden.poligono != null) && (
+        <div className="mb-4">
+          <MapaOrden puntos={puntosDelMapa} area={orden.poligono} />
+        </div>
+      )}
+
       {/* Lo cargado en ESTA orden: el papel que la empresa lleva a la
           medición conjunta. */}
       {orden.cerrados > 0 && (
@@ -196,6 +246,20 @@ export default async function PaginaOrdenEmpresa({
         </p>
       )}
 
+      {/**
+       * ARRIBA, no al final. La cuadrilla no trabaja la orden leyéndola de
+       * principio a fin: hace un barrido norte-sur y este-oeste de la calle y
+       * va cargando los baches que ejecuta, que en su mayoría NO están en el
+       * papel. Agregar un punto nuevo es la acción más frecuente del portal y
+       * estaba debajo de la lista entera — en una orden de treinta items, a
+       * treinta scrolls de distancia. Pedido de la Dirección de Bacheo (12/09).
+       */}
+      {activa && (
+        <div className="mb-4">
+          <ProponerItem ordenId={orden.id} abrirAlEntrar={abrirProponer} />
+        </div>
+      )}
+
       {/* Lo pendiente, uno por uno y bien grande. La lista es una isla
           cliente porque busca, ordena por cercanía y dibuja el mapa de la
           orden: lo que hace navegable una orden de decenas de baches. */}
@@ -203,16 +267,24 @@ export default async function PaginaOrdenEmpresa({
         <ListaPendientes pendientes={pendientes} hechos={hechos} ordenId={orden.id} />
       )}
       {pendientes.length === 0 && activa && (
-        <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">
-          No queda nada pendiente en esta orden. Buen trabajo.
-        </p>
-      )}
-
-      {/* La calle manda: lo que la cuadrilla encuentra y no estaba en el papel */}
-      {activa && (
-        <div className="mt-4">
-          <ProponerItem ordenId={orden.id} />
-        </div>
+        /**
+         * Una ORDEN ABIERTA no tiene lista: se sale a barrer la zona y se carga
+         * lo que se encuentra. Decirle "no queda nada pendiente, buen trabajo"
+         * a una cuadrilla que recién arranca sería mandarla de vuelta al
+         * camión.
+         */
+        orden.abierta ? (
+          <p className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-4 py-5 text-center text-sm leading-relaxed text-texto-2">
+            <b className="block text-base text-amarillo">Orden abierta</b>
+            Esta orden no trae una lista de baches: recorré{" "}
+            <b className="text-texto">{orden.ambitoNombre ?? "la zona asignada"}</b> y cargá con el
+            botón de arriba cada bache que tapes.
+          </p>
+        ) : (
+          <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-6 text-center text-base font-semibold text-resuelto">
+            No queda nada pendiente en esta orden. Buen trabajo.
+          </p>
+        )
       )}
 
       {(propuestos.length > 0 || rechazados.length > 0) && (
@@ -233,6 +305,21 @@ export default async function PaginaOrdenEmpresa({
                   {ETIQUETA_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo} · Bacheo lo está revisando: si
                   lo valida, aparece en los pendientes.
                 </p>
+                {/* Esperando validación era el único estado sin salida: ni la
+                    empresa podía arreglar un pin mal puesto ni el Director
+                    podía tocarlo antes de decidir. Se rechazaba y se cargaba
+                    todo de nuevo. */}
+                {activa && (
+                  <div className="mt-1.5">
+                    <CorregirUbicacionItem
+                      itemId={item.id}
+                      lat={item.lat}
+                      lon={item.lon}
+                      direccion={item.direccion}
+                      compacto
+                    />
+                  </div>
+                )}
               </Panel>
             ))}
             {rechazados.map((item) => {
@@ -360,6 +447,36 @@ function ItemHecho({ item }: { item: ItemOrden }) {
           <p className="mt-0.5 text-xs text-texto-3">Reportado el {fechaCorta(item.reportadoEn)}</p>
         )}
         {item.observaciones && <p className="mt-1 text-xs text-texto-2">{item.observaciones}</p>}
+        {/**
+         * CORREGIR LO PROPIO. Un 0,5 tipeado en vez de 5 certifica la décima
+         * parte de lo colocado, y hasta acá la empresa no podía arreglarlo:
+         * había que llamar a la Dirección. Medidas y pin, mientras el trabajo
+         * no esté en un acta firmada — eso ya no lo toca nadie.
+         */}
+        {item.actaId == null ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <CorregirMedidas
+              itemId={item.id}
+              superficieM2={item.superficieM2}
+              espesorCm={item.espesorCm}
+              anchoM={item.anchoM}
+              largoM={item.largoM}
+              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
+              tipoObra={item.tipoObra ?? null}
+              enActa={false}
+              etiqueta="Corregir medidas"
+            />
+            <CorregirUbicacionItem
+              itemId={item.id}
+              lat={item.lat}
+              lon={item.lon}
+              direccion={item.direccion}
+              compacto
+            />
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-texto-3">Certificado en acta: ya no se modifica.</p>
+        )}
         {fotos.length > 0 && (
           /* El visor a pantalla completa: targets grandes para el capataz en
              el celular, sin abrir pestañas. */

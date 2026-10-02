@@ -19,6 +19,7 @@ export const ETIQUETA_TIPO: Record<TipoProblema, string> = {
   sumidero: "Sumidero",
   tapa_registro: "Tapa de registro",
   perdida_agua: "Pérdida de agua",
+  perdida_cloacal: "Pérdida de líquidos cloacales",
   bocacalle_rota: "Bocacalle rota",
   cuneta_rota: "Cuneta rota",
   cuadra_completa: "Cuadra completa",
@@ -40,7 +41,14 @@ export const ETIQUETA_ESTADO_DEMANDA: Record<string, string> = {
   en_validacion: "En validación",
   vinculada: "Vinculada",
   descartada: "Descartada",
-  fuera_de_alcance: "Fuera de alcance",
+  /**
+   * "Derivado" y no "Fuera de alcance": el reclamo NO se descartó ni se cerró
+   * —el pozo sigue ahí— sino que se mandó por nota a quien corresponde (la
+   * SAT, Ingeniería). "Fuera de alcance" describía el trámite desde adentro de
+   * Bacheo y sonaba a "no es nuestro problema"; "derivado" dice lo que pasó y
+   * es la palabra que usa la Dirección. Pedido del 12/09.
+   */
+  fuera_de_alcance: "Derivado",
   cerrada: "Cerrada (respondida)",
 };
 
@@ -238,4 +246,18 @@ export const venceHoy = (o: { venceEn: string | null; estado: string }): boolean
 
 export function numero(n: number): string {
   return new Intl.NumberFormat("es-AR").format(n);
+}
+
+/**
+ * Hasta cuántos días atrás se puede fechar un trabajo cargado a mano. Más que
+ * eso ya no es "vengo atrasado con la carga" sino otra cosa, y conviene que
+ * el calendario no lo ofrezca como si fuera normal. Ver lib/fecha-ejecucion.ts,
+ * que es donde se valida del lado del servidor.
+ */
+export const DIAS_ATRAS_EJECUCION = 90;
+
+export function minimoEjecucion(): string {
+  const d = new Date(`${hoyISO()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - DIAS_ATRAS_EJECUCION);
+  return d.toISOString().slice(0, 10);
 }

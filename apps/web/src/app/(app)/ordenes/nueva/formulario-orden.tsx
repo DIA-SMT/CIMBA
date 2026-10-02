@@ -2,8 +2,14 @@
 
 import { LocateFixed, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
-import { PRIORIDADES_VIALES, type FuenteDemanda, type PrioridadVial } from "@cimba/domain";
+import { useEffect, useRef, useState, useTransition } from "react";
+import {
+  EMPRESAS_HABILITADAS_AGUA,
+  PRIORIDADES_VIALES,
+  type FuenteDemanda,
+  type PrecisionGeocod,
+  type PrioridadVial,
+} from "@cimba/domain";
 import { crearOrden } from "@/lib/acciones-ordenes";
 import { proyectar, type ParametrosCapacidad } from "@/lib/capacidad";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
@@ -28,6 +34,12 @@ interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /** Solo corredores: jerarquía vial (1 = troncal) e índice de priorización. */
+  nivel?: number | null;
+  ipi?: number | null;
+  /** Espeja OpcionAmbito de lib/ordenes.ts: las empresas cuya zona de contrato
+   *  pisa este ámbito, ordenadas por cuánto les toca. */
+  empresas: Array<{ empresaId: number | null; nombre: string; pct: number }>;
 }
 
 interface ImbornalPend {
@@ -42,9 +54,17 @@ interface ImbornalPend {
   enOrden: boolean;
 }
 
-type TipoOrden = "bacheo" | "pano_hormigon" | "carpeta" | "cordon_cuneta" | "imbornales" | "tapas" | "ripio";
+type TipoOrden =
+  | "bacheo"
+  | "pano_hormigon"
+  | "carpeta"
+  | "cordon_cuneta"
+  | "imbornales"
+  | "tapas"
+  | "ripio"
+  | "perdida_agua";
 // Espeja AmbitoOrden de lib/ordenes.ts: si se agrega uno allá, va también acá.
-type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona";
+type Ambito = "distrito" | "circuito" | "corredor" | "barrio" | "colector" | "zona" | "poligono";
 
 /** Qué trabajo se manda a hacer. De esto depende a qué empresa puede ir. */
 const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> = [
@@ -55,6 +75,13 @@ const TIPOS_ORDEN: Array<{ valor: TipoOrden; etiqueta: string; desc: string }> =
   { valor: "imbornales", etiqueta: "Imbornales", desc: "Limpieza y reparación de bocas de tormenta" },
   { valor: "tapas", etiqueta: "Tapas", desc: "Reposición o reparación de tapas de cámara" },
   { valor: "ripio", etiqueta: "Ripio", desc: "Pasado de máquina y enripiado" },
+  /**
+   * Es de la SAT, pero el municipio la ejecuta cuando no puede esperar — y
+   * solo con UOCRA e INGECO, las únicas habilitadas por contrato. La misma
+   * orden sirve de relevamiento con foto para la nota a la SAT cuando no se
+   * puede resolver en el momento.
+   */
+  { valor: "perdida_agua", etiqueta: "Pérdida de agua", desc: "Ejecución o relevamiento — solo UOCRA e INGECO" },
 ];
 
 /**
@@ -71,9 +98,15 @@ const COMO_ELEGIR: Record<Ambito, string> = {
   corredor: "un corredor",
   barrio: "un barrio",
   colector: "un colector",
+  poligono: "el área que dibujaste",
 };
 
-const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }> = [
+const AMBITOS: Array<{
+  valor: Ambito;
+  etiqueta: string;
+  soloPluvial?: boolean;
+  soloConPoligono?: boolean;
+}> = [
   { valor: "circuito", etiqueta: "Circuito" },
   /* La división fija del contrato de bacheo integral, una por empresa: es como
      el Director piensa el reparto del trabajo, así que va segunda. */
@@ -82,6 +115,9 @@ const AMBITOS: Array<{ valor: Ambito; etiqueta: string; soloPluvial?: boolean }>
   { valor: "corredor", etiqueta: "Corredor" },
   { valor: "barrio", etiqueta: "Barrio" },
   { valor: "colector", etiqueta: "Colector", soloPluvial: true },
+  /* El área dibujada a mano en el mapa. No se elige acá: se llega con ella
+     puesta desde el mapa, y por eso la opción solo aparece cuando vino una. */
+  { valor: "poligono", etiqueta: "Área dibujada", soloConPoligono: true },
 ];
 
 const ES_PLUVIAL = (t: TipoOrden) => t === "imbornales" || t === "tapas";
@@ -98,6 +134,9 @@ interface Tramo {
   alturaHasta?: string;
   resuelta?: string;
   resueltaHasta?: string;
+  /** Si el punto es la puerta o apenas la calle. Ver PrecisionGeocod. */
+  precision?: PrecisionGeocod;
+  precisionHasta?: PrecisionGeocod;
   ubicando?: boolean;
   sinResultado?: boolean;
   /** Recorrido dibujado en el mapa: [[lon, lat], …]. */
@@ -123,6 +162,7 @@ export function FormularioOrden({
   empresas,
   parametros,
   recorrido,
+  poligono,
 }: {
   circuitos: CircuitoOpcion[];
   distritos: OpcionAmbito[];
@@ -135,13 +175,19 @@ export function FormularioOrden({
   parametros: ParametrosCapacidad;
   /** Trazado dibujado en el mapa: entra como un tramo ya armado. */
   recorrido?: Array<[number, number]>;
+  /**
+   * ÁREA dibujada en el mapa. A diferencia del recorrido —que describe un
+   * tramo de calle— encierra un pedazo de ciudad: el formulario abre con el
+   * ámbito en "área dibujada" y lo que cae adentro ya viene seleccionado.
+   */
+  poligono?: Array<[number, number]>;
 }) {
   const router = useRouter();
 
   // ── La demanda ─────────────────────────────────────────────────────────────
   // QUÉ trabajo y POR DÓNDE: los dos primeros pasos de la orden (Leo, 10/9).
   const [tipo, setTipo] = useState<TipoOrden>("bacheo");
-  const [ambito, setAmbito] = useState<Ambito>("circuito");
+  const [ambito, setAmbito] = useState<Ambito>(poligono ? "poligono" : "circuito");
   const [colector, setColector] = useState("");
   const [imbornales, setImbornales] = useState<ImbornalPend[]>([]);
   const [circuitoId, setCircuitoId] = useState<number>(0);
@@ -149,6 +195,8 @@ export function FormularioOrden({
   // Pedidos ROJOS limpios del circuito que todavía no son incidentes: el
   // botón de relevar los convierte en cola de un paso.
   const [rojas, setRojas] = useState(0);
+  /** Lo que hay en la zona y no entra en ESTA orden, por tipo. Se dice, no se esconde. */
+  const [fueraDeAlcance, setFueraDeAlcance] = useState<Array<{ tipo: string; n: number }>>([]);
   const [relevando, setRelevando] = useState(false);
   const [avisoRelevar, setAvisoRelevar] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -160,6 +208,19 @@ export function FormularioOrden({
   );
   // Evita que una respuesta lenta de un circuito anterior pise a la actual.
   const pedidoRef = useRef(0);
+  /**
+   * Con un área dibujada NO hay selector que tocar: el recorte ya viene de la
+   * URL, así que la carga arranca sola al entrar. Una sola vez — sin esto,
+   * cada re-render volvería a pedir los mismos pendientes y a re-tildar lo que
+   * el Director hubiera destildado.
+   */
+  const areaCargada = useRef(false);
+  useEffect(() => {
+    if (!poligono || poligono.length < 3 || areaCargada.current) return;
+    areaCargada.current = true;
+    void elegirAmbitoRef(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── La oferta y el papel ───────────────────────────────────────────────────
   const [empresaId, setEmpresaId] = useState<number>(0);
@@ -181,26 +242,71 @@ export function FormularioOrden({
     setImbornales([]);
     setErrorCarga(null);
     setRojas(0);
+    setFueraDeAlcance([]);
     setAvisoRelevar(null);
-    if (!ref) return;
+    /* El área dibujada no tiene "ref": el recorte es la geometría. */
+    if (!ref && ambito !== "poligono") return;
     const pedido = ++pedidoRef.current;
     setCargando(true);
     try {
-      const r = await fetch(`/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}`);
+      const r = await fetch(
+        ambito === "poligono"
+          ? `/api/ordenes/pendientes?ambito=poligono&tipo=${tipo}&poligono=${encodeURIComponent(
+              (poligono ?? []).map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+            )}`
+          : `/api/ordenes/pendientes?ambito=${ambito}&ref=${encodeURIComponent(String(ref))}&tipo=${tipo}`,
+      );
       if (!r.ok) throw new Error("No se pudo cargar lo pendiente de esa zona");
       const j = (await r.json()) as {
         pendientes?: PendienteCircuito[];
         imbornales?: ImbornalPend[];
         rojas?: number;
+        fueraDeAlcance?: Array<{ tipo: string; n: number }>;
       };
       if (pedido !== pedidoRef.current) return;
       setPendientes(j.pendientes ?? []);
+      /**
+       * Con un área dibujada, lo de adentro viene TILDADO. El gesto ya fue
+       * elegir: quien encerró ocho manzanas en el mapa ya dijo qué quiere
+       * mandar, y hacerle tildar después ochenta casillas una por una sería
+       * pedirle que lo diga dos veces. Se puede destildar lo que sobre.
+       */
+      if (ambito === "poligono") {
+        setSeleccion(
+          new Set((j.pendientes ?? []).filter((p) => !p.enOrden).map((p) => p.incidenteId)),
+        );
+      }
       setImbornales(j.imbornales ?? []);
       setRojas(j.rojas ?? 0);
-      // Si el circuito ya tiene empresa asignada, se propone sola.
-      if (ambito === "circuito") {
-        const c = circuitos.find((x) => x.id === ref);
-        if (c?.empresaId && !empresaId) setEmpresaId(c.empresaId);
+      setFueraDeAlcance(j.fueraDeAlcance ?? []);
+      /**
+       * La empresa se propone sola. El circuito ya lo hacía por su columna
+       * empresa_id; el resto de los ámbitos no tenía cómo — y era justo donde
+       * más falta hacía, porque un distrito se reparte entre varias zonas y
+       * había que acordarse de cuál le toca a cada una.
+       *
+       * Se propone la que MÁS territorio tiene ahí (las empresas vienen
+       * ordenadas por superficie), y solo si todavía no se eligió ninguna: si
+       * el Director ya decidió, no se le pisa la decisión.
+       */
+      if (!empresaId) {
+        if (ambito === "circuito") {
+          const c = circuitos.find((x) => x.id === ref);
+          if (c?.empresaId) setEmpresaId(c.empresaId);
+        } else {
+          const lista =
+            ambito === "distrito"
+              ? distritos
+              : ambito === "barrio"
+                ? barrios
+                : ambito === "corredor"
+                  ? corredores
+                  : ambito === "zona"
+                    ? zonas
+                    : [];
+          const dominante = lista.find((o) => o.id === ref)?.empresas[0];
+          if (dominante?.empresaId) setEmpresaId(dominante.empresaId);
+        }
       }
     } catch (e) {
       if (pedido !== pedidoRef.current) return;
@@ -225,6 +331,46 @@ export function FormularioOrden({
   };
 
   /**
+   * DE QUÉ EMPRESA ES ESTE PEDAZO DE CIUDAD.
+   *
+   * La ciudad está repartida en cuatro zonas fijas del contrato de bacheo
+   * integral, una por empresa, y los ámbitos NO respetan esa división: el
+   * distrito 9 es 66% de CALLERI, 31% de UOCRA y 3% de INGECO-1. El Director
+   * tenía que traducir "distrito 9" a "¿y a quién se lo doy?" de memoria, cada
+   * vez que armaba una orden.
+   *
+   * Ahora cada opción dice de quién es, y al elegirla se propone sola la
+   * empresa que más territorio tiene ahí. Se PROPONE y no se impone: la
+   * decisión sigue siendo suya, y hay empresas que no trabajan por zonas
+   * (Administración cubre toda la ciudad; las de SIGOV van por obra).
+   */
+  const detalleAmbito = (o: OpcionAmbito) =>
+    [
+      `${numero(o.pendientes)} pendientes`,
+      // Corredores: los mismos datos con los que se los mira en el IPI.
+      o.nivel != null ? `nivel ${o.nivel}` : null,
+      o.ipi != null ? `IPI ${o.ipi.toFixed(1)}` : null,
+      o.empresas.length > 0 ? o.empresas.map((e) => `${e.nombre} ${e.pct}%`).join(", ") : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+  /** Las empresas de la opción elegida, para marcar el paso 4. */
+  const empresasDeLaZona: OpcionAmbito["empresas"] =
+    !circuitoId
+      ? []
+      : ((ambito === "distrito"
+          ? distritos
+          : ambito === "barrio"
+            ? barrios
+            : ambito === "corredor"
+              ? corredores
+              : ambito === "zona"
+                ? zonas
+                : []
+        ).find((o) => o.id === circuitoId)?.empresas ?? []);
+
+  /**
    * Las opciones del ámbito activo. El NOMBRE va en `etiqueta` y los números
    * en `detalle`, separados a propósito: el buscador matchea contra lo que el
    * Director escribe ("sarmiento", "circuito 12"), no contra "— 12 pendientes
@@ -238,18 +384,26 @@ export function FormularioOrden({
           detalle: `${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos`,
         }))
       : ambito === "distrito"
-        ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+        ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
         : ambito === "barrio"
-          ? barrios.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+          ? barrios.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
           : ambito === "corredor"
-            ? corredores.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+            ? corredores.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
             : ambito === "zona"
-              ? zonas.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: `${numero(o.pendientes)} pendientes` }))
+              ? zonas.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
             : colectores.map((c) => ({
                 ref: c.colector,
                 etiqueta: c.colector,
                 detalle: `${numero(c.total)} bocas · ${numero(c.malos)} en mal estado`,
               }));
+
+  /**
+   * "Solo podemos resolver pérdidas de agua con la UOCRA e INGECO" (12/09). Es
+   * una restricción del contrato, no una preferencia: las demás contratistas
+   * no están habilitadas para tocar la red de agua, así que ni se ofrecen.
+   */
+  const empresaHabilitada = (slug: string) =>
+    tipo !== "perdida_agua" || (EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(slug);
 
   const alternarSeleccion = (id: number) => {
     setSeleccion((s) => {
@@ -269,10 +423,30 @@ export function FormularioOrden({
   const actualizarTramo = (i: number, cambios: Partial<Tramo>) =>
     setTramos((ts) => ts.map((t, j) => (j === i ? { ...t, ...cambios } : t)));
 
-  const geocodificar = async (q: string) => {
-    const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}`);
+  /**
+   * EL PUNTO DE REFERENCIA. OSM no tiene la altura de la mayoría de las calles
+   * de la ciudad: cuando no la tiene, devuelve los TRAMOS de la calle y hay que
+   * elegir uno. Elegir "el primero" es elegir al azar, y así fue como
+   * "Colombia 4500" y "Colombia 4576" terminaron a 3,2 km.
+   *
+   * Quien arma una orden carga direcciones de UNA zona, así que el tramo que ya
+   * ubicó es la mejor pista disponible. Se manda como referencia y el
+   * geocodificador elige el tramo más cercano a eso.
+   */
+  const referencia = (excepto: number) => {
+    const otro = tramos.find((t, j) => j !== excepto && t.lat != null && t.lon != null);
+    return otro ? `&cerca=${otro.lat},${otro.lon}` : "";
+  };
+
+  const geocodificar = async (q: string, cerca = "") => {
+    const r = await fetch(`/api/geocodificar?q=${encodeURIComponent(q)}${cerca}`);
     const j = (await r.json()) as {
-      resultado: { punto: { lat: number; lon: number }; confianza: number; direccionResuelta: string } | null;
+      resultado: {
+        punto: { lat: number; lon: number };
+        confianza: number;
+        precision: PrecisionGeocod;
+        direccionResuelta: string;
+      } | null;
     };
     return j.resultado;
   };
@@ -290,11 +464,12 @@ export function FormularioOrden({
     const calle = t.direccion.trim();
     const desde = (t.alturaDesde ?? "").trim();
     const hasta = (t.alturaHasta ?? "").trim();
+    const cerca = referencia(i);
     try {
       if (desde && hasta) {
         const [a, b] = await Promise.all([
-          geocodificar(`${calle} ${desde}`),
-          geocodificar(`${calle} ${hasta}`),
+          geocodificar(`${calle} ${desde}`, cerca),
+          geocodificar(`${calle} ${hasta}`, cerca),
         ]);
         if (a && b) {
           actualizarTramo(i, {
@@ -305,13 +480,15 @@ export function FormularioOrden({
             lonHasta: b.punto.lon,
             resuelta: a.direccionResuelta,
             resueltaHasta: b.direccionResuelta,
+            precision: a.precision,
+            precisionHasta: b.precision,
           });
           return;
         }
         actualizarTramo(i, { ubicando: false, sinResultado: true });
         return;
       }
-      const r = await geocodificar(calle);
+      const r = await geocodificar(calle, cerca);
       if (r) {
         actualizarTramo(i, {
           ubicando: false,
@@ -321,9 +498,18 @@ export function FormularioOrden({
           lonHasta: undefined,
           resuelta: r.direccionResuelta,
           resueltaHasta: undefined,
+          precision: r.precision,
+          precisionHasta: undefined,
         });
       } else {
-        actualizarTramo(i, { ubicando: false, lat: undefined, lon: undefined, resuelta: undefined, sinResultado: true });
+        actualizarTramo(i, {
+          ubicando: false,
+          lat: undefined,
+          lon: undefined,
+          resuelta: undefined,
+          precision: undefined,
+          sinResultado: true,
+        });
       }
     } catch {
       actualizarTramo(i, { ubicando: false, sinResultado: true });
@@ -349,6 +535,24 @@ export function FormularioOrden({
       : null;
   const m2Seleccionados = seleccionados.reduce((a, p) => a + (p.superficieM2 ?? 0), 0);
   const totalItems = seleccion.size + tramosValidos.length;
+  /**
+   * LA ORDEN ABIERTA: una zona y ningún punto.
+   *
+   * Media ciudad se trabaja así — la cuadrilla barre el barrio y los baches
+   * los encuentra ahí, no en la planilla—, y hasta ahora había que inventar un
+   * tramo falso para poder emitir el papel. Lo único que se exige es que la
+   * orden diga DÓNDE: sin zona no es una orden, es un papel en blanco.
+   */
+  const hayAmbito =
+    ambito === "poligono"
+      ? (poligono?.length ?? 0) >= 3
+      : ambito === "colector"
+        ? colector.trim().length > 0
+        : circuitoId != null && circuitoId > 0;
+  /** Cómo se llama lo que se eligió, para poder nombrarlo en el aviso. */
+  const nombreAmbitoElegido =
+    opciones.find((o) => o.ref === (ambito === "colector" ? colector : circuitoId))?.etiqueta ?? null;
+  const ordenAbierta = totalItems === 0 && hayAmbito;
 
   const crear = () => {
     setError(null);
@@ -359,6 +563,8 @@ export function FormularioOrden({
           tipo,
           ambito,
           ambitoRef: ambito === "colector" ? colector : circuitoId || undefined,
+          // El área dibujada viaja entera: es el alcance de esta orden.
+          poligono: ambito === "poligono" ? poligono : undefined,
           circuitoId: ambito === "circuito" ? circuitoId || undefined : undefined,
           prioridad,
           titulo: titulo.trim() || undefined,
@@ -371,7 +577,14 @@ export function FormularioOrden({
           imbornalIds: ambito === "colector" ? [...seleccion] : [],
           tramos: tramosValidos.map((t) => ({
             direccion: t.direccion.trim(),
-            tipoTrabajo: t.tipoTrabajo,
+            /**
+             * Un tramo con dos alturas ES un tramo, diga lo que diga el
+             * selector. Se guardaban con tipo_trabajo='bache' —el valor con el
+             * que nace la fila— y quedaban en la base como si fueran un pozo
+             * puntual: "Avda. Siria del 1000 al 1900" contaba como un bache.
+             */
+            tipoTrabajo:
+              t.alturaDesde && t.alturaHasta ? "tramo" : t.recorrido ? "tramo" : t.tipoTrabajo,
             lat: t.lat,
             lon: t.lon,
             latHasta: t.latHasta,
@@ -416,7 +629,11 @@ export function FormularioOrden({
 
           <p className="mb-2 text-sm font-bold">2 · Por dónde se define</p>
           <div className="mb-2 flex flex-wrap gap-2">
-            {AMBITOS.filter((a) => (ES_PLUVIAL(tipo) ? a.valor === "colector" : !a.soloPluvial)).map((a) => (
+            {AMBITOS.filter((a) =>
+              ES_PLUVIAL(tipo)
+                ? a.valor === "colector"
+                : !a.soloPluvial && (!a.soloConPoligono || poligono != null),
+            ).map((a) => (
               <button
                 key={a.valor}
                 type="button"
@@ -495,6 +712,36 @@ export function FormularioOrden({
               Elegí arriba por dónde se define la orden y acá aparece lo pendiente para elegir.
             </p>
           </Panel>
+        )}
+
+        {/**
+          * LO QUE HAY ACÁ Y NO ENTRA EN ESTA ORDEN.
+          *
+          * Filtrar sin avisar habría cambiado un problema por otro peor: antes
+          * las pérdidas de agua aparecían listas para mandárselas a quien no
+          * puede resolverlas; escondidas, el Director no sabría que están. Se
+          * cuentan, se nombran, y si son de agua se ofrece el atajo de armar la
+          * orden que sí corresponde.
+          */}
+        {circuitoId > 0 && fueraDeAlcance.length > 0 && (
+          <div className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-4 py-3 text-[13px] leading-snug">
+            <b className="text-amarillo">Acá hay {numero(fueraDeAlcance.reduce((a, f) => a + f.n, 0))} pedidos que no entran en esta orden:</b>{" "}
+            <span className="text-texto-2">
+              {fueraDeAlcance
+                .map((f) => `${numero(f.n)} ${ETIQUETA_TIPO[f.tipo as keyof typeof ETIQUETA_TIPO] ?? f.tipo}`)
+                .join(", ")}
+              . No son de Bacheo: van a la SAT o a Ingeniería por nota.
+            </span>
+            {tipo !== "perdida_agua" &&
+              fueraDeAlcance.some((f) => f.tipo === "perdida_agua" || f.tipo === "perdida_cloacal") && (
+                <button
+                  onClick={() => cambiarTipo("perdida_agua")}
+                  className="ml-1 font-semibold text-celeste underline"
+                >
+                  Armar la orden de pérdida de agua
+                </button>
+              )}
+          </div>
         )}
 
         {circuitoId > 0 && (
@@ -729,17 +976,64 @@ export function FormularioOrden({
                 </button>
                 {t.lat != null && t.lon != null && (
                   <div className="w-full">
-                    <span className="text-[11px]" style={{ color: "#199e70" }}>
-                      ✓ {t.resuelta ?? "ubicado"}
-                    </span>
+                    {/**
+                      * EL TILDE VERDE QUE MENTÍA.
+                      *
+                      * Acá salía siempre "✓ <dirección>" en verde, hubiera
+                      * encontrado la puerta o un tramo cualquiera de la calle.
+                      * OSM no tiene la altura de la mayoría de las calles de la
+                      * ciudad: el 65% de las direcciones del caché estaban
+                      * resueltas así, y "Colombia 4500" y "Colombia 4576"
+                      * quedaron a 3,2 km. En la pantalla las dos se veían igual
+                      * de bien.
+                      *
+                      * El punto de calle sirve —la calle es la correcta— pero
+                      * hay que correr el pin antes de mandar a nadie, y eso
+                      * ahora se pide con todas las letras.
+                      */}
+                    {(() => {
+                      const dudoso =
+                        t.precision !== "exacta" ||
+                        (t.latHasta != null && t.precisionHasta !== "exacta");
+                      if (!dudoso) {
+                        return (
+                          <span className="text-[11px]" style={{ color: "#199e70" }}>
+                            ✓ {t.resuelta ?? "ubicado"}
+                            {t.latHasta != null && t.lonHasta != null && (
+                              <> → {t.resueltaHasta ?? "segundo extremo"}</>
+                            )}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="block text-[11px] leading-snug text-amarillo">
+                          <b>Ubicación aproximada</b> — el callejero no tiene esta altura, así que el
+                          punto cayó sobre {t.resuelta ?? "la calle"} pero no en el número.{" "}
+                          <b>Corré el pin hasta el bache</b> antes de emitir: la cuadrilla va a donde
+                          diga el pin.
+                        </span>
+                      );
+                    })()}
                     {/* El geocodificador le pifia media cuadra seguido: el pin se
                         afina a mano y ese lat/lon ajustado es el que viaja en
-                        crearOrden (actualizarTramo pisa t.lat/t.lon). */}
+                        crearOrden (actualizarTramo pisa t.lat/t.lon).
+
+                        Con dos alturas van los DOS extremos y la línea entre
+                        ellos: antes el mapa dibujaba solo el primero, así que
+                        un tramo de nueve cuadras se veía igual que un bache
+                        suelto y no había forma de comprobar que el sistema
+                        hubiera entendido de dónde a dónde. */}
                     <div className="mt-1.5">
                       <MiniMapa
                         lat={t.lat}
                         lon={t.lon}
                         etiqueta={t.resuelta ?? t.direccion}
+                        latHasta={t.latHasta}
+                        lonHasta={t.lonHasta}
+                        etiquetaHasta={t.resueltaHasta ?? null}
+                        alMoverHasta={({ lat, lon }) =>
+                          actualizarTramo(i, { latHasta: lat, lonHasta: lon })
+                        }
                         alto={220}
                         alMover={({ lat, lon }) => actualizarTramo(i, { lat, lon })}
                       />
@@ -767,8 +1061,31 @@ export function FormularioOrden({
       <div className="space-y-4">
         <Panel className="p-5">
           <p className="mb-3 text-sm font-bold">4 · La empresa</p>
+          {/* Qué dice el contrato sobre el pedazo de ciudad ya elegido. No
+              filtra la lista: un distrito se reparte entre varias zonas y a
+              veces hay que darle a una empresa el pedazo que no es "suyo".
+              Informa, que es lo que faltaba. */}
+          {empresasDeLaZona.length > 0 && (
+            <p className="mb-2 rounded-lg border border-celeste/30 bg-celeste/5 px-3 py-2 text-[12px] leading-snug text-texto-2">
+              Por contrato, acá trabaja{empresasDeLaZona.length > 1 ? "n" : ""}{" "}
+              {empresasDeLaZona.map((e, i) => (
+                <span key={e.nombre}>
+                  {i > 0 && ", "}
+                  <b className="text-celeste">{e.nombre}</b> ({e.pct}%)
+                </span>
+              ))}
+              .
+            </p>
+          )}
           <div className="space-y-2">
-            {empresas.map((e) => (
+            {tipo === "perdida_agua" && (
+              <p className="mb-2 rounded-lg border border-amarillo/40 bg-amarillo/5 px-3 py-2 text-[12px] leading-snug text-texto-2">
+                La red de agua es de la SAT: por contrato solo la pueden tocar{" "}
+                <b className="text-amarillo">UOCRA</b> e <b className="text-amarillo">INGECO</b>. Si acá no
+                se puede resolver, la orden sirve igual como relevamiento con foto para la nota a la SAT.
+              </p>
+            )}
+            {empresas.filter((e) => empresaHabilitada(e.slug)).map((e) => (
               <label
                 key={e.id}
                 className={`block cursor-pointer rounded-xl border p-3 transition ${
@@ -787,6 +1104,13 @@ export function FormularioOrden({
                     className="accent-[#2eb1ff]"
                   />
                   <span className="text-sm font-bold">{e.nombre}</span>
+                  {/* La que el contrato pone en esta zona, marcada. Sin esto el
+                      Director tenía que acordarse de memoria cuál era. */}
+                  {empresasDeLaZona.some((z) => z.empresaId === e.id) && (
+                    <span className="rounded bg-celeste/15 px-1.5 py-0.5 text-[10px] font-bold text-celeste">
+                      LE TOCA
+                    </span>
+                  )}
                   {!e.activa && <span className="text-[10px] text-texto-3">inactiva</span>}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 pl-6 text-[11px] text-texto-2">
@@ -899,12 +1223,23 @@ export function FormularioOrden({
         </Panel>
 
         {error && <p className="text-sm text-peligro">{error}</p>}
+        {ordenAbierta && (
+          <p className="rounded-xl border border-amarillo/40 bg-amarillo/5 px-3 py-2.5 text-xs leading-relaxed text-texto-2">
+            <b className="text-amarillo">Orden abierta.</b> No tiene puntos: la empresa va a{" "}
+            {nombreAmbitoElegido ? <b className="text-texto">{nombreAmbitoElegido}</b> : "la zona elegida"} y
+            carga los baches que encuentra. No se cierra sola — la cerrás vos cuando termine el trabajo.
+          </p>
+        )}
         <button
           onClick={crear}
-          disabled={creando || !empresaId || totalItems === 0}
+          disabled={creando || !empresaId || (totalItems === 0 && !ordenAbierta)}
           className="w-full rounded-xl bg-azul px-4 py-3.5 font-semibold text-white transition hover:brightness-110 active:scale-[0.99] disabled:opacity-40"
         >
-          {creando ? "Creando…" : `Crear la orden (${numero(totalItems)} items)`}
+          {creando
+            ? "Creando…"
+            : ordenAbierta
+              ? "Crear la orden abierta (sin puntos)"
+              : `Crear la orden (${numero(totalItems)} items)`}
         </button>
         <p className="text-center text-[11px] text-texto-3">
           Se crea en borrador: la empresa no la ve hasta que la emitas.

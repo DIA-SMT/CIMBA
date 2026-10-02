@@ -33,7 +33,7 @@ const C = { pedido: "#3987e5", curso: "#d95926", hecho: "#199e70" } as const;
 export default async function PaginaIntervenciones({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; pagina?: string }>;
+  searchParams: Promise<{ estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; medida?: string; pagina?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   const filtros = await searchParams;
@@ -47,6 +47,8 @@ export default async function PaginaIntervenciones({
       ejecutor: filtros.ejecutor,
       tipoIntervencion,
       q: filtros.q,
+      // Desde Avance: "233 de los 604 sin medida cargada" trae acá, a completarlos.
+      sinMedida: filtros.medida === "sin",
       pagina,
       limite: 50,
     }),
@@ -103,6 +105,18 @@ export default async function PaginaIntervenciones({
             </Link>
           );
         })}
+        <span className="mx-1 h-4 w-px bg-borde" aria-hidden="true" />
+        <Link
+          href={urlFiltros({ ...filtros, medida: filtros.medida === "sin" ? undefined : "sin", pagina: undefined })}
+          title="Solo los trabajos sin superficie cargada: los que Avance no puede sumar en m²"
+          className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+            filtros.medida === "sin"
+              ? "border-amarillo/60 bg-amarillo/10 font-semibold text-amarillo"
+              : "border-borde text-texto-2 hover:border-borde-2 hover:text-texto"
+          }`}
+        >
+          Sin medida cargada
+        </Link>
       </div>
 
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/intervenciones" method="get">
@@ -124,7 +138,8 @@ export default async function PaginaIntervenciones({
         <button className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">
           Filtrar
         </button>
-        {(filtros.estado || filtros.ejecutor || tipoIntervencion) && (
+        {filtros.medida === "sin" && <input type="hidden" name="medida" value="sin" />}
+        {(filtros.estado || filtros.ejecutor || tipoIntervencion || filtros.medida) && (
           <Link href="/intervenciones" className="text-sm text-texto-2 hover:text-texto">Limpiar</Link>
         )}
         <span className="ml-auto text-xs text-texto-3">{numero(total)} trabajos con estos filtros</span>
@@ -240,11 +255,11 @@ export default async function PaginaIntervenciones({
   );
 }
 
-type Filtros = { estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; pagina?: string };
+type Filtros = { estado?: string; ejecutor?: string; tipo_intervencion?: string; q?: string; medida?: string; pagina?: string };
 
 function urlFiltros(filtros: Filtros): string {
   const p = new URLSearchParams();
-  for (const k of ["estado", "ejecutor", "tipo_intervencion", "q", "pagina"] as const) {
+  for (const k of ["estado", "ejecutor", "tipo_intervencion", "q", "medida", "pagina"] as const) {
     if (filtros[k]) p.set(k, filtros[k]);
   }
   const qs = p.toString();

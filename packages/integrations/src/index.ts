@@ -9,6 +9,9 @@ export {
 } from "./fuentes/atencion-ciudadana";
 export type { AdaptadorAc, OpcionesBarridoAc } from "./fuentes/atencion-ciudadana";
 export { crearGeocoderNominatim } from "./geocoder/nominatim";
+/* El que hay que usar: consulta primero el callejero municipal y recién
+   después OSM. Ver geocoder/callejero.ts. */
+export { crearGeocoder } from "./geocoder/callejero";
 export { mapearTipo } from "./archivos/util";
 export { detectarYParsear } from "./archivos/importar";
 export type { ResultadoDeteccion } from "./archivos/importar";

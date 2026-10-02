@@ -4,3 +4,5 @@ export * from "./geo";
 export * from "./dedup";
 export * from "./priorizacion";
 export * from "./geocoder";
+export * from "./alcance";
+export * from "./sigov";

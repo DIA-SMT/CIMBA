@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { parse } from "csv-parse/sync";
 import type { IntervencionNormalizada } from "@cimba/domain";
 import { confianzaDesdeEtiqueta, intervencionNormalizadaSchema } from "@cimba/domain";
-import { fechaDesdeMes, limpiarTexto, mapearTipo, puntoValido } from "./util";
+import { fechaDesdeMes, limpiarTexto, mapearTipo, parsearFecha, puntoValido } from "./util";
 
 /**
  * Bacheos EJECUTADOS por cuadrillas municipales (planillas mensuales
@@ -51,6 +51,21 @@ export function parsearBacheoMensualTexto(contenido: string, etiqueta: string): 
         match_geocoder: limpiarTexto(f.name_geocoded),
         calidad_geo: f.calidad_geo ?? null,
         archivo: etiqueta,
+        /**
+         * QUIÉN LO HIZO. Estas planillas son el bacheo por ADMINISTRACIÓN —
+         * las cuadrillas propias del municipio—, y hasta ahora entraban sin
+         * decirlo: 1.314 intervenciones quedaron sin origen y sin empresa,
+         * mientras las de la app de la Dirección (Ingeco, Elías Maza) y las de
+         * SIGOV sí la traían. Agrupar el trabajo por ejecutor dejaba afuera al
+         * ejecutor más grande, y la Dirección lo notó mirando las fotos:
+         * "todos los baches con foto son de Ingeco" — porque el resto no decía
+         * de quién era.
+         *
+         * Mismas claves que usan bacheo-empresas y sigov-mysql: si acá se
+         * llamaran distinto, cada consulta tendría que conocer las tres.
+         */
+        origen: "bacheo_planillas",
+        empresa: "ADMINISTRACIÓN (cuadrillas propias)",
       },
     });
   });
@@ -88,6 +103,95 @@ export function parsearBacheoMarzoTexto(contenido: string): IntervencionNormaliz
         metadata: { mes: "Marzo 2026", archivo: "BACHEO_MARZO_2026_geo_QGIS_PowerBI.csv" },
       }),
     );
+}
+
+/**
+ * FORMATO DIARIO: `DIA;DIRECCION;Latitud;Longitud;GEO_CONFIANZA;LOCALIDAD;PROVINCIA;PAIS`
+ *
+ * La planilla que mandó la Dirección el 16/09 (agosto → 10 de septiembre).
+ * Frente a las mensuales tiene una mejora real: la fecha viene POR FILA y no
+ * como "mes_bacheo", así que cada bacheo queda en el día en que se hizo en vez
+ * de amontonarse todo el 15 del mes.
+ *
+ * Sigue sin traer superficie ni espesor, igual que todas las planillas de
+ * administración: entran con superficie null y certifican cero toneladas. No
+ * es algo que el parser pueda inventar — se pidió que la próxima exportación
+ * agregue las dos columnas.
+ */
+export function parsearBacheoDiario(rutaCsv: string): IntervencionNormalizada[] {
+  return parsearBacheoDiarioTexto(fs.readFileSync(rutaCsv, "utf8"));
+}
+
+export function parsearBacheoDiarioTexto(contenido: string): IntervencionNormalizada[] {
+  const filas: Record<string, string>[] = parse(contenido, {
+    columns: true,
+    delimiter: ";",
+    skip_empty_lines: true,
+    bom: true,
+    trim: true,
+  });
+
+  /**
+   * LA IDENTIDAD DE CADA FILA, SIN DEPENDER DEL ORDEN.
+   *
+   * Las planillas viejas numeraban por posición y por eso no se podían volver a
+   * subir: insertar una fila corría todas las siguientes y duplicaba medio
+   * archivo. Acá la identidad es el DÍA + LA DIRECCIÓN, que es lo que
+   * identifica al trabajo en la realidad. Si la Dirección reenvía el mismo
+   * archivo no entra nada; si manda uno que lo incluye y agrega septiembre
+   * entero, entran solo las filas nuevas.
+   *
+   * El contador es para el caso real de dos bacheos en la misma dirección el
+   * mismo día (hay uno en este archivo): el segundo es -2 y sigue siendo
+   * estable mientras el archivo conserve las dos filas.
+   */
+  const vistos = new Map<string, number>();
+  const salida: IntervencionNormalizada[] = [];
+
+  for (const f of filas) {
+    const fecha = parsearFecha(f.DIA, "dma");
+    // Sin fecha la fila no se puede ubicar en el tiempo y ensuciaría todos los
+    // cortes por mes: se deja afuera y la diferencia de conteo la delata.
+    if (!fecha) continue;
+
+    const direccion = limpiarTexto(f.DIRECCION);
+    const dia = fecha.toISOString().slice(0, 10);
+    const base = `${dia}-${(direccion ?? "sin-direccion")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60)}`;
+    const n = (vistos.get(base) ?? 0) + 1;
+    vistos.set(base, n);
+
+    salida.push(
+      intervencionNormalizadaSchema.parse({
+        sistema: "bacheo_planillas",
+        idRemoto: `diario-${base}${n > 1 ? `-${n}` : ""}`,
+        tipo: "bache",
+        estado: "finalizada",
+        punto: puntoValido(f.Latitud, f.Longitud),
+        geocodConfianza: confianzaDesdeEtiqueta(f.GEO_CONFIANZA),
+        direccionTexto: direccion,
+        superficieM2: null,
+        iniciadaEn: fecha,
+        finalizadaEn: fecha,
+        materiales: {},
+        observaciones: null,
+        metadata: {
+          calidad_geo: f.GEO_CONFIANZA ?? null,
+          archivo: "BACHEO_AGOSTO_10SEPTIEMBRE_2026_geo_QGIS_PowerBI.csv",
+          // Mismas claves que el resto de las planillas: ver el comentario de
+          // parsearBacheoMensualTexto.
+          origen: "bacheo_planillas",
+          empresa: "ADMINISTRACIÓN (cuadrillas propias)",
+        },
+      }),
+    );
+  }
+  return salida;
 }
 
 const MESES_ABREV: Record<string, number> = {
@@ -158,6 +262,24 @@ export function parsearBacheoJunioJulioTexto(contenido: string): IntervencionNor
 
     i++;
     const fecha = fechaJunJul(f[0], mesSeccion);
+
+    /**
+     * ESTE ARCHIVO TERMINA EN JULIO, AUNQUE EL ARCHIVO NO LO SEPA.
+     *
+     * La planilla de junio-julio se pasa tres días para agosto (3, 4 y 5), y
+     * esas mismas 20 filas vienen otra vez en la planilla de agosto, que
+     * arranca justo el 03/08. Las dos ingestas las dieron por trabajos
+     * distintos —el deduplicador compara por (sistema, idRemoto) y el idRemoto
+     * lleva el nombre del archivo— así que agosto quedó diciendo 315 cuando son
+     * 295. Se limpiaron a mano el 17/09; el corte es para que no vuelvan.
+     *
+     * El `i++` queda ARRIBA del corte a propósito: el idRemoto de este archivo
+     * es posicional (junjul-2026-N), así que dejar de contar una fila le
+     * correría el número a todas las que siguen y el próximo ingest las vería
+     * como nuevas. Se cuenta igual; solo no se emite.
+     */
+    if (fecha && fecha >= new Date("2026-08-01T00:00:00-03:00")) continue;
+
     resultado.push(
       intervencionNormalizadaSchema.parse({
         sistema: "bacheo_planillas",

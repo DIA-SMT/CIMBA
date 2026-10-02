@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     });
     await escribirCookieSesion(jwt);
     await auditarIngreso(perfil.id, perfil.id_persona, perfil.rol, "admin");
-    return NextResponse.json({ ok: true, destino: "/mapa" });
+    return NextResponse.json({ ok: true, destino: "/avance" });
   }
 
   // 2) Director de Bacheo: rol planificación — es el que emite las órdenes de
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
     });
     await escribirCookieSesion(jwt);
     await auditarIngreso(perfil.id, perfil.id_persona, perfil.rol, "bacheo");
-    return NextResponse.json({ ok: true, destino: perfil.rol === "planificacion" ? "/ordenes" : "/mapa" });
+    return NextResponse.json({ ok: true, destino: "/avance" });
   }
 
   // 3) Usuario local del personal (Silvana, Alejandro, …): usuario y clave

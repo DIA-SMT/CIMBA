@@ -2,6 +2,7 @@ import Link from "next/link";
 import { leerSesion } from "@/lib/auth";
 import { listarExpedientes, renglonesParaNotaSat } from "@/lib/expedientes";
 import { fechaCorta, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { PanelTabla } from "@/components/tabla-deslizable";
 
@@ -36,6 +37,34 @@ export default async function PaginaExpedientes() {
           ) : undefined
         }
       />
+
+      {/**
+        * LOS REPORTES DE VUELTA. Distintos de las notas de arriba y conviene
+        * no confundirlos: la nota a la SAT DERIVA trabajo (cambia estados,
+        * saca reclamos de la cola); esto RINDE CUENTAS —qué pasó con lo que
+        * pidieron— y no toca nada. Por eso no se numeran ni se registran: se
+        * imprimen y se entregan, y mañana el mismo reporte dice otra cosa
+        * porque el trabajo avanzó.
+        */}
+      <div className="mb-5">
+        <h2 className="mb-2 text-xs font-bold tracking-wider text-texto-3 uppercase">
+          Reportes de gestión por canal
+        </h2>
+        <p className="mb-2.5 text-sm text-texto-2">
+          Qué pidió cada canal y qué pasó con cada pedido, para imprimir y entregar.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {(["hcd", "redes_sociales", "atencion_ciudadana", "secretaria", "sat"] as const).map((f) => (
+            <Link
+              key={f}
+              href={`/expedientes/reporte/${f}`}
+              className="rounded-lg border border-borde-2 px-3 py-2 text-sm font-semibold text-texto-2 transition hover:border-celeste/60 hover:text-celeste"
+            >
+              {ETIQUETA_FUENTE[f]}
+            </Link>
+          ))}
+        </div>
+      </div>
 
       {expedientes.length === 0 ? (
         <Panel className="p-6 text-sm text-texto-2">

@@ -4,7 +4,13 @@ import { Camera, Check, LocateFixed, MapPin, Mic, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT, type TipoIntervencion } from "@cimba/domain";
-import { marcarYaResuelto, reportarItemHecho, reportarItemNoEncontrado } from "@/lib/acciones-ordenes";
+import {
+  marcarYaResuelto,
+  reportarItemHecho,
+  reportarItemNoEjecutable,
+  reportarItemNoEncontrado,
+} from "@/lib/acciones-ordenes";
+import { ETIQUETA_FAMILIA, MOTIVOS_CALLE, MOTIVO_POR_VALOR } from "@/lib/problemas-calle";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
@@ -18,6 +24,9 @@ import {
   type ValorMedida,
 } from "@/components/campos-medida";
 import { mensajeDeError } from "@/lib/errores";
+import { enviarOEncolar } from "@/lib/cola-envios";
+import { describirPrecision, mejorPosicion } from "@/lib/gps";
+import { hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
   borradorTieneAlgo,
   borrarBorrador,
@@ -33,23 +42,20 @@ const ETIQUETA_TRABAJO: Record<string, string> = {
   tramo: "Tramo",
 };
 
-/** Los cuatro modos reales de resolver, con la etiqueta que usa la cuadrilla. */
-const OPCIONES_INTERVENCION: Array<{ valor: TipoIntervencion; etiqueta: string }> = [
-  { valor: "bacheo", etiqueta: "Bacheo" },
-  { valor: "pano_hormigon", etiqueta: "Cambio de paño de hormigón" },
-  { valor: "carpeta", etiqueta: "Carpeta (repavimentación)" },
-  { valor: "enripiado", etiqueta: "Enripiado" },
-];
-
 /**
  * Modalidad de bacheo del protocolo de la DOV: es el dato con el que se
- * certifica el pago. "Extendido" no es una opinión — el protocolo lo define
- * por encima de 4 m², así que se preselecciona sola con la medida cargada.
+ * certifica el pago.
+ *
+ * "Extendido" YA NO SE ELIGE. El protocolo lo define por encima de 4 m², o sea
+ * que es una consecuencia de la medida, no una opinión del capataz: preguntarlo
+ * era pedirle que hiciera una cuenta que el sistema ya tiene hecha —y darle la
+ * chance de contestarla mal—. Lo deriva el servidor de la superficie cargada
+ * (ver acciones-ordenes.ts). Quedan las tres que sí son una decisión de la
+ * calle: el régimen de urgencia, el planificado y el adoquín.
  */
 const OPCIONES_OBRA: Array<{ valor: string; etiqueta: string }> = [
   { valor: "planificado", etiqueta: "Planificado" },
   { valor: "provisorio", etiqueta: "Provisorio (urgencia)" },
-  { valor: "extendido", etiqueta: "Extendido (+4 m²)" },
   { valor: "sobre_adoquin", etiqueta: "Sobre adoquín" },
 ];
 
@@ -160,9 +166,14 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   // components/campos-medida.tsx.
   const [medida, setMedida] = useState<ValorMedida>(() => medidaVacia());
   const [obs, setObs] = useState("");
-  // Quién carga y contra qué reclamo: ver el bloque del formulario.
+  // Quién carga: ver el bloque del formulario (el ticket 147 se sacó — lo
+  // emite Atención Ciudadana, no el capataz).
   const [capataz, setCapataz] = useState("");
-  const [ticket, setTicket] = useState("");
+  /** El reporte quedó en el teléfono (sin señal), no en el servidor. El item
+   *  sigue pendiente en la orden hasta que la cola lo mande: se dice así. */
+  const [guardadoLocal, setGuardadoLocal] = useState(false);
+  /** El día real del trabajo. Arranca en hoy: la carga al día no cambia. */
+  const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   // Cómo se resolvió: arranca en lo que pedía la orden (carpeta → carpeta,
   // el resto → bacheo) y el capataz lo corrige si en la calle terminó siendo
   // otra cosa ("empieza como bacheo y al final se ha hecho cambio de paño").
@@ -179,6 +190,15 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   const [fotoHoy, setFotoHoy] = useState<File | null>(null);
   const [previewHoy, setPreviewHoy] = useState<string | null>(null);
   const [obsYa, setObsYa] = useState("");
+
+  // "no se puede ejecutar": la tercera salida — no es un bache, o es nuestro
+  // pero no se arregla bacheando. Foto obligatoria: es lo que va al informe.
+  const [noEjecAbierto, setNoEjecAbierto] = useState(false);
+  const [motivoNoEjec, setMotivoNoEjec] = useState<string | null>(null);
+  const refFotoNoEjec = useRef<HTMLInputElement>(null);
+  const [fotoNoEjec, setFotoNoEjec] = useState<File | null>(null);
+  const [previewNoEjec, setPreviewNoEjec] = useState<string | null>(null);
+  const [obsNoEjec, setObsNoEjec] = useState("");
 
   // fotos
   const refDespues = useRef<HTMLInputElement>(null);
@@ -312,36 +332,28 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     );
   });
 
-  const usarGps = () => {
-    if (!navigator.geolocation) {
-      setErrorGeo("Este teléfono no expone el GPS al navegador.");
-      return;
-    }
+  const usarGps = async () => {
     setBuscandoGps(true);
     setErrorGeo(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setBuscandoGps(false);
-        const { latitude, longitude, accuracy } = pos.coords;
-        if (!dentroDeSmt(latitude, longitude)) {
-          setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
-          return;
-        }
-        // No se acepta directo: queda como candidato en el mini-mapa para
-        // que el capataz lo afine (el GPS urbano suele pifiar unos metros).
-        setCandidato({
-          lat: latitude,
-          lon: longitude,
-          origen: "gps",
-          precisionM: Math.round(accuracy),
-        });
-      },
-      () => {
-        setBuscandoGps(false);
-        setErrorGeo("No se pudo leer el GPS: activá la ubicación del teléfono y dale permiso al navegador.");
-      },
-      { enableHighAccuracy: true, timeout: 12000 },
-    );
+    try {
+      /* El MEJOR fix de unos segundos, no el primero: el primero bajo los
+         árboles viene con 30-80 m de error y ponía el pin en la vereda de
+         enfrente. Ver lib/gps.ts. */
+      const fix = await mejorPosicion();
+      if (!dentroDeSmt(fix.lat, fix.lon)) {
+        setErrorGeo("El GPS te ubica fuera de San Miguel de Tucumán: probá de nuevo al lado del bache.");
+        return;
+      }
+      // No se acepta directo: queda como candidato en el mini-mapa para
+      // que el capataz lo afine.
+      setCandidato({ lat: fix.lat, lon: fix.lon, origen: "gps", precisionM: Math.round(fix.precisionM) });
+      const p = describirPrecision(fix.precisionM);
+      if (!p.buena) setErrorGeo(`GPS ${p.texto}.`);
+    } catch (e) {
+      setErrorGeo(e instanceof Error ? e.message : "No se pudo leer el GPS.");
+    } finally {
+      setBuscandoGps(false);
+    }
   };
 
   /**
@@ -414,7 +426,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     if (tipoObra) fd.set("tipoObra", tipoObra);
     if (obs.trim()) fd.set("observaciones", obs.trim());
     if (capataz.trim()) fd.set("capataz", capataz.trim());
-    if (ticket.trim()) fd.set("ticket147", ticket.trim());
+    // Solo si NO es hoy: mandarla siempre haría que toda carga quedara
+    // marcada como "fecha puesta a mano", que es justo lo que hay que poder
+    // distinguir.
+    if (fechaEjecucion && fechaEjecucion !== hoyISO()) fd.set("fechaEjecucion", fechaEjecucion);
     // Solo se manda ubicación si es una corrección: si es la de la orden,
     // la acción ya la toma del propio item.
     if (ubicacion.origen !== "orden") {
@@ -427,10 +442,19 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
     startTransition(async () => {
       try {
-        await reportarItemHecho(fd);
-        // Recién acá, con el reporte aceptado por el servidor: se tira el
-        // borrador (ya no hay nada que rescatar) y se recuerda lo que se
-        // repite para el bache siguiente de la misma orden.
+        /* Sin señal, o si el envío se corta, el reporte entero —fotos
+           incluidas— queda guardado en el teléfono y se manda solo después.
+           Ver lib/cola-envios.ts. */
+        const { encolado } = await enviarOEncolar(
+          "reportarItemHecho",
+          fd,
+          { ordenId, itemId: item.id, direccion: item.direccion },
+          (f) => reportarItemHecho(f),
+        );
+        // Recién acá, con el reporte aceptado por el servidor (o guardado en
+        // el teléfono, que es igual de firme): se tira el borrador y se
+        // recuerda lo que se repite para el bache siguiente de la orden.
+        if (encolado) setGuardadoLocal(true);
         borrarBorrador(item.id);
         guardarMemoria(ordenId, {
           espesor: medida.espesor,
@@ -463,6 +487,36 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     startTransition(async () => {
       try {
         await reportarItemNoEncontrado({ itemId: item.id, motivo: motivoNoEnc.trim() });
+        router.refresh();
+      } catch (e) {
+        setError(mensajeDeError(e, "No se pudo reportar: probá de nuevo."));
+      }
+    });
+  };
+
+  /**
+   * "No es un bache" / "no se puede ejecutar". Foto obligatoria: sin ella esto
+   * sería la palabra del capataz, y con ella es el informe que se le manda a
+   * la SAT. No suma m² ni toneladas — no se ejecutó nada.
+   */
+  const enviarNoEjecutable = () => {
+    setError(null);
+    if (!motivoNoEjec) {
+      setError("Elegí qué encontraron: sin eso el punto vuelve sin decir nada.");
+      return;
+    }
+    if (!fotoNoEjec) {
+      setError("La foto es obligatoria: es la prueba de lo que encontraron.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("itemId", String(item.id));
+    fd.set("motivo", motivoNoEjec);
+    fd.set("foto", fotoNoEjec);
+    if (obsNoEjec.trim()) fd.set("observaciones", obsNoEjec.trim());
+    startTransition(async () => {
+      try {
+        await reportarItemNoEjecutable(fd);
         router.refresh();
       } catch (e) {
         setError(mensajeDeError(e, "No se pudo reportar: probá de nuevo."));
@@ -558,6 +612,25 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
           >
             REPORTAR HECHO
           </button>
+          {/* La tercera salida, con el mismo peso visual que "Ya estaba hecho":
+              es tan frecuente como esa y hasta hoy no existía. Ancho completo
+              porque abre una lista, no una confirmación. */}
+          <button
+            onClick={() => {
+              setNoEjecAbierto((v) => !v);
+              setYaAbierto(false);
+              setNoEncAbierto(false);
+            }}
+            disabled={pendiente}
+            className={`w-full rounded-lg border px-3 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
+              noEjecAbierto
+                ? "border-amarillo/60 bg-amarillo/10 text-amarillo"
+                : "border-borde-2 text-texto-2 hover:border-amarillo/60 hover:text-amarillo"
+            }`}
+          >
+            No se puede ejecutar
+          </button>
+
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => setYaAbierto((v) => !v)}
@@ -580,6 +653,106 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               No lo encontré
             </button>
           </div>
+
+          {/* Qué encontraron, agrupado por quién se hace cargo después */}
+          {noEjecAbierto && (
+            <div className="space-y-3 rounded-xl border border-amarillo/40 bg-amarillo/5 p-3">
+              <p className="text-sm leading-relaxed text-texto-2">
+                El punto existe pero no es un bache que puedan tapar. Decí qué encontraron: el reclamo
+                queda abierto con el motivo real en vez de cerrarse en falso.
+              </p>
+
+              {(["sat", "tratamiento"] as const).map((familia) => (
+                <div key={familia}>
+                  <p className="mb-1.5 text-[11px] font-bold tracking-wider text-texto-3 uppercase">
+                    {ETIQUETA_FAMILIA[familia]}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MOTIVOS_CALLE.filter((m) => m.familia === familia).map((m) => (
+                      <button
+                        key={m.valor}
+                        type="button"
+                        onClick={() => setMotivoNoEjec(m.valor)}
+                        className={`min-h-14 rounded-xl border-2 px-2.5 py-2 text-[12px] leading-snug font-bold transition active:scale-[0.99] ${
+                          motivoNoEjec === m.valor
+                            ? "border-amarillo bg-amarillo/20 text-amarillo"
+                            : "border-borde-2 bg-panel-2 text-texto-2 hover:border-amarillo/60"
+                        }`}
+                      >
+                        {m.etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {motivoNoEjec && (
+                <p className="text-xs leading-relaxed text-texto-2">
+                  {MOTIVO_POR_VALOR.get(motivoNoEjec)?.consecuencia}
+                </p>
+              )}
+
+              <input
+                ref={refFotoNoEjec}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) =>
+                  void elegirFoto("noejec", e.target.files?.[0], setFotoNoEjec, setPreviewNoEjec, previewNoEjec)
+                }
+              />
+              <button
+                onClick={() => refFotoNoEjec.current?.click()}
+                disabled={cuadroOcupado.noejec}
+                className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
+                  fotoNoEjec ? "border-amarillo/60" : "border-dashed border-borde-2 hover:border-amarillo/60"
+                }`}
+              >
+                <Achicando visible={cuadroOcupado.noejec} />
+                {previewNoEjec ? (
+                  <>
+                    <img
+                      src={previewNoEjec}
+                      alt="Foto de lo que encontraron"
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                      FOTO ✓ — tocá para cambiar
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                    <Camera size={22} className="text-amarillo" />
+                    Foto de lo que encontraron
+                    <span className="text-[10px] font-medium text-texto-3">
+                      obligatoria — es la prueba para el informe
+                    </span>
+                  </span>
+                )}
+              </button>
+
+              <textarea
+                value={obsNoEjec}
+                onChange={(e) => setObsNoEjec(e.target.value)}
+                rows={2}
+                placeholder="Observaciones (opcional): qué tan grande, si corta el paso…"
+                className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
+              />
+              <button
+                onClick={enviarNoEjecutable}
+                disabled={pendiente || preparandoFotos > 0 || !motivoNoEjec || !fotoNoEjec}
+                className="w-full rounded-xl bg-amarillo px-4 py-3.5 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
+              >
+                {preparandoFotos > 0
+                  ? "Preparando la foto…"
+                  : pendiente
+                    ? "Subiendo foto…"
+                    : "CONFIRMAR: NO SE PUEDE EJECUTAR"}
+              </button>
+            </div>
+          )}
 
           {noEncAbierto && (
             <div className="space-y-2 rounded-xl border border-borde-2 bg-panel-2 p-3">
@@ -646,7 +819,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               />
               <button
                 onClick={enviarYaResuelto}
-                disabled={pendiente || preparandoFotos > 0}
+                disabled={pendiente || preparandoFotos > 0 || guardadoLocal}
                 className="w-full rounded-xl bg-celeste px-4 py-3.5 text-base font-bold text-white transition active:scale-[0.99] disabled:opacity-50"
               >
                 {preparandoFotos > 0
@@ -681,45 +854,31 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
           {oidoMedidas && <p className="-mt-2 text-[11px] text-texto-2">{oidoMedidas}</p>}
           {dictadoMedidas.error && <p className="-mt-2 text-[11px] text-peligro">{dictadoMedidas.error}</p>}
 
-          {/* Qué se hizo al final: pills grandes (guantes), no un select chico */}
-          <div>
-            <p className="mb-1.5 text-xs font-semibold text-texto-2">¿Qué trabajo se hizo?</p>
-            <div className="grid grid-cols-2 gap-2">
-              {OPCIONES_INTERVENCION.map((op) => (
-                <button
-                  key={op.valor}
-                  type="button"
-                  onClick={() => setTipoIntervencion(op.valor)}
-                  className={`min-h-14 rounded-xl border-2 px-3 py-2.5 text-sm leading-snug font-bold transition active:scale-[0.99] ${
-                    tipoIntervencion === op.valor
-                      ? "border-azul bg-azul/15 text-celeste"
-                      : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
-                  }`}
-                >
-                  {op.etiqueta}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1 text-xs leading-relaxed text-texto-3">
-              Si empezó como bacheo pero terminaron cambiando el paño, marcá lo que realmente se hizo.
-            </p>
-          </div>
+          {/* Acá había un "¿Qué trabajo se hizo?" con cuatro opciones (bacheo /
+              paño de hormigón / carpeta / enripiado) y no tenía sentido en este
+              formulario: este formulario es el de REPORTAR HECHO, y lo que la
+              orden manda a hacer es bachear. Preguntarle al capataz, parado
+              sobre el pozo con guantes, bajo qué categoría cae lo que acaba de
+              tapar era pedirle una clasificación de escritorio.
 
+              Las otras tres opciones no eran "cómo lo hice" sino "esto no se
+              podía hacer así", y por eso ahora viven en su propio botón —"No se
+              puede ejecutar"— junto a la pérdida de agua y la tapa de cloaca.
+              El tipo de intervención sigue existiendo: sale del tipo de trabajo
+              que pidió la orden, y Bacheo lo puede corregir después desde
+              corregirTipoIntervencion(). */}
           {/* Modalidad del protocolo: es lo que se certifica para el pago */}
           <div>
             <p className="mb-1.5 text-xs font-semibold text-texto-2">¿Bajo qué modalidad?</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {OPCIONES_OBRA.map((op) => {
-                // Sin elección explícita se muestra marcada la que corresponde
-                // por medida, que es la que va a viajar igual.
-                const sugerida = superficie != null && superficie > 4 ? "extendido" : "planificado";
-                const activa = (tipoObra ?? sugerida) === op.valor;
+                const activa = (tipoObra ?? "planificado") === op.valor;
                 return (
                   <button
                     key={op.valor}
                     type="button"
                     onClick={() => setTipoObra(op.valor)}
-                    className={`min-h-12 rounded-xl border-2 px-3 py-2 text-[13px] leading-snug font-bold transition active:scale-[0.99] ${
+                    className={`min-h-12 rounded-xl border-2 px-2 py-2 text-[12px] leading-snug font-bold transition active:scale-[0.99] ${
                       activa
                         ? "border-azul bg-azul/15 text-celeste"
                         : "border-borde-2 bg-panel-2 text-texto-2 hover:border-celeste/60"
@@ -731,12 +890,35 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               })}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-texto-3">
-              Provisorio es el arreglo de urgencia que después hay que rehacer. Con más de 4 m² el protocolo
-              lo cuenta como extendido.
+              Provisorio es el arreglo de urgencia que después hay que rehacer.
             </p>
+            {/* El extendido no se pregunta: se avisa. Que el capataz vea cómo va
+                a quedar certificado sin tener que decidirlo él. */}
+            {(tipoObra ?? "planificado") === "planificado" && superficie != null && superficie > 4 && (
+              <p className="mt-1 text-xs leading-relaxed text-amarillo">
+                Con {superficie.toLocaleString("es-AR", { maximumFractionDigits: 2 })} m² el protocolo lo
+                certifica como <b>extendido</b> (arriba de 4 m²). Lo marca el sistema.
+              </p>
+            )}
           </div>
 
-          {/* Fotos: el después manda */}
+          {/**
+            * ANTES A LA IZQUIERDA, DESPUÉS A LA DERECHA — el orden de la calle.
+            *
+            * Estaban al revés: el después primero, porque es la foto
+            * obligatoria. Pero nadie lee dos cuadros de fotos por importancia,
+            * los lee en orden de tiempo, y el capataz ponía el antes en el
+            * cuadro de la izquierda —que era el del después— sin mirar el
+            * cartel. "Aquí veo porque están apareciendo fotos como invertidas
+            * entre el ANTES y el después: en la carga están invertidos"
+            * (Dirección de Bacheo, 16/09).
+            *
+            * La evidencia salía dada vuelta en la orden impresa y en la
+            * validación, que es donde se decide si el trabajo se certifica.
+            * Cuál es obligatoria ya lo dice la etiqueta debajo de cada cuadro;
+            * la posición tiene que decir otra cosa, y lo único que puede decir
+            * es primero y después.
+            */}
           <div className="grid grid-cols-2 gap-2">
             <input
               ref={refDespues}
@@ -757,29 +939,6 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               onChange={(e) => void elegirFoto("antes", e.target.files?.[0], setFotoAntes, setPreviewAntes, previewAntes)}
             />
             <button
-              onClick={() => refDespues.current?.click()}
-              disabled={cuadroOcupado.despues}
-              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
-                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
-              }`}
-            >
-              <Achicando visible={cuadroOcupado.despues} />
-              {previewDespues ? (
-                <>
-                  <img src={previewDespues} alt="Foto del después" loading="lazy" className="h-full w-full object-cover" />
-                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
-                    DESPUÉS ✓ — tocá para cambiar
-                  </span>
-                </>
-              ) : (
-                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
-                  <Camera size={22} className="text-resuelto" />
-                  Foto del DESPUÉS
-                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
-                </span>
-              )}
-            </button>
-            <button
               onClick={() => refAntes.current?.click()}
               disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
@@ -799,6 +958,29 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                   <Camera size={22} className="text-celeste" />
                   Foto del ANTES
                   <span className="text-[10px] font-medium text-texto-3">opcional</span>
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => refDespues.current?.click()}
+              disabled={cuadroOcupado.despues}
+              className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
+                fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
+              }`}
+            >
+              <Achicando visible={cuadroOcupado.despues} />
+              {previewDespues ? (
+                <>
+                  <img src={previewDespues} alt="Foto del después" loading="lazy" className="h-full w-full object-cover" />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] font-bold text-white">
+                    DESPUÉS ✓ — tocá para cambiar
+                  </span>
+                </>
+              ) : (
+                <span className="flex h-full flex-col items-center justify-center gap-1 text-sm font-bold">
+                  <Camera size={22} className="text-resuelto" />
+                  Foto del DESPUÉS
+                  <span className="text-[10px] font-medium text-texto-3">obligatoria</span>
                 </span>
               )}
             </button>
@@ -968,11 +1150,19 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             </div>
           )}
 
-          {/* Quién y contra qué reclamo: dos datos que hoy se pierden.
-              El capataz, porque la clave del portal es UNA por empresa y sin
-              esto todo queda firmado "INGECO S.A."; el ticket, porque es la
-              única forma de cerrarle al vecino sin adivinar por cercanía. */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Quién cargó: la clave del portal es UNA por empresa, así que sin
+              este campo todo queda firmado "INGECO S.A." y una medición dudosa
+              no se le puede preguntar a nadie. No es autenticación, es
+              trazabilidad.
+
+              El N° de ticket 147 estaba acá al lado y se fue: el ticket lo
+              genera Atención Ciudadana, que es el único sistema que los emite,
+              y el item de la orden ya viene atado a su incidente y por ahí a
+              sus demandas. Pedírselo al capataz era pedirle un dato que el
+              sistema ya tiene, con la única garantía de que a veces lo iba a
+              tipear mal. La acción del servidor sigue aceptando el campo para
+              las cargas viejas que lo manden. */}
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
               <input
@@ -982,15 +1172,33 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                 className="w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:text-texto-3"
               />
             </label>
+            {/**
+             * EL DÍA EN QUE SE TAPÓ, no el día en que se carga.
+             *
+             * La carga viene atrasada: las fotos llegan por WhatsApp y se
+             * suben días después. Con la fecha automática, el parte diario
+             * decía que el lunes no se bacheó nada y el jueves se bachearon
+             * cuatro días juntos, y el acta de medición no coincidía con el
+             * remito. El default es hoy, así que la carga del mismo día
+             * —la deseable— no tiene un paso más.
+             */}
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-texto-2">N° de ticket 147</span>
+              <span className="mb-1 block text-xs font-semibold text-texto-2">
+                Fecha del trabajo
+              </span>
               <input
-                value={ticket}
-                onChange={(e) => setTicket(e.target.value)}
-                inputMode="numeric"
-                placeholder="si lo tenés"
-                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base placeholder:font-sans placeholder:text-texto-3"
+                type="date"
+                value={fechaEjecucion}
+                max={hoyISO()}
+                min={minimoEjecucion()}
+                onChange={(e) => setFechaEjecucion(e.target.value)}
+                className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3 text-base"
               />
+              {fechaEjecucion !== hoyISO() && (
+                <span className="mt-1 block text-[11px] font-semibold text-amarillo">
+                  Se va a cargar con fecha {fechaEjecucion.split("-").reverse().join("/")}
+                </span>
+              )}
             </label>
           </div>
 
@@ -1014,6 +1222,11 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
                 ? "Subiendo foto…"
                 : "CONFIRMAR TRABAJO HECHO"}
           </button>
+          {guardadoLocal && (
+            <p className="rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-center text-sm font-semibold text-resuelto">
+              Guardado en el teléfono. Se manda solo cuando haya señal — mirá la barra de arriba.
+            </p>
+          )}
           {ahorroFoto && (
             <p className="num text-center text-[11px] text-texto-3">
               Foto achicada para que suba rápido: {ahorroFoto}

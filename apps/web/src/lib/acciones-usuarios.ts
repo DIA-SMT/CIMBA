@@ -110,3 +110,247 @@ export async function regenerarClaveUsuario(entrada: z.infer<typeof resetSchema>
   revalidatePath("/actividad");
   return { usuario: fila.usuario, clave };
 }
+
+// ── Configuración: ver y modificar el padrón ────────────────────────────────
+
+export interface UsuarioAdmin {
+  id: string;
+  idPersona: number;
+  nombre: string;
+  usuario: string | null;
+  email: string | null;
+  rol: string;
+  area: string | null;
+  activo: boolean;
+  claveTemporal: boolean;
+  /** Entra con usuario y clave propios. Los del SSO municipal no. */
+  tieneClave: boolean;
+  empresaNombre: string | null;
+  ultimoIngreso: string | null;
+}
+
+/**
+ * El padrón completo, para la pantalla de Configuración. Incluye a los
+ * perfiles sin clave propia (los que entran por el SSO municipal) porque
+ * también hay que poder cambiarles el rol o darlos de baja.
+ */
+export async function listarUsuarios(): Promise<UsuarioAdmin[]> {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select p.id, p.id_persona, p.nombre, p.usuario, p.email, p.rol::text as rol, p.area,
+             p.activo, p.clave_temporal, (p.clave_hash is not null) as tiene_clave,
+             e.nombre as empresa_nombre, p.ultimo_ingreso
+      from perfiles p
+      left join empresas e on e.id = p.empresa_id
+      order by p.activo desc, p.rol, p.nombre
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: String(f.id),
+      idPersona: Number(f.id_persona),
+      nombre: String(f.nombre),
+      usuario: (f.usuario as string) ?? null,
+      email: (f.email as string) ?? null,
+      rol: String(f.rol),
+      area: (f.area as string) ?? null,
+      activo: Boolean(f.activo),
+      claveTemporal: Boolean(f.clave_temporal),
+      tieneClave: Boolean(f.tiene_clave),
+      empresaNombre: (f.empresa_nombre as string) ?? null,
+      ultimoIngreso: f.ultimo_ingreso != null ? String(f.ultimo_ingreso) : null,
+    }));
+  });
+}
+
+const modificarSchema = z.object({
+  perfilId: z.string().uuid(),
+  nombre: z.string().trim().min(2).max(120).optional(),
+  rol: z.enum(ROLES_ASIGNABLES).optional(),
+  area: z.string().trim().max(120).nullable().optional(),
+  activo: z.boolean().optional(),
+});
+
+/**
+ * Cambiar nombre, rol, área o si el acceso sigue vivo.
+ *
+ * Dos frenos, y los dos por la misma razón práctica: si el último admin se
+ * saca el rol o se desactiva, nadie puede volver a crear usuarios y la única
+ * salida es entrar a la base a mano. Uno protege contra hacérselo a uno mismo
+ * (el caso frecuente: "me equivoqué de fila") y el otro contra dejar el
+ * sistema sin ningún administrador activo.
+ */
+export async function modificarUsuario(entrada: z.infer<typeof modificarSchema>) {
+  const sesion = await exigirSuperadmin();
+  const datos = modificarSchema.parse(entrada);
+  const pierdeElMando = datos.activo === false || (datos.rol != null && datos.rol !== "admin");
+
+  if (datos.perfilId === sesion.sub && pierdeElMando) {
+    throw new ErrorVisible("No podés quitarte a vos mismo el acceso de administrador");
+  }
+
+  await conRls(claims(sesion), async (tx) => {
+    if (pierdeElMando) {
+      const actual = (await tx.execute(sql`
+        select rol::text as rol, activo from perfiles where id = ${datos.perfilId}::uuid
+      `)) as unknown as Array<{ rol: string; activo: boolean }>;
+      if (!actual[0]) throw new ErrorVisible("El usuario no existe");
+      if (actual[0].rol === "admin" && actual[0].activo) {
+        const otros = (await tx.execute(sql`
+          select count(*)::int as n from perfiles
+          where rol = 'admin' and activo and id <> ${datos.perfilId}::uuid
+        `)) as unknown as Array<{ n: number }>;
+        if (Number(otros[0]?.n ?? 0) === 0) {
+          throw new ErrorVisible(
+            "Es el último administrador activo: nombrá a otro antes de sacarle el rol",
+          );
+        }
+      }
+    }
+    const r = (await tx.execute(sql`
+      update perfiles set
+        nombre = coalesce(${datos.nombre ?? null}, nombre),
+        rol = coalesce(${datos.rol ?? null}::rol_usuario, rol),
+        area = case when ${datos.area !== undefined} then ${datos.area ?? null} else area end,
+        activo = coalesce(${datos.activo ?? null}, activo)
+      where id = ${datos.perfilId}::uuid
+      returning id
+    `)) as unknown as Array<{ id: string }>;
+    if (!r[0]) throw new ErrorVisible("El usuario no existe");
+  });
+
+  revalidatePath("/configuracion");
+  revalidatePath("/actividad");
+  return { ok: true };
+}
+
+// ── Configuración: qué avisos manda el sistema ──────────────────────────────
+
+export interface AvisoConfig {
+  id: number;
+  evento: string;
+  canal: string;
+  destino: string;
+  etiqueta: string | null;
+  activo: boolean;
+}
+
+export async function listarAvisosConfig(): Promise<AvisoConfig[]> {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select id, evento, canal, destino, etiqueta, activo
+      from avisos_destinatarios order by evento, canal, destino
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      id: Number(f.id),
+      evento: String(f.evento),
+      canal: String(f.canal),
+      destino: String(f.destino),
+      etiqueta: (f.etiqueta as string) ?? null,
+      activo: Boolean(f.activo),
+    }));
+  });
+}
+
+/**
+ * Prender o apagar un aviso puntual. No se borra la fila: apagar tiene que ser
+ * reversible con un clic, y quien apagó "orden vencida a Supervisión" el mes
+ * pasado tiene derecho a encontrarlo ahí para volver a prenderlo.
+ */
+export async function cambiarAvisoConfig(entrada: { id: number; activo: boolean }) {
+  const sesion = await exigirSuperadmin();
+  const datos = z.object({ id: z.number().int().positive(), activo: z.boolean() }).parse(entrada);
+  await conRls(claims(sesion), async (tx) => {
+    await tx.execute(sql`
+      update avisos_destinatarios set activo = ${datos.activo} where id = ${datos.id}
+    `);
+  });
+  revalidatePath("/configuracion");
+  revalidatePath("/ordenes/avisos");
+  return { ok: true };
+}
+
+// ── Vincular un chat de Telegram a una persona ──────────────────────────────
+
+/**
+ * Emite un código de un solo uso para que alguien vincule su Telegram.
+ *
+ * Mismo gesto que regenerarClaveUsuario, y por el mismo motivo: el código se
+ * ve UNA vez, acá, y después solo queda su hash. En claro es una llave para
+ * actuar como esa persona en CIMBA, así que se trata igual que una clave.
+ *
+ * El alta no puede hacerse desde Telegram —ahí cualquiera escribe "soy
+ * Fulano"— ni copiando identificadores de chat a mano, que es el tipo de paso
+ * que se hace mal una vez y queda mal para siempre. Alguien de adentro emite
+ * el código, se lo pasa a la persona, y la persona lo canjea.
+ *
+ * Vence a los 15 minutos (el default de la tabla). Si hay otro código sin usar
+ * para esa misma persona, se anula: tener dos vivos a la vez es una llave
+ * suelta que nadie sabe que existe.
+ */
+export async function generarCodigoTelegram(entrada: { perfilId: string }) {
+  const sesion = await exigirSuperadmin();
+  const { perfilId } = z.object({ perfilId: z.string().uuid() }).parse(entrada);
+  const codigo = claveAleatoria();
+
+  const fila = await conRls(claims(sesion), async (tx) => {
+    const p = (await tx.execute(sql`
+      select nombre, activo from perfiles where id = ${perfilId}::uuid
+    `)) as unknown as Array<{ nombre: string; activo: boolean }>;
+    if (!p[0]) throw new ErrorVisible("Esa persona no existe");
+    if (!p[0].activo) {
+      throw new ErrorVisible(`${p[0].nombre} está dada de baja: no se le puede vincular un Telegram`);
+    }
+
+    await tx.execute(sql`
+      update telegram_codigos set usado_en = now()
+      where perfil_id = ${perfilId}::uuid and usado_en is null
+    `);
+    await tx.execute(sql`
+      insert into telegram_codigos (perfil_id, codigo_hash, creado_por)
+      values (${perfilId}::uuid, ${sha256(codigo)}, ${sesion.sub}::uuid)
+    `);
+    return p[0];
+  });
+
+  revalidatePath("/configuracion");
+  return { nombre: fila.nombre, codigo };
+}
+
+/** Los chats vinculados de una persona, para mostrarlos y poder revocarlos. */
+export async function listarTelegramDe(perfilId: string) {
+  const sesion = await exigirSuperadmin();
+  return conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select id, chat_id::text as chat, usuario_telegram, vinculado_en::date::text as desde,
+             ultimo_uso::date::text as ultimo
+      from telegram_vinculos
+      where perfil_id = ${perfilId}::uuid and revocado_en is null
+      order by id
+    `)) as unknown as Array<{
+      id: number;
+      chat: string;
+      usuario_telegram: string | null;
+      desde: string;
+      ultimo: string | null;
+    }>,
+  );
+}
+
+/**
+ * Corta el acceso de un chat. No borra la fila: el rastro de quién pudo actuar
+ * como quién no se tira, y así el chat se puede volver a vincular después.
+ */
+export async function revocarTelegram(entrada: { vinculoId: number }) {
+  const sesion = await exigirSuperadmin();
+  const { vinculoId } = z.object({ vinculoId: z.number().int().positive() }).parse(entrada);
+  await conRls(claims(sesion), async (tx) => {
+    await tx.execute(sql`
+      update telegram_vinculos
+      set revocado_en = now(), revocado_por = ${sesion.sub}::uuid
+      where id = ${vinculoId} and revocado_en is null
+    `);
+  });
+  revalidatePath("/configuracion");
+  return { ok: true };
+}

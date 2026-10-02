@@ -48,7 +48,7 @@ import {
 } from "react-map-gl/maplibre";
 import type { Feature, FeatureCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon } from "geojson";
 import type { FilterSpecification } from "maplibre-gl";
-import { dentroDeSMT, type EstadoIncidente, type RolUsuario } from "@cimba/domain";
+import { dentroDeSMT, type EstadoIncidente, type RolUsuario, COLOR_GRUPO_SIGOV, ETIQUETA_GRUPO_SIGOV, ETIQUETA_MATERIAL_SIGOV } from "@cimba/domain";
 import type { Kpis } from "@/lib/consultas";
 import type { CircuitoResumen, DeudaTerritorial } from "@/lib/ordenes";
 import {
@@ -62,13 +62,14 @@ import {
   semaforoHex,
 } from "@/lib/formato";
 import { GLOSARIO } from "@/lib/glosario";
-import { colorDeEmpresa } from "@/lib/color-empresa";
+import { colorDeEmpresa, colorDeEmpresaEn } from "@/lib/color-empresa";
 import { interpretarBusquedaMapa } from "@/lib/acciones-busqueda";
 import { usePanelArrastrable } from "@/lib/arrastrable";
-import { vincularDemanda } from "@/lib/acciones";
+import { cerrarPedidoDesdeMapa, vincularDemanda } from "@/lib/acciones";
+import { whatsappDe } from "@/lib/contacto-vecino";
 import { listarContactosWhatsapp } from "@/lib/acciones-contactos";
 import { AltaRapida } from "./alta-rapida";
-import { AnalisisZona, type ZonaActiva } from "./analisis-zona";
+import { AnalisisZona, puntoEnPoligono, type ZonaActiva } from "./analisis-zona";
 import { ComparadorObra } from "./comparador-obra";
 import { CortinaComparar } from "./cortina-comparar";
 import { GuiaMapa } from "./guia-mapa";
@@ -77,6 +78,7 @@ import { abrirReporte } from "./reporte-mapa";
 import { crearCirculo, distanciaM, hexbins } from "./geo-cliente";
 import { LineaTiempo } from "./linea-tiempo";
 import { estiloMapa, usarTemaMapa, type TemaMapa } from "./tema-mapa";
+import { avisarSesionVencida } from "@/lib/sesion-cliente";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -216,6 +218,9 @@ type FCLinea = FeatureCollection<LineString | MultiLineString, Record<string, un
 interface GeoDatos {
   incidentes: FC;
   demandas: FC;
+  /** Las obras contratadas por SIGOV, en capa propia: tres estados agrupados
+   *  y dos materiales (hormigón / asfalto). Ver lib/consultas.ts. */
+  obrasSigov?: FC;
   /** Universo completo por canal (incluye lo que NO tiene punto y por eso no
    *  puede estar en el geojson): es lo que permite explicar la resta entre el
    *  total del canal y lo que se ve dibujado. */
@@ -835,6 +840,64 @@ const PALETA_COLECTORES = [
   "#4f9cf9", "#f2a33c", "#3ec9a7", "#e06fae", "#b18cff", "#6fd1e8",
 ] as const;
 
+/**
+ * LA RED DE COLECTORES PLUVIALES (30/9): el trazado real al que descargan los
+ * imbornales. Un mismo colector nombrado trae varios tramos "Colector" (el
+ * caño principal) y, a veces, un tramo de otro tipo donde cruza una vía, un
+ * ferrocarril o un ducto — es el mismo trazado, se pinta por tipo de tramo,
+ * no por colector (son 70 nombres distintos, demasiados para una paleta).
+ */
+const COLOR_TIPO_COLECTOR: Record<string, string> = {
+  Colector: "#4f9cf9",
+  Canal: "#3ec9a7",
+  FFCC: "#9aa3b2",
+  Vialidad: "#f2a33c",
+  Parque: "#9ecf4a",
+  Ducto: "#b18cff",
+};
+const ORDEN_TIPO_COLECTOR = ["Colector", "Canal", "FFCC", "Vialidad", "Parque", "Ducto"];
+
+/**
+ * LAS OBRAS DEL SIGOV, COMO CAPA PROPIA.
+ *
+ * "Deberían aparecer más significativas en el mapa dado que son
+ * intervenciones importantes y definitivas" — Dirección de Bacheo, 12/09.
+ * Eran un anillo celeste sobre el punto del incidente y se perdían entre
+ * 2.900 baches; son 472 obras que rehacen la calzada entera.
+ *
+ * Por eso van con círculo grande y borde grueso, y no compiten con el
+ * semáforo del bacheo: el COLOR es el de los tres estados que eligió la
+ * Dirección (amarillo/rojo/verde) y la FORMA separa el material — relleno
+ * para hormigón, anillo hueco para asfalto. Dos variables visuales, dos
+ * preguntas: "¿en qué anda?" y "¿de qué es?".
+ */
+const capaObrasSigov = (p: Paleta): LayerProps => ({
+  id: "sigov-obra",
+  type: "circle",
+  source: "obras-sigov",
+  paint: {
+    // Relleno = hormigón; el asfalto queda hueco (relleno del fondo).
+    "circle-color": [
+      "case",
+      ["==", ["get", "material"], "asfalto"], p.halo,
+      ["match", ["get", "grupo"],
+        "planificada", COLOR_GRUPO_SIGOV.planificada,
+        "en_ejecucion", COLOR_GRUPO_SIGOV.en_ejecucion,
+        COLOR_GRUPO_SIGOV.finalizada],
+    ],
+    "circle-stroke-color": [
+      "match", ["get", "grupo"],
+      "planificada", COLOR_GRUPO_SIGOV.planificada,
+      "en_ejecucion", COLOR_GRUPO_SIGOV.en_ejecucion,
+      COLOR_GRUPO_SIGOV.finalizada,
+    ],
+    // Más grandes que un bache a propósito: son la obra definitiva.
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4.5, 14, 8, 17, 13, 19.5, 18],
+    "circle-stroke-width": 2.5,
+    "circle-opacity": ["case", ["==", ["get", "material"], "asfalto"], 0.85, 0.9],
+  },
+});
+
 const capaImbornales = (p: Paleta, porColector: boolean): LayerProps => ({
   id: "imbornales-punto",
   type: "circle",
@@ -902,6 +965,13 @@ const capaAnegamiento = (p: Paleta): LayerProps => ({
  * no cae en ninguno (desestimado) deja la burbuja gris, que es lo honesto: no
  * hay deuda ni trabajo que mostrar ahí.
  */
+/** Por debajo de este zoom el mapa principal muestra celdas; desde acá, los puntos. */
+const ZOOM_PUNTOS = 13;
+
+/** La misma capa, visible recién desde cierto zoom. (LayerProps incluye las capas
+ *  "custom", que no aceptan minzoom: por eso el cast.) */
+const desdeZoom = (capa: LayerProps, z: number): LayerProps => ({ ...capa, minzoom: z }) as LayerProps;
+
 const capaClusters = (p: Paleta): LayerProps => ({
   id: "clusters",
   type: "circle",
@@ -1305,6 +1375,54 @@ interface CandidatoCotejo {
   cerradoEn: string | null;
   /** true si se cerró ANTES del pedido: es reincidencia, no la respuesta a este pedido. */
   posibleReincidencia: boolean;
+  /** La foto del trabajo (preferida la del después), para la respuesta al vecino. */
+  foto: string | null;
+  fotoMomento: string | null;
+}
+
+/**
+ * Lo que hay a menos de 60 m de un pedido, para el cotejo desde el mapa.
+ * Se excluyen los desestimados (macro inactivo): la gestión decidió no
+ * atenderlos, vincular ahí sería sacar un pedido real de la deuda sin que
+ * nadie lo haya resuelto.
+ */
+function armarCandidatos(
+  incidentes: Array<{ geometry: { coordinates: number[] }; properties: Record<string, unknown> }>,
+  props: Record<string, unknown>,
+  lngLat: [number, number],
+): CandidatoCotejo[] {
+  const creadoDemanda = props.sin_fecha ? null : Date.parse(String(props.creado_en));
+  return incidentes
+    .map((fi): CandidatoCotejo | null => {
+      if (fi.properties.macro === "inactivo") return null;
+      const ln = fi.geometry.coordinates[0];
+      const la = fi.geometry.coordinates[1];
+      if (ln == null || la == null) return null;
+      const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
+      if (dist > 60) return null;
+      const cerradoEn = (fi.properties.cerrado_en as string | null) ?? null;
+      const cierreMs = cerradoEn ? Date.parse(cerradoEn) : null;
+      return {
+        id: Number(fi.properties.id),
+        tipo: String(fi.properties.tipo ?? "otro"),
+        estado: String(fi.properties.estado ?? ""),
+        macro: String(fi.properties.macro ?? ""),
+        direccion: (fi.properties.direccion as string | null) ?? null,
+        dist: Math.round(dist),
+        lngLat: [ln, la],
+        cerradoEn,
+        // Se cerró ANTES de que este pedido existiera: es el problema
+        // volviendo (reincidencia), no la respuesta a ESTE pedido.
+        posibleReincidencia: Boolean(
+          cierreMs != null && creadoDemanda != null && Number.isFinite(cierreMs) && cierreMs < creadoDemanda,
+        ),
+        foto: (fi.properties.foto as string | null) ?? null,
+        fotoMomento: (fi.properties.foto_momento as string | null) ?? null,
+      };
+    })
+    .filter((c): c is CandidatoCotejo => c != null)
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 5);
 }
 
 interface CotejoActivo {
@@ -1388,6 +1506,7 @@ function MapaInterno({
       cuadrantesBorde: capaCuadrantesBorde(pal),
       cuadrantesEtiqueta: capaCuadrantesEtiqueta(pal),
       colectivos: capaColectivos(pal),
+      obrasSigov: capaObrasSigov(pal),
       imbornales: capaImbornales(pal, modoImbornal === "colector"),
       anegamientoHalo: capaAnegamientoHalo(pal),
       anegamiento: capaAnegamiento(pal),
@@ -1407,11 +1526,33 @@ function MapaInterno({
     [pal, modoImbornal],
   );
   const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
-  const [panelCapas, setPanelCapas] = useState(true);
-  // En pantallas chicas el panel de Capas taparía medio mapa: arranca cerrado.
+  /**
+   * EL PANEL DE CAPAS ARRANCA CERRADO.
+   *
+   * Abría siempre abierto: 288 px de alto completo sobre el borde izquierdo,
+   * tapando una franja de ciudad en cada visita, aunque en la mayoría de las
+   * sesiones nadie toca una capa. Ahora se abre cuando hace falta y —eso sí—
+   * la decisión se recuerda: quien trabaja con el panel abierto lo encuentra
+   * abierto la próxima vez, sin volver a abrirlo todos los días.
+   */
+  const [panelCapas, setPanelCapas] = useState(false);
+  /** En el teléfono, el selector de mapa y de vista vive plegado en una ficha. */
+  const [vistaAbiertaMovil, setVistaAbiertaMovil] = useState(false);
   useEffect(() => {
-    if (window.innerWidth < 640) setPanelCapas(false);
+    try {
+      if (localStorage.getItem("cimba-panel-capas") === "1") setPanelCapas(true);
+    } catch {
+      /* modo privado: arranca cerrado, que es el default */
+    }
   }, []);
+  const cambiarPanelCapas = (abierto: boolean) => {
+    setPanelCapas(abierto);
+    try {
+      localStorage.setItem("cimba-panel-capas", abierto ? "1" : "0");
+    } catch {
+      /* sin storage: vale para esta sesión y nada más */
+    }
+  };
   // Recorrido guiado ("?"): el botón pulsa hasta que lo abren por primera vez.
   const [guiaAbierta, setGuiaAbierta] = useState(false);
   const [guiaConocida, setGuiaConocida] = useState(true);
@@ -1567,6 +1708,15 @@ function MapaInterno({
    */
   const [dibujandoRuta, setDibujandoRuta] = useState(false);
   const [ruta, setRuta] = useState<Array<[number, number]>>([]);
+  /**
+   * EL MISMO DIBUJO, CERRADO EN POLÍGONO.
+   *
+   * Abierto describe un tramo de avenida ("Siria del 1000 al 1900"); cerrado
+   * encierra un pedazo de ciudad ("estas ocho manzanas"), que es como se manda
+   * a trabajar cuando el operativo no coincide con ningún circuito ni barrio.
+   * Es el mismo gesto —clic en cada esquina— y un botón decide qué significa.
+   */
+  const [rutaCerrada, setRutaCerrada] = useState(false);
   const [zonaCerrada, setZonaCerrada] = useState(false);
   // Densidad 3D en hexágonos
   const [verHex, setVerHex] = useState(inicial?.hex ?? false);
@@ -1838,10 +1988,24 @@ function MapaInterno({
   // La red hidráulica del relevamiento de la DOV: los imbornales hablan el
   // mismo semáforo que el resto (leve→colapsado) y los puntos de anegamiento
   // son la evidencia de "acá el problema no es el asfalto, es el agua".
+  /** Las obras contratadas, en su propia capa. Prendida por defecto: son la
+    *  intervención definitiva y la Dirección las quiere ver. */
+  const [verSigov, setVerSigov] = useState(true);
   const [verImbornales, setVerImbornales] = useState(false);
   const [imbornalesGeo, setImbornalesGeo] = useState<FC | null>(null);
   const [verAnegamiento, setVerAnegamiento] = useState(false);
   const [anegamientoGeo, setAnegamientoGeo] = useState<FC | null>(null);
+  /**
+   * Los canales a cielo abierto de la DOV (27/9): quién mantiene cada uno y
+   * cuáles están BLOQUEADOS. Bloqueado no es "tapado": es un canal que existe
+   * pero al que no se puede entrar a limpiar, porque hay construcciones que
+   * impiden el acceso o usurpaciones sobre su recorrido (Dirección, 28/9).
+   */
+  const [verCanales, setVerCanales] = useState(false);
+  const [canalesCrudo, setCanalesCrudo] = useState<FC | null>(null);
+  /** La red de colectores pluviales de la DOV (30/9): a dónde descargan los imbornales. */
+  const [verColectores, setVerColectores] = useState(false);
+  const [colectoresCrudo, setColectoresCrudo] = useState<FC | null>(null);
   // El mapa del riesgo: se calcula en el servidor (cacheado 6 h) y se pide
   // recién cuando se prende — son ~600 tramos, no una alfombra.
   const [verRiesgo, setVerRiesgo] = useState(false);
@@ -1872,13 +2036,103 @@ function MapaInterno({
   // encienden solos al entrar. En el de bache y asfalto no aparecen nunca.
   // Y la ficha abierta se cierra al cambiar de mapa: un pedido de bacheo
   // colgado sobre la red de desagües no tiene sentido.
+  /* Leo, 27/9: "en el mapa del Sistema Pluvial aparece información que no es
+     relevante, como las obras del SIGOV" y "cuando salís de la vista quedan
+     las capas activas de imbornales". Al entrar se prende lo pluvial y se
+     apaga SIGOV; al salir se apaga lo pluvial y SIGOV vuelve como estaba. */
+  const sigovAntesDelPluvial = useRef<boolean | null>(null);
   useEffect(() => {
     setSeleccion(null);
     setCotejo(null);
-    if (!enPluvial) return;
-    setVerImbornales(true);
-    setVerAnegamiento(true);
+    if (enPluvial) {
+      setVerImbornales(true);
+      setVerAnegamiento(true);
+      setVerCanales(true);
+      setVerColectores(true);
+      setVerSigov((antes) => {
+        sigovAntesDelPluvial.current = antes;
+        return false;
+      });
+      return;
+    }
+    setVerImbornales(false);
+    setVerAnegamiento(false);
+    setVerCanales(false);
+    setVerColectores(false);
+    if (sigovAntesDelPluvial.current != null) {
+      setVerSigov(sigovAntesDelPluvial.current);
+      sigovAntesDelPluvial.current = null;
+    }
   }, [enPluvial]);
+  useEffect(() => {
+    if (!verCanales || canalesCrudo) return;
+    fetch("/data/canales.json").then((r) => r.json()).then(setCanalesCrudo).catch(() => {});
+  }, [verCanales, canalesCrudo]);
+  /* El color de quien mantiene cada canal, el mismo de la empresa en todo
+     CIMBA: se resuelve acá porque MapLibre no puede hashear un nombre. */
+  const canalesGeo = useMemo<FC | null>(() => {
+    if (!canalesCrudo) return null;
+    return {
+      type: "FeatureCollection",
+      features: canalesCrudo.features.map((f) => {
+        const r = f.properties?.responsable;
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            color: typeof r === "string" ? colorDeEmpresaEn(r, tema) : pal.inactivo,
+          },
+        };
+      }),
+    };
+  }, [canalesCrudo, tema, pal.inactivo]);
+  /** Los que mantiene cada uno, para la leyenda del panel. */
+  const responsablesCanales = useMemo(() => {
+    const m = new Map<string, { n: number; m: number; color: string }>();
+    let bloqueados = 0;
+    let largo = 0;
+    for (const f of canalesGeo?.features ?? []) {
+      const p = f.properties ?? {};
+      largo += Number(p.largoM ?? 0);
+      if (p.bloqueado === true) bloqueados++;
+      const r = typeof p.responsable === "string" ? p.responsable : null;
+      if (!r) continue;
+      const x = m.get(r) ?? { n: 0, m: 0, color: String(p.color) };
+      x.n++;
+      x.m += Number(p.largoM ?? 0);
+      m.set(r, x);
+    }
+    return { lista: [...m.entries()].sort((a, b) => b[1].m - a[1].m), bloqueados, km: largo / 1000 };
+  }, [canalesGeo]);
+  useEffect(() => {
+    if (!verColectores || colectoresCrudo) return;
+    fetch("/data/colectores.json").then((r) => r.json()).then(setColectoresCrudo).catch(() => {});
+  }, [verColectores, colectoresCrudo]);
+  const colectoresGeo = useMemo<FC | null>(() => {
+    if (!colectoresCrudo) return null;
+    return {
+      type: "FeatureCollection",
+      features: colectoresCrudo.features.map((f) => ({
+        ...f,
+        properties: { ...f.properties, color: COLOR_TIPO_COLECTOR[String(f.properties?.tipo)] ?? pal.inactivo },
+      })),
+    };
+  }, [colectoresCrudo, pal.inactivo]);
+  /** Cuántos tramos y cuántos km hay de cada tipo, para la leyenda del panel. */
+  const tiposColectores = useMemo(() => {
+    const m = new Map<string, { n: number; m: number }>();
+    for (const f of colectoresGeo?.features ?? []) {
+      const p = f.properties ?? {};
+      const t = String(p.tipo ?? "Colector");
+      const x = m.get(t) ?? { n: 0, m: 0 };
+      x.n++;
+      x.m += Number(p.largoM ?? 0);
+      m.set(t, x);
+    }
+    const lista = ORDEN_TIPO_COLECTOR.filter((t) => m.has(t)).map((t) => [t, m.get(t)!] as const);
+    const km = lista.reduce((s, [, x]) => s + x.m, 0) / 1000;
+    return { lista, km };
+  }, [colectoresGeo]);
   useEffect(() => {
     if (!verImbornales || imbornalesGeo) return;
     fetch("/data/imbornales.json")
@@ -1993,6 +2247,17 @@ function MapaInterno({
   const [aviso, setAviso] = useState<string | null>(null);
   const [cotejo, setCotejo] = useState<CotejoActivo | null>(null);
   const [vinculando, setVinculando] = useState(false);
+  /** El cierre directo en curso: con qué arreglo y qué se le responde al vecino. */
+  const [cierreMapa, setCierreMapa] = useState<{ incidenteId: number; respuesta: string } | null>(null);
+  const [cerrandoPedido, setCerrandoPedido] = useState(false);
+  const [errorCierre, setErrorCierre] = useState<string | null>(null);
+  /** Ya cerrado: lo que hace falta para avisarle al vecino. */
+  const [cerradoMapa, setCerradoMapa] = useState<{
+    demandaId: number;
+    texto: string;
+    telefono: string | null;
+    email: string | null;
+  } | null>(null);
   const [balance, setBalance] = useState<{ pend: number; sinAt: number; m2: number } | null>(null);
   const [zonaA, setZonaA] = useState<{ centro: { lon: number; lat: number }; radio: number } | null>(null);
   const clienteQuery = useQueryClient();
@@ -2125,10 +2390,17 @@ function MapaInterno({
     queryKey: ["geodata"],
     queryFn: async () => {
       const res = await fetch("/api/geodata");
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        // Sin sesión: el cartel de "Tu sesión se cerró" lo dice en toda la app.
+        if (res.status === 401) avisarSesionVencida();
+        throw new Error(String(res.status));
+      }
       return res.json();
     },
     refetchInterval: 60_000,
+    /* Un 401 no se arregla reintentando: antes se reintentaba una docena de
+       veces seguidas antes de admitir que la sesión se había cerrado. */
+    retry: (intentos, err) => !(err instanceof Error && err.message === "401") && intentos < 2,
   });
   /**
    * NO HAY NINGÚN NÚMERO QUE MOSTRAR: o no llegó nunca, o falló el primer
@@ -2422,6 +2694,78 @@ function MapaInterno({
     return { type: "FeatureCollection", features: conEdad };
   }, [demandasBase, destinos, filtroBrechaActivo, enPluvial, filtroFoto]);
 
+  /**
+   * LA CIUDAD DE LEJOS. A escala ciudad, miles de anillos finos encimados son
+   * ruido: se ve que hay mucho, no dónde está lo grave. Por debajo del zoom 13
+   * lo que se ve —pedidos y problemas, con los mismos filtros que los puntos—
+   * se junta en celdas de unos 600 m, con la cantidad adentro. Al acercar, las
+   * celdas se van y aparecen los puntos.
+   *
+   * El color es la MISMA regla que ya usaban las burbujas de problemas
+   * (capaClusters): rojo si "sin atención" domina o llega a un tercio; si no,
+   * ámbar si lo que está en cola u obra supera a lo resuelto; si no, verde.
+   * Así la leyenda del semáforo sigue diciendo lo mismo de cerca y de lejos.
+   *
+   * No se arman en Comparar, en el mapa pluvial, con el mapa de calor ni con
+   * Brecha pintada por antigüedad: ahí el color de un punto no es el semáforo.
+   */
+  const usarCeldas = !enPluvial && !comparar && !verCalor && !(vista === "brecha" && modoBrecha === "antiguedad");
+  const celdas = useMemo<FC>(() => {
+    if (!usarCeldas) return { type: "FeatureCollection", features: [] };
+    const acumulado = new Map<string, { lon: number; lat: number; ped: number; prob: number; sin: number; act: number; hecho: number }>();
+    const sumar = (lon: number, lat: number, paso: "sin" | "act" | "hecho" | null, esPedido: boolean) => {
+      const clave = `${Math.floor(lat / 0.0055)}:${Math.floor(lon / 0.0062)}`;
+      let c = acumulado.get(clave);
+      if (!c) {
+        c = { lon: 0, lat: 0, ped: 0, prob: 0, sin: 0, act: 0, hecho: 0 };
+        acumulado.set(clave, c);
+      }
+      c.lon += lon;
+      c.lat += lat;
+      if (esPedido) c.ped++;
+      else c.prob++;
+      if (paso) c[paso]++;
+    };
+    if (verDemandas) {
+      for (const f of demandasFiltradas.features) {
+        const [lon, lat] = f.geometry.coordinates as [number, number];
+        const b = String(f.properties.brecha);
+        sumar(lon, lat, b === "sin_atencion" ? "sin" : b === "en_cola" || b === "en_obra" ? "act" : b === "posible_resuelta" ? "hecho" : null, true);
+      }
+    }
+    for (const f of incidentesFiltrados.features) {
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const e = String(f.properties.estado);
+      sumar(
+        lon,
+        lat,
+        e === "detectado" || e === "priorizado" ? "sin" : e === "programado" || e === "en_ejecucion" ? "act" : e === "reparado" || e === "verificado" ? "hecho" : null,
+        false,
+      );
+    }
+    return {
+      type: "FeatureCollection",
+      features: [...acumulado.values()].map((c) => {
+        const n = c.ped + c.prob;
+        const color =
+          c.sin > 0 && ((c.sin >= c.act && c.sin >= c.hecho) || 3 * c.sin >= n)
+            ? pal.sinAtencion
+            : c.act > 0 && c.act >= c.hecho
+              ? pal.enObra
+              : c.hecho > 0
+                ? pal.resuelto
+                : pal.inactivo;
+        return {
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: [c.lon / n, c.lat / n] },
+          properties: { n, ped: c.ped, prob: c.prob, sin: c.sin, act: c.act, hecho: c.hecho, color, etiqueta: numero(n) },
+        };
+      }),
+    };
+  }, [usarCeldas, verDemandas, demandasFiltradas, incidentesFiltrados, pal]);
+  /** Desde qué zoom se ven los puntos: con celdas, 13; sin celdas, siempre. */
+  const zoomPuntos = usarCeldas ? ZOOM_PUNTOS : 0;
+
   /** Cuántos pedidos pendientes hay en cada categoría de brecha, para la
    *  leyenda de esa vista. Respeta el destino prendido (si no, el chip decía
    *  una cosa y el mapa mostraba otra) y los demás filtros de datos. */
@@ -2537,6 +2881,23 @@ function MapaInterno({
     });
     return { type: "FeatureCollection", features };
   }, [data, tipos, corte, distritoFoco]);
+
+  /**
+   * Cuántos pedidos pendientes quedarían adentro del área dibujada. Se cuenta
+   * en el cliente, sobre los mismos incidentes que el mapa está mostrando: el
+   * número que se ve en el panel tiene que ser el mismo que se ve dibujado, o
+   * el botón promete una cosa y la orden trae otra.
+   */
+  const dentroDelArea = useMemo(() => {
+    if (!rutaCerrada || ruta.length < 3) return 0;
+    return incidentesParaMetricas.features.filter((f) => {
+      const paso = pasoDeEstado(f.properties.estado as EstadoIncidente);
+      if (paso === "resuelto" || paso === "inactivo") return false;
+      const c = f.geometry.coordinates;
+      return puntoEnPoligono(c[0] ?? 0, c[1] ?? 0, ruta);
+    }).length;
+  }, [rutaCerrada, ruta, incidentesParaMetricas]);
+
 
   const demandasParaMetricas = useMemo<FC>(() => {
     const features = (data?.demandas.features ?? []).filter((f) => {
@@ -2869,6 +3230,50 @@ function MapaInterno({
       })
       .catch(() => avisar("No se pudo vincular: probá de nuevo."))
       .finally(() => setVinculando(false));
+  };
+
+  /**
+   * La respuesta que se le propone al vecino: con lo que ya se sabe (dónde,
+   * cuándo se reparó y la foto del trabajo). La persona la revisa y la cambia
+   * si quiere; es la misma idea que la bandeja de Cierres.
+   */
+  const respuestaSugerida = (demanda: Record<string, unknown>, c: CandidatoCotejo) => {
+    const donde = demanda.direccion ? ` en ${String(demanda.direccion)}` : "";
+    const cuando = c.cerradoEn ? ` el ${fechaCorta(c.cerradoEn)}` : "";
+    let texto = `Su reclamo${donde} fue resuelto${cuando}.`;
+    if (c.foto && c.fotoMomento === "despues") texto += ` Foto del trabajo terminado: ${c.foto}.`;
+    texto += " Muchas gracias por avisarnos.";
+    return texto;
+  };
+
+  const cerrarDesdeMapa = (demandaId: number) => {
+    if (!cierreMapa) return;
+    setCerrandoPedido(true);
+    setErrorCierre(null);
+    const texto = cierreMapa.respuesta.trim();
+    void cerrarPedidoDesdeMapa({ demandaId, incidenteId: cierreMapa.incidenteId, respuesta: texto || undefined })
+      .then((r) => {
+        setCerradoMapa({ demandaId, texto, telefono: r.telefono, email: r.email });
+        setCierreMapa(null);
+        void clienteQuery.invalidateQueries({ queryKey: ["geodata"] });
+      })
+      .catch((e) => setErrorCierre(mensajeDeError(e, "No se pudo cerrar el pedido: probá de nuevo")))
+      .finally(() => setCerrandoPedido(false));
+  };
+
+  /* Otro pedido tocado: se olvida el cierre a medias del anterior. */
+  const pedidoCotejado = cotejo ? Number(cotejo.demanda.id) : null;
+  useEffect(() => {
+    setCierreMapa(null);
+    setErrorCierre(null);
+    setCerradoMapa(null);
+  }, [pedidoCotejado]);
+
+  /** Abrir el cotejo de un pedido desde su ficha, sin salir del mapa. */
+  const cotejarDesdeFicha = (props: Record<string, unknown>, lngLat: [number, number]) => {
+    const candidatos = armarCandidatos(dataRef.current?.incidentes.features ?? [], props, lngLat);
+    setCotejo({ demanda: props, lngLat, candidatos });
+    setSeleccion(null);
   };
 
   /** Balance vivo de lo que se está viendo: recalcula al mover el mapa. */
@@ -3252,6 +3657,9 @@ function MapaInterno({
         f.layer.id !== "bacheo-integral-relleno" &&
         f.layer.id !== "imbornales-punto" &&
         f.layer.id !== "anegamiento-punto" &&
+        f.layer.id !== "canales-linea" &&
+        f.layer.id !== "canales-bloqueado" &&
+        f.layer.id !== "colectores-linea" &&
         f.layer.id !== "riesgo-linea",
     );
     if (!feature) {
@@ -3278,6 +3686,15 @@ function MapaInterno({
       setCotejo(null);
       setCircuitoSel(null);
       setSectorSel(feature.properties ?? {});
+      return;
+    }
+    if (feature.layer.id === "celdas-ciudad") {
+      // Una celda se abre: la cámara se acerca hasta donde se ven los puntos.
+      const g = feature.geometry as { type: string; coordinates?: [number, number] };
+      const mapa = mapRef.current?.getMap();
+      if (mapa && g.coordinates) {
+        mapa.easeTo({ center: g.coordinates, zoom: Math.max(mapa.getZoom() + 1.5, ZOOM_PUNTOS + 0.8), duration: 600 });
+      }
       return;
     }
     if (feature.layer.id === "clusters" || feature.layer.id === "sat-cluster" || feature.layer.id === "ing-cluster") {
@@ -3313,36 +3730,7 @@ function MapaInterno({
         // Se excluyen los desestimados (macro inactivo): la gestión decidió
         // no atenderlos, vincular ahí sería sacar un pedido real de la
         // deuda sin que nadie lo haya resuelto.
-        const creadoDemanda = props.sin_fecha ? null : Date.parse(String(props.creado_en));
-        const candidatos = (dataRef.current?.incidentes.features ?? [])
-          .map((fi): CandidatoCotejo | null => {
-            if (fi.properties.macro === "inactivo") return null;
-            const ln = fi.geometry.coordinates[0];
-            const la = fi.geometry.coordinates[1];
-            if (ln == null || la == null) return null;
-            const dist = distanciaM(lngLat[0], lngLat[1], ln, la);
-            if (dist > 60) return null;
-            const cerradoEn = (fi.properties.cerrado_en as string | null) ?? null;
-            const cierreMs = cerradoEn ? Date.parse(cerradoEn) : null;
-            return {
-              id: Number(fi.properties.id),
-              tipo: String(fi.properties.tipo ?? "otro"),
-              estado: String(fi.properties.estado ?? ""),
-              macro: String(fi.properties.macro ?? ""),
-              direccion: (fi.properties.direccion as string | null) ?? null,
-              dist: Math.round(dist),
-              lngLat: [ln, la],
-              cerradoEn,
-              // Se cerró ANTES de que este pedido existiera: es el problema
-              // volviendo (reincidencia), no la respuesta a ESTE pedido.
-              posibleReincidencia: Boolean(
-                cierreMs != null && creadoDemanda != null && Number.isFinite(cierreMs) && cierreMs < creadoDemanda,
-              ),
-            };
-          })
-          .filter((c): c is CandidatoCotejo => c != null)
-          .sort((a, b) => a.dist - b.dist)
-          .slice(0, 5);
+        const candidatos = armarCandidatos(dataRef.current?.incidentes.features ?? [], props, lngLat);
         setCotejo({ demanda: props, lngLat, candidatos });
         setSeleccion(null);
       } else {
@@ -3353,7 +3741,7 @@ function MapaInterno({
   }, []);
 
   return (
-    <div ref={contenedorRef} className="relative h-full w-full overflow-hidden">
+    <div ref={contenedorRef} className="mapa-principal relative h-full w-full overflow-hidden">
       <MapaGL
         ref={mapRef}
         initialViewState={{
@@ -3366,6 +3754,7 @@ function MapaInterno({
         interactiveLayerIds={[
           // Cada capa opcional entra solo cuando está montada: consultar una
           // capa inexistente haría fallar el query de features.
+          ...(usarCeldas ? ["celdas-ciudad"] : []),
           "clusters",
           "incidentes-punto",
           "demandas-punto",
@@ -3378,6 +3767,8 @@ function MapaInterno({
           ...(verDemandas && destinos.sat === true && satGeo.features.length > 0 ? ["sat-cluster", "sat-emoji"] : []),
           ...(verDemandas && destinos.ingenieria === true && ingGeo.features.length > 0 ? ["ing-cluster", "ing-emoji"] : []),
           ...(verRiesgo && riesgoGeo ? ["riesgo-linea"] : []),
+          ...(verCanales && canalesGeo ? ["canales-linea", "canales-bloqueado"] : []),
+          ...(verColectores && colectoresGeo ? ["colectores-linea"] : []),
           ...(verImbornales && imbornalesGeo ? ["imbornales-punto"] : []),
           ...(verAnegamiento && anegamientoGeo ? ["anegamiento-punto"] : []),
         ]}
@@ -3474,7 +3865,18 @@ function MapaInterno({
           }
           const p = f.properties ?? {};
           let lineas: string[];
-          if (f.layer.id === "clusters") {
+          if (f.layer.id === "celdas-ciudad") {
+            const ped = Number(p.ped ?? 0);
+            const prob = Number(p.prob ?? 0);
+            lineas = [
+              [ped > 0 ? numero(ped) + (ped === 1 ? " pedido" : " pedidos") : null, prob > 0 ? numero(prob) + (prob === 1 ? " problema" : " problemas") : null]
+                .filter(Boolean)
+                .join(" y "),
+              numero(Number(p.sin ?? 0)) + " sin atención · " + numero(Number(p.act ?? 0)) + " en cola u obra · " +
+                numero(Number(p.hecho ?? 0)) + " resueltos",
+              "clic para acercar",
+            ];
+          } else if (f.layer.id === "clusters") {
             lineas = [numero(Number(p.point_count)) + " incidentes", "clic para acercar"];
           } else if (f.layer.id === "incidentes-punto") {
             lineas = [
@@ -3540,6 +3942,26 @@ function MapaInterno({
               String(p.tipo ?? p.clase ?? "Imbornal") + (p.direccion ? " — " + String(p.direccion) : ""),
               (p.estado ? "estado " + String(p.estado) : "sin calificar") +
                 (p.colector ? " · descarga a " + String(p.colector) : "") +
+                (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
+            ];
+          } else if (f.layer.id === "colectores-linea") {
+            // El colector al que descarga el imbornal: su nombre, el tipo de tramo y el largo.
+            const largo = Number(p.largoM ?? 0);
+            lineas = [
+              String(p.nombre ?? "Colector pluvial"),
+              String(p.tipo ?? "Colector") + (largo > 0 ? " · " + numero(largo) + " m" : ""),
+            ];
+          } else if (f.layer.id === "canales-linea" || f.layer.id === "canales-bloqueado") {
+            // Qué canal es, quién lo mantiene, cuánto mide y si se puede limpiar.
+            const largo = Number(p.largoM ?? 0);
+            lineas = [
+              String(p.nombre ?? "Canal") + (p.bloqueado === true ? " — bloqueado" : ""),
+              (p.bloqueado === true
+                ? "no se puede limpiar: construcciones o usurpaciones impiden el acceso"
+                : p.responsable
+                  ? "mantiene " + String(p.responsable)
+                  : "sin responsable asignado") +
+                (largo > 0 ? " · " + numero(largo) + " m" : "") +
                 (p.observaciones ? " · " + String(p.observaciones).toLowerCase() : ""),
             ];
           } else if (f.layer.id === "anegamiento-punto") {
@@ -3639,7 +4061,9 @@ function MapaInterno({
             <Layer {...capas.colectivos} />
           </Source>
         )}
-        {/* El recorrido que se está trazando: la línea y sus vértices */}
+        {/* El recorrido que se está trazando: la línea y sus vértices. Cerrado
+            en polígono, además, el área pintada — que es lo que se está por
+            mandar a trabajar. */}
         {ruta.length > 0 && (
           <Source
             id="ruta-dibujada"
@@ -3647,8 +4071,22 @@ function MapaInterno({
             data={{
               type: "FeatureCollection",
               features: [
+                ...(rutaCerrada && ruta.length >= 3
+                  ? [{
+                      type: "Feature" as const,
+                      properties: {},
+                      geometry: { type: "Polygon" as const, coordinates: [[...ruta, ruta[0]!]] },
+                    }]
+                  : []),
                 ...(ruta.length >= 2
-                  ? [{ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: ruta } }]
+                  ? [{
+                      type: "Feature" as const,
+                      properties: {},
+                      geometry: {
+                        type: "LineString" as const,
+                        coordinates: rutaCerrada && ruta.length >= 3 ? [...ruta, ruta[0]!] : ruta,
+                      },
+                    }]
                   : []),
                 ...ruta.map((p) => ({
                   type: "Feature" as const,
@@ -3658,6 +4096,12 @@ function MapaInterno({
               ],
             }}
           >
+            <Layer
+              id="ruta-area"
+              type="fill"
+              filter={["==", ["geometry-type"], "Polygon"]}
+              paint={{ "fill-color": pal.acento, "fill-opacity": 0.14 }}
+            />
             <Layer
               id="ruta-linea"
               type="line"
@@ -3674,6 +4118,66 @@ function MapaInterno({
                 "circle-radius": 5,
                 "circle-stroke-width": 1.5,
                 "circle-stroke-color": pal.tinta,
+              }}
+            />
+          </Source>
+        )}
+        {/* Las obras contratadas van DESPUÉS de los puntos de bacheo para
+            quedar encima: son la intervención definitiva y el pedido fue que
+            "aparezcan más significativas en el mapa". */}
+        {verSigov && data?.obrasSigov && (
+          <Source id="obras-sigov" type="geojson" data={data.obrasSigov}>
+            <Layer {...capas.obrasSigov} />
+          </Source>
+        )}
+        {verColectores && colectoresGeo && (
+          <Source id="colectores" type="geojson" data={colectoresGeo}>
+            <Layer
+              id="colectores-linea"
+              type="line"
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 14, 2.8, 17, 5.5],
+                "line-opacity": 0.85,
+              }}
+            />
+          </Source>
+        )}
+        {verCanales && canalesGeo && (
+          <Source id="canales" type="geojson" data={canalesGeo}>
+            {/* Un borde oscuro debajo: el canal se lee como cauce y no como calle. */}
+            <Layer
+              id="canales-borde"
+              type="line"
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": pal.tinta,
+                "line-opacity": 0.55,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 3.2, 14, 6, 17, 10],
+              }}
+            />
+            {/* Uno solo: el color de quien lo mantiene. Los bloqueados, en la capa
+                de al lado, en rojo punteado: es un estado, no una empresa. */}
+            <Layer
+              id="canales-linea"
+              type="line"
+              filter={["!=", ["get", "bloqueado"], true]}
+              layout={{ "line-cap": "round", "line-join": "round" }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 14, 3.6, 17, 7],
+              }}
+            />
+            <Layer
+              id="canales-bloqueado"
+              type="line"
+              filter={["==", ["get", "bloqueado"], true]}
+              layout={{ "line-join": "round" }}
+              paint={{
+                "line-color": pal.sinAtencion,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 14, 3.6, 17, 7],
+                "line-dasharray": [1.4, 1.1],
               }}
             />
           </Source>
@@ -3784,14 +4288,16 @@ function MapaInterno({
                 antes "no se diferenciaba" (el Director, 7/9). Solo la rampa
                 de antigüedad de Brecha es otro código, y lo dice su leyenda. */}
             {verDemandas && (
-              <Layer {...(vista === "brecha" && modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha)} />
+              <Layer
+                {...desdeZoom(vista === "brecha" && modoBrecha === "antiguedad" ? capas.demandasEdad : capas.demandasBrecha, zoomPuntos)}
+              />
             )}
             {/* El anillo de destino se monta encima del punto y solo si hay
                 alguna cola ajena prendida: con solo bacheo no dibuja nada. */}
             {/* Sin fragmento: <Source> clona a sus hijos para inyectarles el
                 source id, y un Fragment no acepta props. */}
             {verDemandas && (destinos.sat === true || destinos.ingenieria === true) && (
-              <Layer {...capas.demandasDestino} />
+              <Layer {...desdeZoom(capas.demandasDestino, zoomPuntos)} />
             )}
             {/* El bache con su emoji recién en zoom de cuadra: de lejos su
                 identidad es el punto del semáforo. */}
@@ -4056,11 +4562,42 @@ function MapaInterno({
             n_hecho: ["+", ["case", ["match", ["get", "estado"], ["reparado", "verificado"], true, false], 1, 0]],
           }}
         >
-          <Layer {...capas.pulso} />
-          <Layer {...capas.incidentes} />
-          <Layer {...capas.clusters} />
-          <Layer {...capaClusterConteo} />
+          <Layer {...desdeZoom(capas.pulso, zoomPuntos)} />
+          <Layer {...desdeZoom(capas.incidentes, zoomPuntos)} />
+          <Layer {...desdeZoom(capas.clusters, zoomPuntos)} />
+          <Layer {...desdeZoom(capaClusterConteo, zoomPuntos)} />
         </Source>
+
+        {/* De lejos: las celdas, con la cantidad adentro (ver `celdas`). */}
+        {usarCeldas && (
+          <Source id="celdas-ciudad" type="geojson" data={celdas}>
+            <Layer
+              id="celdas-ciudad"
+              type="circle"
+              maxzoom={ZOOM_PUNTOS}
+              paint={{
+                "circle-color": ["get", "color"],
+                "circle-radius": ["interpolate", ["linear"], ["get", "n"], 1, 7, 5, 11, 20, 16, 60, 22, 200, 30],
+                "circle-opacity": 0.88,
+                "circle-stroke-color": pal.trazoCluster,
+                "circle-stroke-width": 1.5,
+              }}
+            />
+            <Layer
+              id="celdas-ciudad-n"
+              type="symbol"
+              maxzoom={ZOOM_PUNTOS}
+              layout={{
+                "text-field": ["case", [">", ["get", "n"], 1], ["get", "etiqueta"], ""],
+                "text-font": ["Open Sans Bold"],
+                "text-size": ["interpolate", ["linear"], ["get", "n"], 2, 10, 100, 13],
+                "text-allow-overlap": true,
+                "text-ignore-placement": true,
+              }}
+              paint={{ "text-color": "#ffffff", "text-halo-color": "rgba(11,15,22,0.7)", "text-halo-width": 1.2 }}
+            />
+          </Source>
+        )}
 
         <Source
           id="seleccion"
@@ -4155,8 +4692,21 @@ function MapaInterno({
         {/* QUÉ MAPA: dos mundos que no se mezclan. El de bache y asfalto es el
             de todos los días; el pluvial es la red de desagües, que tiene otro
             dueño, otro trabajo y otra lectura. */}
+        {/* En el teléfono: una ficha con lo que se está viendo; al tocarla se
+            despliegan el selector de mapa y el de vista. */}
+        {!pantalla && !comparar && (
+          <button
+            type="button"
+            onClick={() => setVistaAbiertaMovil((v) => !v)}
+            aria-expanded={vistaAbiertaMovil}
+            className="panel-vidrio flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-texto sm:hidden"
+          >
+            {enPluvial ? "Sistema pluvial" : `${VISTAS[vista].etiqueta} · ${DESTINOS.filter((d) => destinos[d] === true).map((d) => ETIQUETA_DESTINO[d]).join(", ") || "sin filtro"}`}
+            <ChevronDown size={13} className={vistaAbiertaMovil ? "rotate-180 transition" : "transition"} />
+          </button>
+        )}
         {!pantalla && (
-          <div className="panel-vidrio flex rounded-xl p-1">
+          <div className={`panel-vidrio rounded-xl p-1 ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
             {([
               { clave: "bache" as const, etiqueta: "Bache y asfalto", desc: "Pedidos, incidentes y trabajo de bacheo" },
               { clave: "pluvial" as const, etiqueta: "Sistema pluvial", desc: "Imbornales, colectores y puntos de anegamiento" },
@@ -4182,8 +4732,19 @@ function MapaInterno({
             Comparando lo pedido vs. lo hecho — salí de <b className="text-texto">Comparar</b> para cambiar filtros
           </div>
         ) : (
-          <div data-tour="vistas" className="panel-vidrio flex max-w-[calc(100vw-88px)] flex-col rounded-xl p-1 sm:max-w-none">
-            <div className="flex overflow-x-auto sm:flex-wrap sm:overflow-visible">
+          /**
+           * EL ANCHO ESTÁ ACOTADO SIEMPRE, no solo en celular.
+           *
+           * En escritorio el panel decía `sm:max-w-none` y se estiraba a 591 px
+           * sobre un mapa de 679: una banda blanca que tapaba media ciudad. El
+           * culpable era el renglón de ayuda de abajo, que al ser `basis-full`
+           * obligaba al ancho máximo del contenido a contarlo en UNA línea. Se
+           * fue el renglón (su texto vive en el title de cada chip, que es
+           * donde se lo busca) y el ancho quedó topado: la barra de
+           * herramientas no puede volver a comerse el mapa.
+           */
+          <div data-tour="vistas" className={`panel-vidrio max-w-[calc(100vw-24px)] flex-col rounded-xl p-1 sm:max-w-[calc(100vw-88px)] sm:flex-row sm:items-center ${vistaAbiertaMovil ? "flex" : "hidden sm:flex"}`}>
+            <div className="flex shrink-0 overflow-x-auto">
               {(Object.keys(VISTAS) as Vista[]).map((v) => (
                 <button
                   key={v}
@@ -4205,7 +4766,11 @@ function MapaInterno({
                 que se leía como tres datos informativos y no como el filtro que
                 es. El rótulo lo nombra y el pie aclara qué mide la cifra; los
                 dos son texto chico y envuelven, así que entran en 375 px. */}
-            <div data-tour="destinos" className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-borde pt-1">
+            <div
+              data-tour="destinos"
+              title={AYUDA_CUENTA_DESTINO}
+              className="mt-1 flex flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto border-t border-borde pt-1 sm:mt-0 sm:ml-1 sm:overflow-visible sm:border-t-0 sm:border-l sm:pt-0 sm:pl-2"
+            >
               <span className="text-[10px] font-semibold tracking-wider text-texto-3 uppercase">Resuelve</span>
               {DESTINOS.map((d) => {
                 const activo = destinos[d] === true;
@@ -4229,9 +4794,6 @@ function MapaInterno({
                   </button>
                 );
               })}
-              <span className="basis-full text-[10px] leading-tight text-texto-3" title={AYUDA_CUENTA_DESTINO}>
-                Prendé o apagá cada cola · la cifra es el total de la cola, no lo que se ve
-              </span>
             </div>
           </div>
         )}
@@ -4274,9 +4836,12 @@ function MapaInterno({
           {/* Nivel de detalle: cuánto se muestra encima del mapa. "Limpio" es
               el mismo despejado del ojo de al lado — un solo estado para las
               dos afordancias. */}
+          {/* El nivel de detalle y el ojo de despejar se mudaron a Acciones →
+              "Cuánto se muestra": estaban repetidos acá y la barra ocupaba dos o
+              tres renglones encima del mapa (23/9). */}
           <div
-            data-tour="detalle"
-            className="panel-vidrio hidden items-center rounded-xl p-1 sm:flex"
+            data-tour="detalle-viejo"
+            className="hidden"
             title="Cuánta información se dibuja encima del mapa: Todo (los 6 números y las cifras de deuda por zona), Esencial (los 2 que importan en esta vista) o Limpio (solo el mapa)"
           >
             {(Object.keys(ETIQUETA_DETALLE) as Detalle[]).map((d) => (
@@ -4292,9 +4857,9 @@ function MapaInterno({
             ))}
           </div>
           <button
-            data-tour="despejar"
+            data-tour="despejar-viejo"
             onClick={alternarDespejado}
-            className={`panel-vidrio hidden items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold transition sm:flex sm:px-3 sm:py-2.5 ${
+            className={`hidden ${
               despejado ? "text-amarillo ring-1 ring-amarillo/60" : "text-texto-2 hover:text-texto"
             }`}
             title={
@@ -4426,6 +4991,7 @@ function MapaInterno({
                 menuAcciones ? "text-celeste ring-1 ring-celeste/60" : "text-texto-2"
               }`}
               title="Todas las acciones del mapa"
+              data-tour="acciones"
             >
               <Menu size={15} />
               Acciones
@@ -4688,14 +5254,40 @@ function MapaInterno({
       {/* Trazando un recorrido: el panel con lo que se lleva dibujado */}
       {dibujandoRuta && (
         <div className="panel-vidrio pointer-events-auto absolute top-1/2 left-3 z-30 max-w-64 -translate-y-1/2 rounded-xl p-3">
-          <p className="text-[13px] font-bold">Dibujando un recorrido</p>
+          <p className="text-[13px] font-bold">
+            {rutaCerrada ? "Dibujando un área" : "Dibujando un recorrido"}
+          </p>
           <p className="mt-0.5 text-[11px] leading-snug text-texto-3">
-            Hacé clic en cada esquina por donde pasa. Con dos puntos ya se puede emitir la orden.
+            {rutaCerrada
+              ? "Todo lo que quede adentro entra en la orden."
+              : "Hacé clic en cada esquina por donde pasa. Con dos puntos ya se puede emitir la orden."}
           </p>
           <p className="num mt-2 text-2xl font-bold" style={{ color: pal.acento }}>
-            {ruta.length}
-            <span className="ml-1 font-sans text-[11px] font-normal text-texto-3">puntos</span>
+            {rutaCerrada ? numero(dentroDelArea) : ruta.length}
+            <span className="ml-1 font-sans text-[11px] font-normal text-texto-3">
+              {rutaCerrada ? "pedidos adentro" : "puntos"}
+            </span>
           </p>
+          {/* Cerrar o abrir el dibujo. Es el mismo trazo: lo que cambia es si
+              describe un tramo de calle o encierra un pedazo de ciudad. */}
+          <button
+            onClick={() => setRutaCerrada((v) => !v)}
+            disabled={ruta.length < 3}
+            title={
+              ruta.length < 3
+                ? "Hacen falta al menos tres puntos para cerrar un área"
+                : rutaCerrada
+                  ? "Volver a tratarlo como un recorrido (una línea)"
+                  : "Cerrar el dibujo: lo que quede adentro entra en la orden"
+            }
+            className={`mt-2 w-full rounded-md border px-2 py-1.5 text-[11px] font-semibold transition disabled:opacity-40 ${
+              rutaCerrada
+                ? "border-azul bg-azul/15 text-celeste"
+                : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+            }`}
+          >
+            {rutaCerrada ? "Volver a recorrido" : "Cerrar en área"}
+          </button>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               onClick={() => setRuta((r) => r.slice(0, -1))}
@@ -4715,6 +5307,7 @@ function MapaInterno({
               onClick={() => {
                 setDibujandoRuta(false);
                 setRuta([]);
+                setRutaCerrada(false);
               }}
               className="rounded-md border border-borde-2 px-2 py-1 text-[11px] font-semibold text-texto-3 transition hover:text-texto"
             >
@@ -4722,14 +5315,24 @@ function MapaInterno({
             </button>
           </div>
           <a
-            href={`/ordenes/nueva?recorrido=${encodeURIComponent(
-              ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
-            )}`}
+            href={
+              rutaCerrada
+                ? `/ordenes/nueva?poligono=${encodeURIComponent(
+                    ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+                  )}`
+                : `/ordenes/nueva?recorrido=${encodeURIComponent(
+                    ruta.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(";"),
+                  )}`
+            }
             className={`mt-2 block rounded-lg px-3 py-2 text-center text-[12px] font-semibold text-white transition ${
-              ruta.length >= 2 ? "bg-azul hover:brightness-110" : "pointer-events-none bg-azul/40"
+              (rutaCerrada ? ruta.length >= 3 : ruta.length >= 2)
+                ? "bg-azul hover:brightness-110"
+                : "pointer-events-none bg-azul/40"
             }`}
           >
-            Crear orden con este recorrido
+            {rutaCerrada
+              ? `Crear orden con los ${numero(dentroDelArea)} de adentro`
+              : "Crear orden con este recorrido"}
           </a>
         </div>
       )}
@@ -4783,7 +5386,7 @@ function MapaInterno({
 
       {/* Balance vivo del encuadre: la brecha de lo que se está viendo */}
       {balance && !comparar && !despejado && !enPluvial && !sinDatos && (balance.pend > 0 || balance.m2 > 0) && (
-        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2">
+        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 -translate-x-1/2 max-sm:bottom-[8.5rem] max-sm:left-3 max-sm:translate-x-0">
           <div data-tour="balance" className="panel-vidrio max-w-[calc(100vw-24px)] overflow-hidden rounded-full px-4 py-1.5 text-[11px] whitespace-nowrap text-texto-2 max-sm:text-ellipsis">
             {/* Los dos porcentajes son pasos del semáforo, no acentos sueltos:
                 "sin respuesta" sale de brecha === 'sin_atencion' (rojo) y los
@@ -4836,7 +5439,52 @@ function MapaInterno({
                 {cotejo.demanda.sin_fecha ? "sin fecha" : fechaCorta(String(cotejo.demanda.creado_en))}
               </p>
             </div>
-            {cotejo.candidatos.length === 0 ? (
+            {cerradoMapa && cerradoMapa.demandaId === Number(cotejo.demanda.id) ? (
+              <div className="space-y-2 rounded-lg border border-hecho/50 bg-hecho/10 p-3">
+                <p className="text-[13px] font-bold" style={{ color: "var(--color-hecho)" }}>
+                  ✓ Pedido #{cerradoMapa.demandaId} cerrado
+                </p>
+                <p className="text-[11px] leading-snug text-texto-2">
+                  Quedó vinculado al arreglo y con la respuesta guardada. Ahora avisale al vecino: el mensaje ya va escrito,
+                  lo mandás vos.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {whatsappDe(cerradoMapa.telefono) && (
+                    <a
+                      href={`https://wa.me/${whatsappDe(cerradoMapa.telefono)}?text=${encodeURIComponent(cerradoMapa.texto)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md bg-resuelto px-2.5 py-1 text-[11px] font-bold text-white"
+                    >
+                      Avisar por WhatsApp
+                    </a>
+                  )}
+                  {cerradoMapa.email && (
+                    <a
+                      href={`mailto:${cerradoMapa.email}?subject=${encodeURIComponent("Su reclamo fue resuelto")}&body=${encodeURIComponent(cerradoMapa.texto)}`}
+                      className="rounded-md border border-borde-2 px-2.5 py-1 text-[11px] font-semibold text-texto-2"
+                    >
+                      Avisar por mail
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(cerradoMapa.texto).then(() => avisar("Respuesta copiada ✓"));
+                    }}
+                    className="rounded-md border border-borde-2 px-2.5 py-1 text-[11px] font-semibold text-texto-2"
+                  >
+                    Copiar el mensaje
+                  </button>
+                </div>
+                {!whatsappDe(cerradoMapa.telefono) && !cerradoMapa.email && (
+                  <p className="text-[10px] text-texto-3">Este pedido no trae teléfono ni mail del vecino.</p>
+                )}
+                <button type="button" onClick={() => setCotejo(null)} className="text-[11px] font-semibold text-celeste">
+                  Listo
+                </button>
+              </div>
+            ) : cotejo.candidatos.length === 0 ? (
               <p className="rounded-lg border border-encurso/40 bg-encurso/10 px-3 py-2.5 text-xs leading-relaxed text-encurso">
                 No hay incidentes ni reparaciones a menos de 60 m: <b>brecha real confirmada</b> — nadie tocó esto todavía.
               </p>
@@ -4878,14 +5526,72 @@ function MapaInterno({
                           {vinculando ? "Vinculando…" : "Vincular acá"}
                         </button>
                       )}
+                      {/* CIERRE DIRECTO: vincular y cerrar en un paso. Solo con un
+                          arreglo ya hecho, posterior al pedido, y para pedidos de
+                          bacheo (mismas reglas que la bandeja de Cierres). */}
+                      {puedeVincular &&
+                        c.macro === "resuelto" &&
+                        !c.posibleReincidencia &&
+                        destinoDe(cotejo.demanda.destino) === "bacheo" &&
+                        cierreMapa?.incidenteId !== c.id && (
+                          <button
+                            onClick={() => {
+                              setErrorCierre(null);
+                              setCierreMapa({ incidenteId: c.id, respuesta: respuestaSugerida(cotejo.demanda, c) });
+                            }}
+                            disabled={vinculando || cerrandoPedido}
+                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                            style={{ background: "var(--color-hecho)" }}
+                          >
+                            Vincular y cerrar
+                          </button>
+                        )}
                       <Link href={`/incidentes/${c.id}`} className="text-[11px] font-semibold text-celeste hover:underline">
                         Historia →
                       </Link>
                     </div>
+                    {cierreMapa?.incidenteId === c.id && (
+                      <div className="mt-2 space-y-1.5 border-t border-borde pt-2">
+                        <p className="text-[11px] font-semibold">Respuesta al vecino</p>
+                        <textarea
+                          value={cierreMapa.respuesta}
+                          onChange={(e) => setCierreMapa({ incidenteId: c.id, respuesta: e.target.value })}
+                          rows={4}
+                          maxLength={1000}
+                          className="w-full rounded-md border border-borde-2 bg-panel px-2 py-1.5 text-[12px] leading-snug outline-none focus:border-celeste"
+                        />
+                        <p className="text-[10px] leading-snug text-texto-3">
+                          Se guarda con el cierre. Después te dejo el WhatsApp o el mail del vecino con este texto: lo mandás vos.
+                        </p>
+                        {errorCierre && <p className="text-[11px] text-peligro">{errorCierre}</p>}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => cerrarDesdeMapa(Number(cotejo.demanda.id))}
+                            disabled={cerrandoPedido}
+                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                            style={{ background: "var(--color-hecho)" }}
+                          >
+                            {cerrandoPedido ? "Cerrando…" : "Cerrar el pedido"}
+                          </button>
+                          <button
+                            onClick={() => setCierreMapa(null)}
+                            disabled={cerrandoPedido}
+                            className="text-[11px] font-semibold text-texto-3 hover:text-texto"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {!puedeVincular && (
-                  <p className="text-[10px] text-texto-3">Vincular requiere el rol Atención Ciudadana (o admin).</p>
+                  <p className="text-[10px] text-texto-3">Vincular y cerrar requieren el rol Atención Ciudadana (o admin).</p>
+                )}
+                {puedeVincular && !cotejo.candidatos.some((c) => c.macro === "resuelto" && !c.posibleReincidencia) && (
+                  <p className="text-[10px] leading-snug text-texto-3">
+                    Para cerrar desde acá hace falta un arreglo ya hecho y posterior al pedido. Ninguno de estos lo es todavía.
+                  </p>
                 )}
               </>
             )}
@@ -5379,11 +6085,31 @@ function MapaInterno({
           `absolute`, el 100% resuelve contra el contenedor del mapa, que es el
           ancho real disponible; las 4.75rem son la columna derecha de controles
           de MapLibre más aire. Al panel de Capas no lo achica (w-72 manda). */}
+      {/**
+        * EL RECTÁNGULO INVISIBLE QUE COMÍA LOS CLICS.
+        *
+        * Esta columna mide `100% - 4.75rem` de ancho: casi todo el mapa. Los
+        * hijos son angostos —`items-start` los encoge al contenido— pero la
+        * CAJA del contenedor sigue midiendo todo ese ancho, y un div sin fondo
+        * igual se come el puntero. Resultado: a la derecha del panel de Capas
+        * había una franja transparente, del alto del panel, donde el mapa no
+        * respondía ni al arrastre ni al clic sobre un punto.
+        *
+        * "El plano queda un poco cargado de cosas. La referencia que marco en
+        * rojo, al extenderse sobre la pantalla, hace que donde encerré el
+        * círculo verde no funcione el pad ni las funciones" — Dirección de
+        * Bacheo, 17/09, con el círculo justo al lado del panel de Capas.
+        *
+        * El ancho tiene que quedarse (lo explica el comentario de arriba: es lo
+        * que evita que la leyenda se meta bajo los controles de MapLibre), así
+        * que lo que se saca es la captura del puntero. La columna deja pasar
+        * todo y cada hijo que SÍ es un control se la vuelve a prender.
+        */}
       <div
-        className={`absolute bottom-[4.5rem] left-3 z-10 flex max-w-[calc(100%-4.75rem)] flex-col items-start gap-2 ${despejado ? "hidden" : ""}`}
+        className={`pointer-events-none absolute bottom-[4.5rem] left-3 z-10 flex max-w-[calc(100%-4.75rem)] flex-col items-start gap-2 ${despejado ? "hidden" : ""}`}
         style={arrCapas.estilo}
       >
-      <div data-tour="capas" className={comparar ? "hidden" : ""}>
+      <div data-tour="capas" className={`pointer-events-auto ${comparar ? "hidden" : ""}`}>
         {panelCapas ? (
           <div className="panel-vidrio max-h-[calc(100vh-20rem)] w-72 overflow-y-auto rounded-xl p-4">
             <div
@@ -5405,7 +6131,7 @@ function MapaInterno({
                 >
                   <Satellite size={14} />
                 </button>
-                <button onClick={() => setPanelCapas(false)} className="text-texto-3 hover:text-texto">
+                <button onClick={() => cambiarPanelCapas(false)} className="text-texto-3 hover:text-texto">
                   <X size={14} />
                 </button>
               </span>
@@ -5646,6 +6372,67 @@ function MapaInterno({
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-celeste" /> anillo celeste = obra SIGOV
               (procedencia, no estado)
             </p>
+
+            {/**
+              * LAS OBRAS DEL SIGOV, EN SU PROPIA CAPA.
+              *
+              * "Deberían aparecer más significativas en el mapa dado que son
+              * intervenciones importantes y definitivas" (12/09). Eran solo el
+              * anillo celeste de arriba —procedencia sobre el punto del
+              * bache— y se perdían entre 2.900 puntos. Son 472 obras que
+              * rehacen la calzada entera.
+              *
+              * El color dice en qué anda (los tres grupos que agrupó la
+              * Dirección) y la forma de qué es: relleno hormigón, hueco
+              * asfalto. Dos variables, dos preguntas.
+              */}
+            <label
+              className="mt-2 mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+              title="Las obras contratadas por SIGOV, en capa propia: rehacen la calzada entera"
+            >
+              <input
+                type="checkbox"
+                checked={verSigov}
+                onChange={(e) => setVerSigov(e.target.checked)}
+                className="accent-[#0066ff]"
+              />
+              <span
+                className="inline-block h-3 w-3 shrink-0 rounded-full border-2"
+                style={{ background: COLOR_GRUPO_SIGOV.finalizada, borderColor: COLOR_GRUPO_SIGOV.finalizada }}
+              />
+              <span className="min-w-0 flex-1 truncate font-semibold">Obras SIGOV</span>
+            </label>
+            {verSigov && (
+              <div className="mb-2 ml-6 space-y-1 text-[10px] text-texto-3">
+                <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  {(["planificada", "en_ejecucion", "finalizada"] as const).map((g) => (
+                    <span key={g} className="flex items-center gap-1">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-full"
+                        style={{ background: COLOR_GRUPO_SIGOV[g] }}
+                      />
+                      {ETIQUETA_GRUPO_SIGOV[g]}
+                    </span>
+                  ))}
+                </p>
+                <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: pal.inactivo }}
+                    />
+                    {ETIQUETA_MATERIAL_SIGOV.hormigon}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full border-2"
+                      style={{ background: "transparent", borderColor: pal.inactivo }}
+                    />
+                    {ETIQUETA_MATERIAL_SIGOV.asfalto}
+                  </span>
+                </p>
+              </div>
+            )}
             <label
               className="mb-2 flex cursor-pointer items-center gap-2 text-[13px]"
               title="Numera del 1 al 20 los incidentes activos con mayor score de prioridad: qué hacemos primero"
@@ -5718,9 +6505,77 @@ function MapaInterno({
                       <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pal.anegamiento }} />
                       <span className="min-w-0 truncate">Puntos de anegamiento</span>
                     </label>
+                    <label
+                      className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="La red de colectores a la que descargan los imbornales, por tipo de tramo: el caño principal, y dónde cruza una vía, un ferrocarril o un ducto."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verColectores}
+                        onChange={(e) => setVerColectores(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: COLOR_TIPO_COLECTOR.Colector }} />
+                      <span className="min-w-0 flex-1 truncate">Colectores pluviales</span>
+                      {colectoresGeo && (
+                        <span className="num shrink-0 text-[11px] text-texto-3">
+                          {numero(colectoresGeo.features.length)} · {tiposColectores.km.toFixed(1).replace(".", ",")} km
+                        </span>
+                      )}
+                    </label>
+                    {verColectores && colectoresGeo && (
+                      <div className="mb-2 ml-6 space-y-0.5 text-[10px] text-texto-3">
+                        {tiposColectores.lista.map(([t, x]) => (
+                          <p key={t} className="flex items-center gap-1.5">
+                            <span className="inline-block h-1 w-3 shrink-0 rounded" style={{ background: COLOR_TIPO_COLECTOR[t] }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2">{t}</span>
+                            <span className="num shrink-0">
+                              {numero(x.n)} · {numero(Math.round(x.m / 100) / 10)} km
+                            </span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <label
+                      className="mb-1 flex cursor-pointer items-center gap-2 text-[13px]"
+                      title="Los canales a cielo abierto de la DOV, del color de quien los mantiene. En rojo punteado, los bloqueados: existen, pero construcciones o usurpaciones impiden entrar a limpiarlos."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={verCanales}
+                        onChange={(e) => setVerCanales(e.target.checked)}
+                        className="accent-[#0066ff]"
+                      />
+                      <span className="inline-block h-1 w-4 shrink-0 rounded" style={{ background: pal.enObra }} />
+                      <span className="min-w-0 flex-1 truncate">Canales</span>
+                      {canalesGeo && (
+                        <span className="num shrink-0 text-[11px] text-texto-3">
+                          {numero(canalesGeo.features.length)} · {responsablesCanales.km.toFixed(1).replace(".", ",")} km
+                        </span>
+                      )}
+                    </label>
+                    {verCanales && canalesGeo && (
+                      <div className="mb-2 ml-6 space-y-0.5 text-[10px] text-texto-3">
+                        {responsablesCanales.lista.map(([r, x]) => (
+                          <p key={r} className="flex items-center gap-1.5">
+                            <span className="inline-block h-1 w-3 shrink-0 rounded" style={{ background: x.color }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2">{r}</span>
+                            <span className="num shrink-0">
+                              {numero(x.n)} · {numero(Math.round(x.m / 100) / 10)} km
+                            </span>
+                          </p>
+                        ))}
+                        {responsablesCanales.bloqueados > 0 && (
+                          <p className="flex items-center gap-1.5">
+                            <span className="inline-block h-0 w-3 shrink-0 border-t-2 border-dashed" style={{ borderColor: pal.sinAtencion }} />
+                            <span className="min-w-0 flex-1 truncate text-texto-2" title="Existen, pero construcciones o usurpaciones impiden entrar a limpiarlos">Bloqueados · no se pueden limpiar</span>
+                            <span className="num shrink-0">{numero(responsablesCanales.bloqueados)}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <p className="mb-2 text-[10px] leading-snug text-texto-3">
-                      Los canales a cielo abierto y las cuencas todavía no están: hay que pedirle a la DOV
-                      esas capas.
+                      Las cuencas todavía no están: hay que pedirle a la DOV esa capa.
                     </p>
                   </>
                 )}
@@ -6016,7 +6871,7 @@ function MapaInterno({
             )}
           </div>
         ) : (
-          <button onClick={() => setPanelCapas(true)} className="panel-vidrio rounded-xl p-3 text-celeste transition hover:text-texto" title="Capas">
+          <button onClick={() => cambiarPanelCapas(true)} className="panel-vidrio rounded-xl p-3 text-celeste transition hover:text-texto" title="Capas">
             <Layers size={18} />
           </button>
         )}
@@ -6038,7 +6893,9 @@ function MapaInterno({
 
       {/* El pluvial tiene su propia leyenda: el estado del imbornal es una
           escala de deterioro, no los pasos de atención del bacheo. */}
-      {enPluvial && !despejado && (
+      {/* Con el panel de capas abierto, la leyenda se esconde: en pantallas bajas
+          lo tapaba entero, y el panel ya explica cada capa. */}
+      {enPluvial && !despejado && !panelCapas && (
         <div className="panel-vidrio pointer-events-auto absolute bottom-3 left-3 z-10 rounded-xl px-3 py-2 text-[11px]">
           <p className="mb-1 font-bold tracking-wide text-texto-3 uppercase">Estado del imbornal</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -6058,6 +6915,12 @@ function MapaInterno({
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: pal.anegamiento }} />
               anegamiento
             </span>
+            {verCanales && (
+              <span className="flex items-center gap-1.5 text-texto-2">
+                <span className="inline-block h-0 w-3.5 border-t-2 border-dashed" style={{ borderColor: pal.sinAtencion }} />
+                canal bloqueado
+              </span>
+            )}
           </div>
           <p className="mt-1 text-[10px] text-texto-3">
             El halo del punto azul crece con el tirante que relataron los vecinos.
@@ -6071,7 +6934,12 @@ function MapaInterno({
 
       {/* Panel de detalle */}
       {seleccion && (
-        <PanelDetalle seleccion={seleccion} alCerrar={() => setSeleccion(null)} topBarra={altoHerr} />
+        <PanelDetalle
+          seleccion={seleccion}
+          alCerrar={() => setSeleccion(null)}
+          topBarra={altoHerr}
+          alCotejar={puedeVincular ? () => cotejarDesdeFicha(seleccion.props, seleccion.lngLat) : undefined}
+        />
       )}
     </div>
   );
@@ -6139,9 +7007,12 @@ function PanelDetalle({
   seleccion,
   alCerrar,
   topBarra,
+  alCotejar,
 }: {
   seleccion: Seleccion;
   alCerrar: () => void;
+  /** Abrir el cotejo de este pedido en el mapa (vincular, o vincular y cerrar). */
+  alCotejar?: () => void;
   /** Alto real de la barra de herramientas, medido por el ResizeObserver del
    *  mapa. Con el top-28 fijo (112 px) la ficha abría DEBAJO de la barra en
    *  cuanto esta envolvía en más de dos filas — o sea en cualquier celular —
@@ -6285,16 +7156,29 @@ function PanelDetalle({
         />
       </div>
 
-      <div className="border-t border-borde p-3">
+      <div className="space-y-2 border-t border-borde p-3">
+        {/* CIERRE DIRECTO: el cotejo se abre acá mismo, en cualquier vista; ahí
+            se vincula al arreglo y, si ya está hecho, se cierra y se le avisa
+            al vecino. Antes este botón llevaba a otra pantalla. */}
+        {!esIncidente && alCotejar && ["recibida", "en_validacion", "vinculada"].includes(String(p.estado)) && (
+          <button
+            type="button"
+            onClick={alCotejar}
+            className="block w-full rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+            style={{ background: p.brecha === "posible_resuelta" ? "var(--color-hecho)" : "var(--color-azul)" }}
+          >
+            {p.brecha === "posible_resuelta" ? "Cotejar y cerrar acá" : "Cotejar acá"}
+          </button>
+        )}
         <Link
           href={esIncidente ? `/incidentes?foco=${String(p.id)}` : `/demandas/${String(p.id)}`}
-          className="block rounded-lg bg-azul px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+          className={
+            !esIncidente && alCotejar
+              ? "block text-center text-xs font-semibold text-celeste hover:underline"
+              : "block rounded-lg bg-azul px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-110"
+          }
         >
-          {esIncidente
-            ? "Gestionar incidente"
-            : p.brecha === "posible_resuelta"
-              ? "Revisar y cotejar →"
-              : "Abrir el pedido →"}
+          {esIncidente ? "Gestionar incidente" : "Abrir el pedido completo →"}
         </Link>
       </div>
     </aside>
@@ -6336,6 +7220,25 @@ function LeyendaSemaforo({
    *  leyenda lo recibe hecho para pintar exactamente lo que pinta la capa. */
   colorEdadReciente: string;
 }) {
+  /** La clave de formas: se aprende una vez y después estorba. Arranca
+   *  desplegada y quien la pliega no la vuelve a ver. */
+  const [verClave, setVerClave] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("cimba-clave-formas") === "1") setVerClave(true);
+    } catch {
+      /* modo privado: plegada, que ocupa una sola línea */
+    }
+  }, []);
+  const cambiarClave = (v: boolean) => {
+    setVerClave(v);
+    try {
+      localStorage.setItem("cimba-clave-formas", v ? "1" : "0");
+    } catch {
+      /* sin storage: vale para esta sesión */
+    }
+  };
+
   /** Con el mapa pintado por antigüedad el semáforo no aplica: la leyenda
    *  muestra la rampa real de capaDemandasEdad, mismos colores y mismos cortes. */
   const porEdad = vista === "brecha" && modoBrecha === "antiguedad";
@@ -6380,21 +7283,37 @@ function LeyendaSemaforo({
        debajo de la columna derecha de controles de MapLibre (zoom, brújula y
        geolocalizar, x≈336..365), que quedaban intocables. Sigue sin capturar el
        puntero (pointer-events-none): es un rótulo, no un control. */
-    <div className="panel-vidrio pointer-events-none max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
-      {/* LA CLAVE DE FORMAS va primero: el color dice el ESTADO, la forma dice
-          QUÉ ES. Sin esto, un pedido rojo y un incidente rojo eran el mismo
-          punto para el ojo, y hay ~990 lugares donde los dos se superponen. */}
-      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-borde/60 pb-1 text-[10px] text-texto-3">
-        <span className="flex items-center gap-1 whitespace-nowrap">
-          <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-texto-2" />
-          anillo = lo que <b className="font-semibold text-texto-2">piden</b>
-        </span>
-        <span className="flex items-center gap-1 whitespace-nowrap">
-          <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-texto-2" />
-          relleno = lo que el municipio <b className="font-semibold text-texto-2">trabaja</b>
-        </span>
-        <span className="whitespace-nowrap">el color dice en qué paso está</span>
-      </div>
+    <div className="panel-vidrio pointer-events-auto max-w-[calc(100vw-4.75rem)] rounded-xl px-2.5 py-1.5">
+      {/**
+       * LA CLAVE DE FORMAS —anillo = lo que piden, relleno = lo que el
+       * municipio trabaja— se lee UNA vez y después es ruido: eran tres
+       * renglones de texto permanentes sobre el mapa. Ahora arranca desplegada
+       * (hay que aprenderla) y se puede plegar para siempre con un clic: la
+       * decisión se recuerda y la leyenda queda en una sola línea de colores.
+       */}
+      <button
+        type="button"
+        onClick={() => cambiarClave(!verClave)}
+        title={verClave ? "Ocultar la clave de formas" : "Qué significan el anillo y el relleno"}
+        className="flex w-full items-center gap-1 text-left text-[10px] text-texto-3 transition hover:text-texto-2"
+      >
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-2 border-texto-2" />
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-texto-2" />
+        <span className="ml-0.5 font-semibold">{verClave ? "▾" : "▸"} piden / trabaja</span>
+      </button>
+      {verClave && (
+        <div className="mt-1 mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-borde/60 pb-1 text-[10px] text-texto-3">
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-texto-2" />
+            anillo = lo que <b className="font-semibold text-texto-2">piden</b>
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-texto-2" />
+            relleno = lo que el municipio <b className="font-semibold text-texto-2">trabaja</b>
+          </span>
+          <span className="whitespace-nowrap">el color dice en qué paso está</span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] font-medium text-texto-2">
         {porEdad ? (
           <>
