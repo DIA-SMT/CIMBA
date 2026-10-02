@@ -114,18 +114,32 @@ export interface ConexionAc {
   database: string;
 }
 
+/**
+ * La credencial de ESCRITURA va aparte de la de SIGOV a propósito.
+ *
+ * MYSQL_BACHEO_* es de solo lectura y así tiene que quedarse: CIMBA lee obras
+ * de SIGOV y no tiene por qué poder tocarlas. El usuario que escribe en
+ * Atención Ciudadana tiene SELECT, INSERT, UPDATE y EXECUTE sobre esa base y
+ * nada más —sin DELETE, que para un cierre no hace falta—, y el día que se
+ * reemplace por un usuario de servicio se cambia acá y en ningún otro lado.
+ *
+ * Si MYSQL_AC_USER no está, cae a la de lectura: el modo simulado solo
+ * necesita SELECT y tiene que poder correr igual.
+ */
 export function conexionAcDesdeEntorno(): ConexionAc {
-  const faltan = ["MYSQL_BACHEO_HOST", "MYSQL_BACHEO_USER", "MYSQL_BACHEO_PASSWORD"].filter(
-    (k) => !process.env[k],
-  );
-  if (faltan.length > 0) {
-    throw new Error(`Falta configurar ${faltan.join(", ")} en el .env.`);
+  if (!process.env.MYSQL_BACHEO_HOST) {
+    throw new Error("Falta configurar MYSQL_BACHEO_HOST en el .env.");
+  }
+  const user = process.env.MYSQL_AC_USER ?? process.env.MYSQL_BACHEO_USER;
+  const password = process.env.MYSQL_AC_PASSWORD ?? process.env.MYSQL_BACHEO_PASSWORD;
+  if (!user || !password) {
+    throw new Error("Falta el usuario o la clave de MySQL (MYSQL_AC_* o MYSQL_BACHEO_*).");
   }
   return {
-    host: process.env.MYSQL_BACHEO_HOST as string,
+    host: process.env.MYSQL_BACHEO_HOST,
     port: Number(process.env.MYSQL_BACHEO_PORT ?? 3306),
-    user: process.env.MYSQL_BACHEO_USER as string,
-    password: process.env.MYSQL_BACHEO_PASSWORD as string,
+    user,
+    password,
     database: process.env.MYSQL_AC_DB ?? "smt_atencion_ciudadana",
   };
 }
