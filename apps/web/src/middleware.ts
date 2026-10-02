@@ -78,8 +78,20 @@ const PREFIJOS_EMPRESA = [
 export async function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
 
-  // Entrada desde Ciudad Digital: ?auth=<token> en cualquier ruta → callback
-  if (searchParams.has("auth")) {
+  /**
+   * Entrada desde Ciudad Digital: ?auth=<token> en cualquier ruta → callback.
+   *
+   * La excepción del propio callback no es cosmética: sin ella el handler se
+   * redirige a sí mismo para siempre. El portal abre /?auth=<token>, el
+   * middleware lo manda a /api/auth/callback?auth=<token> — y como el token
+   * sigue en la query, el middleware lo vuelve a tomar y lo manda al mismo
+   * lugar. Probado en local: 307 a sí mismo, el navegador corta por
+   * ERR_TOO_MANY_REDIRECTS y nadie entra nunca.
+   *
+   * No se vio antes porque CIMBA_API_CIUDAD_DIGITAL estaba sin configurar y
+   * este camino jamás se ejercitó.
+   */
+  if (searchParams.has("auth") && pathname !== "/api/auth/callback") {
     const url = req.nextUrl.clone();
     url.pathname = "/api/auth/callback";
     return NextResponse.redirect(url);
