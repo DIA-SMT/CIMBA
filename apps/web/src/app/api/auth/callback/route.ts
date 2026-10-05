@@ -21,10 +21,28 @@ export async function GET(req: NextRequest) {
 
   if (!token) return NextResponse.redirect(new URL("/acceso", req.nextUrl.origin));
 
-  const usuario = await validarTokenMunicipal(token);
+  /**
+   * Si el SSO no está configurado, esto tiene que terminar en la pantalla de
+   * acceso, no en un 500.
+   *
+   * CIMBA entra por su propia puerta —usuario y clave— y el SSO es un camino
+   * adicional. Pero el middleware manda al callback cualquier URL que traiga
+   * ?auth=, así que sin CIMBA_API_CIUDAD_DIGITAL cargada
+   * validarTokenMunicipal tira, y alguien que llegue con un token viejo o un
+   * link guardado se come una pantalla de error del framework en vez del
+   * formulario de siempre. Se distingue del token inválido para no mandar a
+   * nadie a buscar un problema donde no está.
+   */
+  let usuario: Awaited<ReturnType<typeof validarTokenMunicipal>> = null;
+  let sinConfigurar = false;
+  try {
+    usuario = await validarTokenMunicipal(token);
+  } catch {
+    sinConfigurar = true;
+  }
   if (!usuario) {
     const acceso = new URL("/acceso", req.nextUrl.origin);
-    acceso.searchParams.set("error", "token_invalido");
+    acceso.searchParams.set("error", sinConfigurar ? "sso_no_configurado" : "token_invalido");
     return NextResponse.redirect(acceso);
   }
 
