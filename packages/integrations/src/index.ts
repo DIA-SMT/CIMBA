@@ -13,8 +13,12 @@ export { crearGeocoderNominatim } from "./geocoder/nominatim";
    después OSM. Ver geocoder/callejero.ts. */
 export { crearGeocoder } from "./geocoder/callejero";
 export {
+  DESENLACES,
   ESTADO_AC,
+  ESTADO_POR_DESENLACE,
   MOTIVO_AC,
+  OFICINA_OBRAS_VIALES,
+  REPARTICION_OBRAS_VIALES,
   cerrarReclamoAc,
   conexionAcDesdeEntorno,
   modoCierreAc,
@@ -22,6 +26,7 @@ export {
 } from "./fuentes/cierre-ac";
 export type {
   ConexionAc,
+  Desenlace,
   MovimientoAc,
   PedidoCierreAc,
   PlanCierreAc,

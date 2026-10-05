@@ -1,39 +1,51 @@
 /**
  * CIERRE DE UN RECLAMO EN ATENCIÓN CIUDADANA.
  *
- * ── Cómo se cierra un trámite en AC, según la Dirección ─────────────────────
+ * ── Cómo se cierra un trámite en AC ─────────────────────────────────────────
  *
  * El reclamo tiene una cabecera (`reclamo`) y una cadena de movimientos
- * (`mov_reclamo`). Al ingresar un reclamo se inserta solo el primer movimiento:
- * una derivación automática, según la categoría y el tipo, hacia el área que
- * corresponde. Ese movimiento queda ABIERTO — sin fecha de ingreso ni de
- * egreso, sin usuario que ingresa ni que egresa— hasta que alguien lo toma.
+ * (`mov_reclamo`). Al ingresarlo se inserta solo el primero: una derivación
+ * automática, según la categoría y el tipo, hacia el área que corresponde. Ese
+ * movimiento queda ABIERTO —sin fechas ni usuarios— hasta que alguien lo toma.
  *
  * Cerrar NO es insertar un registro. Son dos cosas, en este orden:
  *
  *   1. CERRAR el último movimiento: completarle la fecha de ingreso si está
- *      vacía, ponerle fecha de egreso, y dejar asentado quién lo tomó y quién
- *      lo cerró. "Nosotros ponemos quién empezó el trámite y quién lo cerró."
- *   2. INSERTAR el movimiento de cierre, con el estado finalizado y el texto
- *      que va a leer el ciudadano.
+ *      vacía, ponerle la de egreso, y dejar asentado quién lo tomó y quién lo
+ *      cerró. "Nosotros ponemos quién empezó el trámite y quién lo cerró."
+ *   2. INSERTAR el movimiento de cierre, con su estado y el texto que va a
+ *      leer el ciudadano.
  *
  * "Puede haber un reclamo que tenga cinco movimientos y vos siempre vas a
  * tener que ver el último: el que tiene el autoincremental más alto."
  *
- * ── Por qué esto todavía no escribe ─────────────────────────────────────────
+ * ── Por qué el cierre NO hereda la derivación del movimiento anterior ───────
  *
- * El usuario con el que CIMBA llega a ese MySQL tiene `GRANT SELECT ON *.*` y
- * nada más; el rol `desaia` que también tiene, lo mismo. Verificado el 02/10.
- * Así que este módulo nace en modo SIMULADO: arma las dos sentencias exactas,
- * con los parámetros reales leídos de la base, y las devuelve sin ejecutarlas.
+ * Era lo que hacía la primera versión de este módulo, y está mal. Lo corrigió
+ * Atención Ciudadana (02/10):
  *
- * No es un placeholder. Es lo que permite mostrarle a DITEC la operación
- * completa —sobre reclamos reales— antes de que nadie otorgue un permiso de
- * escritura sobre la base de otro sistema. Cuando esté el acceso, se cambia
- * CIMBA_AC_CIERRE a "real" y el mismo plan se ejecuta.
+ *   "Se supone que para que INTERVENGA el de Bacheo, se lo pasaron al reclamo.
+ *    Ustedes, al hacerlo por fuera del sistema porque hacen la identificación
+ *    automática, no es siempre el movimiento anterior desde Bacheo. El
+ *    movimiento que insertan debe contener la derivación a OBRAS VIALES, y el
+ *    usuario que lo ingresa para poder finalizarlo es de Obras Viales."
+ *
+ * Ahí está la diferencia de fondo entre los dos sistemas: en AC un reclamo
+ * llega a Bacheo porque alguien se lo derivó; en CIMBA, porque el sistema lo
+ * identificó solo. Heredar la derivación del anterior haría que el cierre
+ * dijera que lo resolvió el área que lo tenía antes — que puede ser cualquiera.
+ *
+ * La derivación correcta sale de `derivacion_reclamo`, que mapea
+ * (tipo de reclamo → oficina destino). `primera = 1` es la derivación
+ * automática del alta; las posteriores, las que hace una persona durante el
+ * trámite, son `primera = 0`. Un cierre nuestro es de las segundas.
  */
 
-/** Estados de `estado_reclamo`. Los tres de finalización cierran el trámite. */
+/** Dirección de Obras Viales en AC: es la que "ve Bacheo". */
+export const OFICINA_OBRAS_VIALES = 21;
+export const REPARTICION_OBRAS_VIALES = 511;
+
+/** Estados de `estado_reclamo`. */
 export const ESTADO_AC = {
   iniciado: 1,
   derivado: 2,
@@ -44,7 +56,7 @@ export const ESTADO_AC = {
   finalizadoConDerivacion: 7,
 } as const;
 
-/** `motivo`. El 6 es el que corresponde cuando el texto lo lee el vecino. */
+/** `motivo`. El 4 es el que indicó AC para un cierre. */
 export const MOTIVO_AC = {
   inicioTramite: 1,
   incorporacionDocumentacion: 2,
@@ -56,6 +68,29 @@ export const MOTIVO_AC = {
   intervencion: 8,
 } as const;
 
+/**
+ * CÓMO TERMINÓ EL RECLAMO PARA NOSOTROS, Y QUÉ ESTADO LE CORRESPONDE EN AC.
+ *
+ * El mapeo lo dictó Atención Ciudadana y no es el que uno supondría leyendo la
+ * tabla de estados: derivar a otra área del municipio NO finaliza el trámite
+ * —lo deja en proceso—, y el 6 está reservado para lo que no es competencia
+ * del municipio. El 7 ("finalizado con derivación") no se usa.
+ *
+ *   reparado         el bache se hizo                              → 4
+ *   derivado_interno pasa a otra área del municipio, sigue abierto → 3
+ *   sin_resolver     se cierra pero el problema no se resolvió     → 5
+ *   no_compete       es de la SAT, EDET, Gasnor…                   → 6
+ */
+export const DESENLACES = ["reparado", "derivado_interno", "sin_resolver", "no_compete"] as const;
+export type Desenlace = (typeof DESENLACES)[number];
+
+export const ESTADO_POR_DESENLACE: Record<Desenlace, number> = {
+  reparado: ESTADO_AC.finalizado,
+  derivado_interno: ESTADO_AC.enProceso,
+  sin_resolver: ESTADO_AC.finalizadoSinSolucion,
+  no_compete: ESTADO_AC.finalizadoConDerivacionExt,
+};
+
 const ESTADOS_YA_CERRADO: number[] = [
   ESTADO_AC.finalizado,
   ESTADO_AC.finalizadoSinSolucion,
@@ -66,14 +101,14 @@ export interface PedidoCierreAc {
   /** `reclamo.id_reclamo` en Atención Ciudadana. */
   idReclamo: number;
   /**
-   * `usuario.id_usuario` de Atención Ciudadana — NO el id_persona de CIDITUC.
-   * Quien cierra tiene que estar dado de alta en esa tabla con su repartición
-   * y oficina; si no, el movimiento no tiene a quién atribuirse.
+   * `usuario.id_usuario` de Atención Ciudadana — NO el id_persona de CIDITUC
+   * ni el usuario de MySQL. Tiene que pertenecer a Obras Viales (repartición
+   * 511): es la condición que puso AC para que el cierre sea válido.
    */
   idUsuarioAc: number;
   /** Lo que va a leer el ciudadano. */
   detalle: string;
-  idEstado?: number;
+  desenlace?: Desenlace;
   idMotivo?: number;
 }
 
@@ -101,6 +136,10 @@ export interface SentenciaPlan {
 export interface PlanCierreAc {
   idReclamo: number;
   ultimoMovimiento: MovimientoAc | null;
+  /** La derivación a Obras Viales que corresponde al tipo de este reclamo. */
+  idDerivacion: number | null;
+  desenlace: Desenlace;
+  idEstado: number;
   sentencias: SentenciaPlan[];
   /** Motivos por los que NO habría que ejecutar esto. Vacío = se puede. */
   impedimentos: string[];
@@ -150,93 +189,155 @@ export function modoCierreAc(): "simulado" | "real" {
 }
 
 /**
- * Arma el plan de cierre leyendo el último movimiento del reclamo. Solo SELECT:
- * se puede llamar siempre, incluso sin permisos de escritura, y es lo que hace
- * que el modo simulado muestre números reales y no inventados.
+ * Arma el plan de cierre. Solo SELECT: se puede llamar siempre, incluso sin
+ * permisos de escritura, y es lo que hace que el modo simulado muestre números
+ * reales y no inventados.
  */
 export async function planificarCierreAc(
   pedido: PedidoCierreAc,
   conf: ConexionAc = conexionAcDesdeEntorno(),
 ): Promise<PlanCierreAc> {
+  const desenlace = pedido.desenlace ?? "reparado";
+  const idEstado = ESTADO_POR_DESENLACE[desenlace];
+  const idMotivo = pedido.idMotivo ?? MOTIVO_AC.finalizacionTramite;
+  const impedimentos: string[] = [];
+
   const { default: mysql } = await import("mysql2/promise");
   const cx = await mysql.createConnection({ ...conf, connectTimeout: 20_000 });
   try {
-    const [filas] = await cx.query(
+    const [movs] = await cx.query(
       `select id_movi, id_reclamo, id_derivacion, id_oficina, fecha_ingreso, fecha_egreso,
               id_estado, id_motivo, reparti_graba, usuario_ingreso, usuario_egreso
          from mov_reclamo where id_reclamo = ? order by id_movi desc limit 1`,
       [pedido.idReclamo],
     );
-    const ultimo = (filas as unknown as MovimientoAc[])[0] ?? null;
-    const impedimentos: string[] = [];
+    const ultimo = (movs as unknown as MovimientoAc[])[0] ?? null;
 
     if (!ultimo) {
       impedimentos.push(
         `El reclamo ${pedido.idReclamo} no tiene movimientos: o no existe o no llegó a derivarse.`,
       );
-      return { idReclamo: pedido.idReclamo, ultimoMovimiento: null, sentencias: [], impedimentos };
+      return {
+        idReclamo: pedido.idReclamo,
+        ultimoMovimiento: null,
+        idDerivacion: null,
+        desenlace,
+        idEstado,
+        sentencias: [],
+        impedimentos,
+      };
     }
     if (ultimo.id_estado != null && ESTADOS_YA_CERRADO.includes(ultimo.id_estado)) {
       impedimentos.push(
         `El último movimiento (${ultimo.id_movi}) ya está en estado ${ultimo.id_estado}: el trámite está cerrado.`,
       );
     }
-    if (!Number.isInteger(pedido.idUsuarioAc) || pedido.idUsuarioAc <= 0) {
-      impedimentos.push("Falta el id_usuario de Atención Ciudadana de quien cierra.");
+
+    /**
+     * Quien cierra tiene que ser de Obras Viales. Sin esto, un id de usuario
+     * mal configurado produciría cierres a nombre de otra repartición, que es
+     * exactamente lo que AC pidió que no pase.
+     */
+    const [usuarios] = await cx.query(
+      `select id_usuario, nombre_usuario, id_reparticion, habilita from usuario where id_usuario = ?`,
+      [pedido.idUsuarioAc],
+    );
+    const usuario = (
+      usuarios as unknown as Array<{ id_reparticion: number; habilita: number; nombre_usuario: string }>
+    )[0];
+    if (!usuario) {
+      impedimentos.push(
+        `El usuario ${pedido.idUsuarioAc} no existe en Atención Ciudadana. Hay que darlo de alta en Obras Viales.`,
+      );
+    } else if (usuario.id_reparticion !== REPARTICION_OBRAS_VIALES) {
+      impedimentos.push(
+        `El usuario ${pedido.idUsuarioAc} (${usuario.nombre_usuario}) es de la repartición ${usuario.id_reparticion}, no de Obras Viales (${REPARTICION_OBRAS_VIALES}).`,
+      );
+    } else if (!usuario.habilita) {
+      impedimentos.push(`El usuario ${pedido.idUsuarioAc} está deshabilitado en Atención Ciudadana.`);
     }
+
+    /**
+     * La derivación a Obras Viales del tipo de ESTE reclamo. Se prefiere la de
+     * `primera = 0`: la de `primera = 1` es la del alta automática, y un cierre
+     * nuestro es una derivación posterior hecha durante el trámite.
+     */
+    const [derivs] = await cx.query(
+      `select d.id_derivacion, d.primera
+         from reclamo r
+         join derivacion_reclamo d on d.id_treclamo = r.id_treclamo
+        where r.id_reclamo = ? and d.id_oficina_deriva = ? and d.habilita = 1
+        order by d.primera asc, d.id_derivacion desc`,
+      [pedido.idReclamo, OFICINA_OBRAS_VIALES],
+    );
+    const idDerivacion =
+      (derivs as unknown as Array<{ id_derivacion: number }>)[0]?.id_derivacion ?? null;
+    if (idDerivacion == null) {
+      impedimentos.push(
+        `No hay derivación habilitada a Obras Viales para el tipo de este reclamo: no es un reclamo que le competa a Bacheo.`,
+      );
+    }
+
     if (!pedido.detalle.trim()) {
       impedimentos.push("El detalle no puede ir vacío: es el texto que lee el ciudadano.");
     }
 
-    const idEstado = pedido.idEstado ?? ESTADO_AC.finalizado;
-    const idMotivo = pedido.idMotivo ?? MOTIVO_AC.comunicacionAlCiudadano;
+    const sentencias: SentenciaPlan[] =
+      idDerivacion == null
+        ? []
+        : [
+            {
+              /**
+               * El `coalesce` de la fecha de ingreso traduce el caso que
+               * describió AC: el movimiento de la derivación automática nunca
+               * fue tomado por nadie y llega con las dos fechas y los dos
+               * usuarios en null. Cerrarlo dejando el ingreso vacío haría que
+               * la historia dijera que el trámite se egresó sin haber entrado.
+               */
+              descripcion: `Cerrar el movimiento ${ultimo.id_movi}, que está abierto`,
+              sql: `update mov_reclamo
+                       set fecha_ingreso   = coalesce(fecha_ingreso, now()),
+                           fecha_egreso    = now(),
+                           usuario_ingreso = coalesce(usuario_ingreso, ?),
+                           usuario_egreso  = ?
+                     where id_movi = ? and id_reclamo = ?`,
+              parametros: [pedido.idUsuarioAc, pedido.idUsuarioAc, ultimo.id_movi, pedido.idReclamo],
+            },
+            {
+              /**
+               * Derivación, oficina y repartición son las de OBRAS VIALES, no
+               * las heredadas del movimiento anterior. `foto` va en 0: las
+               * fotos del trabajo viven en CIMBA y se referencian en el texto.
+               */
+              descripcion: "Insertar el movimiento de cierre, derivado a Obras Viales",
+              sql: `insert into mov_reclamo
+                      (id_reclamo, id_derivacion, id_oficina, fecha_ingreso, fecha_egreso,
+                       detalle_movi, id_estado, id_motivo, reparti_graba, foto,
+                       usuario_ingreso, usuario_egreso)
+                    values (?, ?, ?, now(), now(), ?, ?, ?, ?, 0, ?, ?)`,
+              parametros: [
+                pedido.idReclamo,
+                idDerivacion,
+                OFICINA_OBRAS_VIALES,
+                pedido.detalle.trim(),
+                idEstado,
+                idMotivo,
+                REPARTICION_OBRAS_VIALES,
+                pedido.idUsuarioAc,
+                pedido.idUsuarioAc,
+              ],
+            },
+          ];
 
-    const sentencias: SentenciaPlan[] = [
-      {
-        /**
-         * El `coalesce` de la fecha de ingreso es la traducción literal del
-         * caso que describió la Dirección: el movimiento de la derivación
-         * automática nunca fue tomado por nadie y llega acá con las dos fechas
-         * y los dos usuarios en null. Si lo cerráramos dejando el ingreso
-         * vacío, la historia diría que el trámite se egresó sin haber entrado.
-         */
-        descripcion: `Cerrar el movimiento ${ultimo.id_movi}, que está abierto`,
-        sql: `update mov_reclamo
-                 set fecha_ingreso   = coalesce(fecha_ingreso, now()),
-                     fecha_egreso    = now(),
-                     usuario_ingreso = coalesce(usuario_ingreso, ?),
-                     usuario_egreso  = ?
-               where id_movi = ? and id_reclamo = ?`,
-        parametros: [pedido.idUsuarioAc, pedido.idUsuarioAc, ultimo.id_movi, pedido.idReclamo],
-      },
-      {
-        /**
-         * La derivación, la oficina y la repartición se heredan del movimiento
-         * que se cierra: el cierre pertenece al mismo tramo del trámite, no
-         * abre uno nuevo. `foto` va en 0 — las fotos del trabajo viven en
-         * CIMBA y se referencian desde el detalle.
-         */
-        descripcion: "Insertar el movimiento de cierre",
-        sql: `insert into mov_reclamo
-                (id_reclamo, id_derivacion, id_oficina, fecha_ingreso, fecha_egreso,
-                 detalle_movi, id_estado, id_motivo, reparti_graba, foto,
-                 usuario_ingreso, usuario_egreso)
-              values (?, ?, ?, now(), now(), ?, ?, ?, ?, 0, ?, ?)`,
-        parametros: [
-          pedido.idReclamo,
-          ultimo.id_derivacion,
-          ultimo.id_oficina,
-          pedido.detalle.trim(),
-          idEstado,
-          idMotivo,
-          ultimo.reparti_graba,
-          pedido.idUsuarioAc,
-          pedido.idUsuarioAc,
-        ],
-      },
-    ];
-
-    return { idReclamo: pedido.idReclamo, ultimoMovimiento: ultimo, sentencias, impedimentos };
+    return {
+      idReclamo: pedido.idReclamo,
+      ultimoMovimiento: ultimo,
+      idDerivacion,
+      desenlace,
+      idEstado,
+      sentencias,
+      impedimentos,
+    };
   } finally {
     await cx.end();
   }
@@ -255,7 +356,8 @@ export interface ResultadoCierreAc {
  * Ejecuta el cierre si el modo es "real" y no hay impedimentos. Las dos
  * sentencias van en UNA transacción: dejar el movimiento anterior cerrado sin
  * el de cierre insertado sería peor que no haber hecho nada — el trámite
- * quedaría sin responsable y sin estado.
+ * quedaría sin responsable y sin estado. Las tres tablas son InnoDB, así que
+ * el rollback es real.
  */
 export async function cerrarReclamoAc(
   pedido: PedidoCierreAc,
@@ -264,7 +366,7 @@ export async function cerrarReclamoAc(
   const plan = await planificarCierreAc(pedido, conf);
   const modo = modoCierreAc();
 
-  if (modo === "simulado" || plan.impedimentos.length > 0) {
+  if (modo === "simulado" || plan.impedimentos.length > 0 || plan.sentencias.length === 0) {
     return { modo, plan, idMovimientoCierre: null, aplicado: false, error: null };
   }
 
@@ -272,7 +374,8 @@ export async function cerrarReclamoAc(
   const cx = await mysql.createConnection({ ...conf, connectTimeout: 20_000 });
   try {
     await cx.beginTransaction();
-    for (const s of plan.sentencias.slice(0, 1)) await cx.execute(s.sql, s.parametros);
+    const cierre = plan.sentencias[0]!;
+    await cx.execute(cierre.sql, cierre.parametros);
     const alta = plan.sentencias[1]!;
     const [res] = await cx.execute(alta.sql, alta.parametros);
     await cx.commit();
