@@ -1,7 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { escribirCookieSesion, firmarSesion } from "@/lib/auth";
 import { upsertPerfil } from "@/lib/perfiles";
-import { derivarRolInicial, nombreCompleto, validarTokenMunicipal } from "@/lib/sso";
+import {
+  derivarRolInicial,
+  documentoDe,
+  emailDe,
+  nombreCompleto,
+  validarTokenMunicipal,
+} from "@/lib/sso";
 
 /**
  * Recibe ?auth=<token municipal>, lo valida server-side contra
@@ -26,8 +32,8 @@ export async function GET(req: NextRequest) {
     idPersona: usuario.id_persona,
     idTusuario: usuario.id_tusuario ?? null,
     nombre: nombreCompleto(usuario),
-    documento: usuario.documento != null ? String(usuario.documento) : null,
-    email: usuario.email ?? null,
+    documento: documentoDe(usuario),
+    email: emailDe(usuario),
     rolInicial: derivarRolInicial(usuario),
   });
 
