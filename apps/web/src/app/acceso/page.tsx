@@ -36,6 +36,8 @@ export default async function Acceso({
           <div className="mb-4 rounded-lg border border-peligro/40 bg-peligro/10 px-4 py-3 text-sm text-peligro">
             {error === "token_invalido" && "El token de Ciudad Digital no es válido o expiró."}
             {error === "perfil_inactivo" && "Tu perfil está inactivo. Contactá al administrador de CIMBA."}
+            {error === "sso_no_configurado" &&
+              "La entrada desde Ciudad Digital no está habilitada. Entrá con tu usuario y clave."}
           </div>
         )}
 

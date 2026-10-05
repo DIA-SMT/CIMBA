@@ -35,8 +35,21 @@ export async function POST(req: NextRequest) {
   }
 
   const rol = cuerpo.data.rol;
-  // id_persona ficticio estable por rol (90000 + índice)
-  const idPersona = 90000 + rolUsuarioSchema.options.indexOf(rol);
+  /**
+   * id_persona ficticio estable por rol, EN UNA BANDA QUE NO EXISTE EN CIDITUC.
+   *
+   * Era `90000 + índice`, y eso pisaba gente real: los id_persona del padrón
+   * municipal van de 1 a 177.193, y en 90000..90009 hay DIEZ personas de carne
+   * y hueso. upsertPerfil busca por id_persona, así que el día que se encienda
+   * el SSO, si alguna de esas diez entra por Ciudad Digital cae sobre el perfil
+   * ficticio que ya existe y hereda su rol — incluido el 90000, que es
+   * "Dev admin". Un empleado cualquiera entrando como administrador de CIMBA.
+   *
+   * 990000+ está fuera del padrón (verificado contra ciudadano_digital.persona)
+   * y lejos de las otras bandas inventadas: 900000/910000 admin y bacheo,
+   * 920000 usuarios locales, 930000 empresas.
+   */
+  const idPersona = 990000 + rolUsuarioSchema.options.indexOf(rol);
 
   const perfil = await upsertPerfil({
     idPersona,

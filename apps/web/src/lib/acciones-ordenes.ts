@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { conRls, sql } from "@cimba/db";
+import { conRls, getDb, sql } from "@cimba/db";
 import { EMPRESAS_HABILITADAS_AGUA, prioridadVialSchema, tipoIntervencionSchema } from "@cimba/domain";
 import { requerirRol, requerirSesion, type Sesion } from "./auth";
 import { empresaDelEjecutor, poligonoSql } from "./ordenes";
@@ -1172,6 +1172,68 @@ export async function cerrarDemandaAtencion(entrada: { demandaId: number; respue
       throw new ErrorVisible("Solo se puede cerrar un reclamo cuyo problema ya esté reparado");
     }
   });
+
+  /**
+   * DEVOLVERLE EL CIERRE A ATENCIÓN CIUDADANA.
+   *
+   * Hasta acá el reclamo quedó cerrado en CIMBA y en ningún lado más: el vecino
+   * que preguntara por el 147 seguía viendo su pedido en proceso. Esto propaga
+   * el cierre a la cadena de movimientos de AC — cerrar el último movimiento e
+   * insertar el de finalización, que es como se cierra un trámite allá.
+   *
+   * Va DESPUÉS del commit y nunca tumba el cierre local. Son dos sistemas
+   * distintos y uno es de otra dirección: si AC no responde, el trabajo de
+   * quien cerró no se puede perder. Lo que pasó queda anotado en la demanda
+   * para poder reintentar después y para saber cuáles quedaron a medias.
+   *
+   * Hoy el modo por defecto es SIMULADO —no tenemos permiso de escritura sobre
+   * smt_atencion_ciudadana, solo SELECT— así que esto registra el plan exacto
+   * sin ejecutarlo. Con CIMBA_AC_CIERRE=real pasa a escribir de verdad.
+   */
+  try {
+    const { cerrarReclamoAc } = await import("@cimba/integrations");
+    const idUsuarioAc = Number(process.env.CIMBA_AC_USUARIO ?? 0);
+    const ref = (await getDb().execute(sql`
+      select er.id_remoto from external_ref er
+      where er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+        and er.id_local = ${datos.demandaId}
+    `)) as unknown as Array<{ id_remoto: string }>;
+    const idReclamo = Number(ref[0]?.id_remoto);
+
+    if (Number.isInteger(idReclamo) && idReclamo > 0) {
+      const res = await cerrarReclamoAc({
+        idReclamo,
+        idUsuarioAc,
+        detalle:
+          datos.respuesta?.trim() ||
+          "Se verificó el lugar y se realizó la reparación. Dirección de Bacheo.",
+      });
+      await getDb().execute(sql`
+        update demandas set metadata = metadata || jsonb_build_object(
+          'cierre_ac', ${JSON.stringify({
+            id_reclamo: idReclamo,
+            modo: res.modo,
+            aplicado: res.aplicado,
+            id_movimiento: res.idMovimientoCierre,
+            impedimentos: res.plan.impedimentos,
+            error: res.error,
+            en: new Date().toISOString(),
+          })}::jsonb
+        ) where id = ${datos.demandaId}
+      `);
+    }
+  } catch (e) {
+    // El cierre local ya está hecho: esto se anota y se reintenta, no se grita.
+    await getDb()
+      .execute(sql`
+        update demandas set metadata = metadata || jsonb_build_object(
+          'cierre_ac', jsonb_build_object('error', ${e instanceof Error ? e.message : String(e)}::text,
+                                          'en', now()::text)
+        ) where id = ${datos.demandaId}
+      `)
+      .catch(() => undefined);
+  }
+
   revalidatePath("/cierres");
   revalidatePath("/demandas");
   return { ok: true };

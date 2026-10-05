@@ -14,9 +14,21 @@ import type { RolUsuario } from "@cimba/domain";
  * afirma el backend municipal, no una verificación local de firma.
  */
 
+/**
+ * Los nombres de campo son los de la tabla `persona` de CIDITUC: vienen con el
+ * sufijo _persona. La primera versión de este archivo esperaba `nombre`,
+ * `apellido`, `documento` y `email` a secas, así que el esquema parseaba
+ * igual —son todos nullish— y el perfil quedaba creado como "Persona 47936",
+ * sin documento y sin mail. Se dejan los nombres cortos como alternativa por
+ * si otro endpoint municipal los devuelve así.
+ */
 const usuarioMunicipalSchema = z.object({
   id_persona: z.number(),
   id_tusuario: z.number().nullish(),
+  nombre_persona: z.string().nullish(),
+  apellido_persona: z.string().nullish(),
+  documento_persona: z.union([z.string(), z.number()]).nullish(),
+  email_persona: z.string().nullish(),
   nombre: z.string().nullish(),
   apellido: z.string().nullish(),
   apellido_nombre: z.string().nullish(),
@@ -42,8 +54,25 @@ export async function validarTokenMunicipal(token: string): Promise<UsuarioMunic
     cache: "no-store",
   });
   if (!res.ok) return null;
-  const cuerpo = (await res.json()) as { data?: { usuarioSinContraseña?: unknown; usuarioSinContrasena?: unknown } };
-  const crudo = cuerpo.data?.["usuarioSinContraseña"] ?? cuerpo.data?.usuarioSinContrasena;
+  /**
+   * El usuario viene en la RAÍZ del cuerpo, no adentro de un `data`. Acá
+   * estaba el bug que hacía que un token perfectamente válido terminara en
+   * "token_invalido": el esquema nunca recibía nada que parsear y
+   * validarTokenMunicipal devolvía null.
+   *
+   * Se contempla igual la variante anidada —hay endpoints municipales que sí
+   * envuelven en `data`— y la grafía sin eñe, que es la clase de detalle que
+   * cambia sin aviso. El derivador lee `data.usuarioSinContraseña` sobre la
+   * respuesta de axios, o sea la raíz del JSON: esa es la forma buena.
+   */
+  const cuerpo = (await res.json()) as Record<string, unknown> & {
+    data?: Record<string, unknown>;
+  };
+  const crudo =
+    cuerpo["usuarioSinContraseña"] ??
+    cuerpo.usuarioSinContrasena ??
+    cuerpo.data?.["usuarioSinContraseña"] ??
+    cuerpo.data?.usuarioSinContrasena;
   const parseado = usuarioMunicipalSchema.safeParse(crudo);
   if (!parseado.success) return null;
 
@@ -62,8 +91,21 @@ export function derivarRolInicial(usuario: UsuarioMunicipal): RolUsuario {
 }
 
 export function nombreCompleto(u: UsuarioMunicipal): string {
+  const apellido = u.apellido_persona ?? u.apellido;
+  const nombre = u.nombre_persona ?? u.nombre;
   return (
     u.apellido_nombre ??
-    ([u.apellido, u.nombre].filter(Boolean).join(", ") || `Persona ${u.id_persona}`)
+    ([apellido, nombre].filter(Boolean).join(", ") || `Persona ${u.id_persona}`)
   );
+}
+
+/** Documento y mail, con los dos juegos de nombres posibles. */
+export function documentoDe(u: UsuarioMunicipal): string | null {
+  const d = u.documento_persona ?? u.documento;
+  return d != null && String(d).trim() !== "" ? String(d) : null;
+}
+
+export function emailDe(u: UsuarioMunicipal): string | null {
+  const e = u.email_persona ?? u.email;
+  return e != null && e.trim() !== "" ? e.trim() : null;
 }

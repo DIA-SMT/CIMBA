@@ -12,6 +12,29 @@ export { crearGeocoderNominatim } from "./geocoder/nominatim";
 /* El que hay que usar: consulta primero el callejero municipal y recién
    después OSM. Ver geocoder/callejero.ts. */
 export { crearGeocoder } from "./geocoder/callejero";
+export {
+  DESENLACES,
+  ESTADO_AC,
+  ESTADO_POR_DESENLACE,
+  MOTIVO_AC,
+  OFICINA_OBRAS_VIALES,
+  REPARTICION_OBRAS_PUBLICAS,
+  REPARTICION_OBRAS_VIALES,
+  REPARTICIONES_QUE_CIERRAN,
+  cerrarReclamoAc,
+  conexionAcDesdeEntorno,
+  modoCierreAc,
+  planificarCierreAc,
+} from "./fuentes/cierre-ac";
+export type {
+  ConexionAc,
+  Desenlace,
+  MovimientoAc,
+  PedidoCierreAc,
+  PlanCierreAc,
+  ResultadoCierreAc,
+  SentenciaPlan,
+} from "./fuentes/cierre-ac";
 export { mapearTipo } from "./archivos/util";
 export { detectarYParsear } from "./archivos/importar";
 export type { ResultadoDeteccion } from "./archivos/importar";
