@@ -45,6 +45,30 @@
 export const OFICINA_OBRAS_VIALES = 21;
 export const REPARTICION_OBRAS_VIALES = 511;
 
+/** Secretaría de Obras Públicas: la que está por encima de Obras Viales. */
+export const REPARTICION_OBRAS_PUBLICAS = 510;
+
+/**
+ * QUIÉNES PUEDEN FIRMAR UN CIERRE.
+ *
+ * Atención Ciudadana pidió que el usuario que finaliza sea "de Obras Viales
+ * (que ve Bacheo)", y por eso la primera versión exigía la repartición 511 a
+ * secas. Con eso, el Secretario de Obras Públicas no podía cerrar: Leonardo
+ * Míguez tiene usuario en AC —el 207— pero está en la 510, que es la
+ * Secretaría de la que depende Obras Viales, no la Dirección.
+ *
+ * Se habilitan las dos. Dejar afuera a quien está por encima del área sería
+ * una regla que la realidad desmiente el primer día.
+ *
+ * El movimiento que se inserta sigue llevando repartición 511 y oficina 21:
+ * eso describe A QUÉ ÁREA corresponde el trabajo, y no cambia porque lo firme
+ * el Secretario. Quién lo firmó va en usuario_ingreso y usuario_egreso.
+ */
+export const REPARTICIONES_QUE_CIERRAN: number[] = [
+  REPARTICION_OBRAS_VIALES,
+  REPARTICION_OBRAS_PUBLICAS,
+];
+
 /** Estados de `estado_reclamo`. */
 export const ESTADO_AC = {
   iniciado: 1,
@@ -249,9 +273,9 @@ export async function planificarCierreAc(
       impedimentos.push(
         `El usuario ${pedido.idUsuarioAc} no existe en Atención Ciudadana. Hay que darlo de alta en Obras Viales.`,
       );
-    } else if (usuario.id_reparticion !== REPARTICION_OBRAS_VIALES) {
+    } else if (!REPARTICIONES_QUE_CIERRAN.includes(usuario.id_reparticion)) {
       impedimentos.push(
-        `El usuario ${pedido.idUsuarioAc} (${usuario.nombre_usuario}) es de la repartición ${usuario.id_reparticion}, no de Obras Viales (${REPARTICION_OBRAS_VIALES}).`,
+        `El usuario ${pedido.idUsuarioAc} (${usuario.nombre_usuario}) es de la repartición ${usuario.id_reparticion}; cerrar solo pueden las ${REPARTICIONES_QUE_CIERRAN.join(" y ")} (Obras Viales y su Secretaría).`,
       );
     } else if (!usuario.habilita) {
       impedimentos.push(`El usuario ${pedido.idUsuarioAc} está deshabilitado en Atención Ciudadana.`);
