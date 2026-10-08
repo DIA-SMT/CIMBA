@@ -67,6 +67,10 @@ export interface ResumenSincroEstados {
   cerrados: number;
   sinRespuesta: number;
   errores: Array<{ idReclamo: number; error: string }>;
+  /** Los que efectivamente se preguntaron, para que el llamador los marque. */
+  consultadosIds: number[];
+  /** Quedó gente sin preguntar: se acabó el presupuesto de tiempo. */
+  truncado: boolean;
 }
 
 /**
@@ -82,22 +86,38 @@ export interface ResumenSincroEstados {
 export async function sincronizarEstadosAc(
   idsReclamo: number[],
   alCerrar: (estado: EstadoAc) => Promise<void>,
-  opciones: { pausaMs?: number; limite?: number } = {},
+  opciones: { pausaMs?: number; limite?: number; limiteMs?: number } = {},
 ): Promise<ResumenSincroEstados> {
   const pausa = opciones.pausaMs ?? 120;
   const ids = opciones.limite ? idsReclamo.slice(0, opciones.limite) : idsReclamo;
+  /**
+   * Presupuesto de tiempo, para poder correr adentro de una función de Vercel.
+   * Son ~840 consultas de ida y vuelta contra el servidor municipal: no entran
+   * en los 60 segundos que dura una invocación. En vez de fijar un tamaño de
+   * tanda a ojo —que envejece mal: si la red se pone lenta, el corte queda
+   * corto; si mejora, se desperdicia— se corta por reloj. El llamador marca
+   * los que alcanzó a preguntar y la próxima corrida sigue por los más viejos.
+   */
+  const vence = opciones.limiteMs ? Date.now() + opciones.limiteMs : Infinity;
   const r: ResumenSincroEstados = {
     consultados: 0,
     cerradosEnAc: 0,
     cerrados: 0,
     sinRespuesta: 0,
     errores: [],
+    consultadosIds: [],
+    truncado: false,
   };
 
   for (const id of ids) {
+    if (Date.now() >= vence) {
+      r.truncado = true;
+      break;
+    }
     try {
       const estado = await estadoActualAc(id);
       r.consultados++;
+      r.consultadosIds.push(id);
       if (!estado) {
         r.sinRespuesta++;
       } else if (estado.cerrado) {
