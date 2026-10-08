@@ -367,59 +367,104 @@ export async function planificarCierreAc(
   }
 }
 
+/**
+ * ── DE ACÁ EN ADELANTE, EL CIERRE VA POR HTTP ───────────────────────────────
+ *
+ * Lo de arriba lee el MySQL de Atención Ciudadana y arma el plan. Sirve para
+ * diagnosticar y para probar desde adentro de la red municipal, pero NO puede
+ * ser el camino de producción: ese MySQL vive en 172.16.8.214, una dirección
+ * privada, y CIMBA corre en Vercel. Desde ahí no hay forma de llegar, con
+ * permisos o sin ellos.
+ *
+ * La salida fue que el cierre viva del lado de ellos: Sistemas montó
+ * POST /reclamos/cerrar sobre el mismo backend público que ya consumimos para
+ * leer. Hace exactamente las dos operaciones en una transacción, con las
+ * mismas validaciones, y devuelve el id_movi que creó.
+ *
+ * Probado el 08/10 contra el endpoint real: las siete guardas responden
+ * —faltan de campos, usuario inexistente, usuario de otra repartición, usuario
+ * deshabilitado, reclamo inexistente, trámite ya cerrado, estado inválido— y
+ * ninguna escribe.
+ */
+
+/** El endpoint de cierre, sobre el mismo host que ya se usa para leer. */
+function urlCierre(): URL {
+  const base = process.env.CIMBA_API_ATENCION_CIUDADANA;
+  if (!base) throw new Error("CIMBA_API_ATENCION_CIUDADANA no configurada");
+  return new URL("/reclamos/cerrar", base);
+}
+
 export interface ResultadoCierreAc {
   modo: "simulado" | "real";
-  plan: PlanCierreAc;
-  /** En "real" y sin impedimentos: el id_movi del movimiento de cierre. */
-  idMovimientoCierre: number | null;
+  idReclamo: number;
+  /** Exactamente lo que se mandó (o se habría mandado, en simulado). */
+  enviado: {
+    id_reclamo: number;
+    id_usuario: number;
+    detalle: string;
+    id_estado: number;
+  };
   aplicado: boolean;
+  /** El movimiento de cierre que creó Atención Ciudadana. */
+  idMovimientoCierre: number | null;
+  estadoHttp: number | null;
+  /** Lo que respondió la API, tal cual, para poder mostrarlo. */
+  mensaje: string | null;
+  /** Falla de red o de parseo. Un 409 NO es esto: es un desenlace. */
   error: string | null;
 }
 
 /**
- * Ejecuta el cierre si el modo es "real" y no hay impedimentos. Las dos
- * sentencias van en UNA transacción: dejar el movimiento anterior cerrado sin
- * el de cierre insertado sería peor que no haber hecho nada — el trámite
- * quedaría sin responsable y sin estado. Las tres tablas son InnoDB, así que
- * el rollback es real.
+ * Cierra el reclamo en Atención Ciudadana.
+ *
+ * En modo "simulado" devuelve el cuerpo que mandaría sin llamar a nadie — es
+ * el modo por defecto, y el que permite desplegar sin tocar el sistema de otra
+ * dirección hasta que se decida encenderlo.
+ *
+ * El 409 ("el trámite ya está cerrado") vuelve con aplicado=false y sin error:
+ * no es una falla, es que alguien lo cerró antes por el sistema de ellos, y
+ * reintentarlo no va a cambiar nada.
  */
-export async function cerrarReclamoAc(
-  pedido: PedidoCierreAc,
-  conf: ConexionAc = conexionAcDesdeEntorno(),
-): Promise<ResultadoCierreAc> {
-  const plan = await planificarCierreAc(pedido, conf);
-  const modo = modoCierreAc();
+export async function cerrarReclamoAc(pedido: PedidoCierreAc): Promise<ResultadoCierreAc> {
+  const desenlace = pedido.desenlace ?? "reparado";
+  const enviado = {
+    id_reclamo: pedido.idReclamo,
+    id_usuario: pedido.idUsuarioAc,
+    detalle: pedido.detalle.trim(),
+    id_estado: ESTADO_POR_DESENLACE[desenlace],
+  };
+  const base = {
+    idReclamo: pedido.idReclamo,
+    enviado,
+    aplicado: false,
+    idMovimientoCierre: null,
+    estadoHttp: null,
+    mensaje: null,
+    error: null,
+  };
 
-  if (modo === "simulado" || plan.impedimentos.length > 0 || plan.sentencias.length === 0) {
-    return { modo, plan, idMovimientoCierre: null, aplicado: false, error: null };
+  if (modoCierreAc() === "simulado") {
+    return { ...base, modo: "simulado" as const };
   }
 
-  const { default: mysql } = await import("mysql2/promise");
-  const cx = await mysql.createConnection({ ...conf, connectTimeout: 20_000 });
   try {
-    await cx.beginTransaction();
-    const cierre = plan.sentencias[0]!;
-    await cx.execute(cierre.sql, cierre.parametros);
-    const alta = plan.sentencias[1]!;
-    const [res] = await cx.execute(alta.sql, alta.parametros);
-    await cx.commit();
+    const { postJsonSmtDetallado } = await import("./https-smt");
+    const r = await postJsonSmtDetallado(urlCierre(), enviado);
+    const cuerpo = (r.cuerpo ?? {}) as { message?: string; id_movi?: number };
     return {
-      modo,
-      plan,
-      idMovimientoCierre: (res as unknown as { insertId: number }).insertId ?? null,
-      aplicado: true,
+      ...base,
+      modo: "real" as const,
+      aplicado: r.estado === 200,
+      idMovimientoCierre: cuerpo.id_movi ?? null,
+      estadoHttp: r.estado,
+      mensaje: cuerpo.message ?? r.texto.slice(0, 200) ?? null,
       error: null,
     };
   } catch (e) {
-    await cx.rollback().catch(() => undefined);
     return {
-      modo,
-      plan,
-      idMovimientoCierre: null,
-      aplicado: false,
+      ...base,
+      modo: "real" as const,
       error: e instanceof Error ? e.message : String(e),
     };
-  } finally {
-    await cx.end();
   }
 }

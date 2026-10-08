@@ -1215,7 +1215,8 @@ export async function cerrarDemandaAtencion(entrada: { demandaId: number; respue
             modo: res.modo,
             aplicado: res.aplicado,
             id_movimiento: res.idMovimientoCierre,
-            impedimentos: res.plan.impedimentos,
+            http: res.estadoHttp,
+            mensaje: res.mensaje,
             error: res.error,
             en: new Date().toISOString(),
           })}::jsonb

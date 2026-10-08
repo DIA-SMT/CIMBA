@@ -107,3 +107,55 @@ export function postJsonSmt<T>(url: URL, cuerpo: unknown, timeoutMs = 20_000): P
     req.end();
   });
 }
+
+/**
+ * Igual que postJsonSmt pero devuelve el estado y el cuerpo en vez de tirar.
+ *
+ * El cierre de reclamos necesita distinguir: un 409 ("ya está cerrado") no es
+ * un error que haya que reintentar ni que mostrarle a nadie como falla, un 400
+ * es un dato mal armado de nuestro lado, y un 5xx sí se reintenta. postJsonSmt
+ * los aplasta a todos en un Error con el número adentro del texto.
+ */
+export function postJsonSmtDetallado(
+  url: URL,
+  cuerpo: unknown,
+  timeoutMs = 20_000,
+): Promise<{ estado: number; cuerpo: unknown; texto: string }> {
+  const datos = JSON.stringify(cuerpo);
+  return new Promise((resolver, rechazar) => {
+    const req = request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method: "POST",
+        ca: CA,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "content-length": Buffer.byteLength(datos),
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const trozos: Buffer[] = [];
+        res.on("data", (t: Buffer) => trozos.push(t));
+        res.on("end", () => {
+          const texto = Buffer.concat(trozos).toString("utf8");
+          let parseado: unknown = null;
+          try {
+            parseado = JSON.parse(texto);
+          } catch {
+            /* la respuesta puede no ser JSON: queda el texto crudo */
+          }
+          resolver({ estado: res.statusCode ?? 0, cuerpo: parseado, texto });
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`timeout de ${timeoutMs} ms`)));
+    req.on("error", rechazar);
+    req.write(datos);
+    req.end();
+  });
+}
