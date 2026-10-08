@@ -97,68 +97,70 @@ export function ListaPendientes({
     return lista;
   }, [pendientes, busqueda, porCercania, miPunto]);
 
-  // Solo vale la pena la barra cuando hay lista para navegar.
-  const conHerramientas = pendientes.length >= 5;
-
   return (
     <div>
-      {conHerramientas && (
-        <div className="mb-3 rounded-xl border border-borde bg-panel p-3">
-          <div className="relative">
-            <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-texto-3" />
-            <input
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar por calle…"
-              className="w-full rounded-xl border border-borde-2 bg-panel-2 py-3 pr-10 pl-9 text-base"
-            />
-            {busqueda && (
-              <button
-                type="button"
-                onClick={() => setBusqueda("")}
-                aria-label="Borrar la búsqueda"
-                className="absolute top-1/2 right-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-texto-3 hover:text-texto"
-              >
-                <X size={16} />
-              </button>
-            )}
-          </div>
-
-          {/* El botón "Ver el mapa" se fue: el mapa de la orden ahora está
-              siempre arriba, fuera de la lista y sin depender de cuántos
-              pendientes haya. Acá queda lo que sí es de la lista. */}
-          <div className="mt-2">
+      {/**
+       * La barra está SIEMPRE que haya lista. Antes aparecía recién con 5
+       * pendientes o más, y como las órdenes se van cerrando de a uno, el
+       * 8/10 estaba escondida en 16 de las 17 órdenes activas — la Dirección
+       * la dio por desaparecida ("tiene que estar").
+       */}
+      <div className="mb-3 rounded-xl border border-borde bg-panel p-3">
+        <div className="relative">
+          <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-texto-3" />
+          <input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por calle…"
+            className="w-full rounded-xl border border-borde-2 bg-panel-2 py-3 pr-10 pl-9 text-base"
+          />
+          {busqueda && (
             <button
               type="button"
-              onClick={() => (miPunto ? setPorCercania((v) => !v) : pedirUbicacion())}
-              disabled={buscandoGps}
-              className={`flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition disabled:opacity-60 ${
-                porCercania
-                  ? "border-celeste/60 bg-celeste/10 text-celeste"
-                  : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
-              }`}
+              onClick={() => setBusqueda("")}
+              aria-label="Borrar la búsqueda"
+              className="absolute top-1/2 right-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-texto-3 hover:text-texto"
             >
-              <LocateFixed size={15} />
-              {buscandoGps ? "Ubicando…" : porCercania ? "Más cerca mío" : "Ordenar por cercanía"}
+              <X size={16} />
             </button>
-          </div>
-
-          {errorGps && <p className="mt-2 text-[12px] text-peligro">{errorGps}</p>}
-          <p className="mt-2 text-[12px] text-texto-3">
-            {visibles.length === pendientes.length ? (
-              <>
-                <b className="num text-texto-2">{numero(pendientes.length)}</b> pendientes en esta orden
-              </>
-            ) : (
-              <>
-                Mostrando <b className="num text-texto-2">{numero(visibles.length)}</b> de{" "}
-                <b className="num">{numero(pendientes.length)}</b> pendientes
-              </>
-            )}
-            {porCercania && miPunto && " · ordenados desde donde estás"}
-          </p>
+          )}
         </div>
-      )}
+
+        {/* El botón "Ver el mapa" se fue: el mapa de la orden ahora está
+            siempre arriba, fuera de la lista y sin depender de cuántos
+            pendientes haya. Acá queda lo que sí es de la lista. */}
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => (miPunto ? setPorCercania((v) => !v) : pedirUbicacion())}
+            disabled={buscandoGps}
+            className={`flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition disabled:opacity-60 ${
+              porCercania
+                ? "border-celeste/60 bg-celeste/10 text-celeste"
+                : "border-borde-2 text-texto-2 hover:border-celeste/60 hover:text-celeste"
+            }`}
+          >
+            <LocateFixed size={15} />
+            {buscandoGps ? "Ubicando…" : porCercania ? "Más cerca mío" : "Ordenar por cercanía"}
+          </button>
+        </div>
+
+        {errorGps && <p className="mt-2 text-[12px] text-peligro">{errorGps}</p>}
+        <p className="mt-2 text-[12px] text-texto-3">
+          {visibles.length === pendientes.length ? (
+            <>
+              <b className="num text-texto-2">{numero(pendientes.length)}</b>{" "}
+              {pendientes.length === 1 ? "pendiente" : "pendientes"} en esta orden
+            </>
+          ) : (
+            <>
+              Mostrando <b className="num text-texto-2">{numero(visibles.length)}</b> de{" "}
+              <b className="num">{numero(pendientes.length)}</b> pendientes
+            </>
+          )}
+          {porCercania && miPunto && " · ordenados desde donde estás"}
+        </p>
+      </div>
 
       {visibles.length === 0 && (
         <p className="rounded-xl border border-borde bg-panel px-4 py-8 text-center text-sm text-texto-2">
