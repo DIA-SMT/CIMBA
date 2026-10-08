@@ -179,7 +179,8 @@ export async function enviarOEncolar(
 ): Promise<{ encolado: boolean }> {
   const encolar = async () => {
     // La fecha del trabajo es la de HOY, no la del día en que consiga señal.
-    if (tipo !== "proponerItem" && !fd.get("fechaEjecucion")) fd.set("fechaEjecucion", hoyLocal());
+    // Vale también para proponerItem: el servidor solo la lee si viene "ya tapado".
+    if (!fd.get("fechaEjecucion")) fd.set("fechaEjecucion", hoyLocal());
     await guardar({ tipo, ...desarmar(fd), contexto, creadoEn: Date.now(), intentos: 0 });
     return { encolado: true };
   };

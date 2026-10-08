@@ -13,6 +13,7 @@ import { Achicando } from "./tarjeta-item";
 import { mensajeDeError } from "@/lib/errores";
 import { enviarOEncolar } from "@/lib/cola-envios";
 import { describirPrecision, mejorPosicion } from "@/lib/gps";
+import { hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
   CamposMedida,
   medidaAFormData,
@@ -91,6 +92,8 @@ export function ProponerItem({
   const [yaTapado, setYaTapado] = useState(false);
   const [medida, setMedida] = useState<ValorMedida>(() => medidaVacia());
   const [capataz, setCapataz] = useState("");
+  // El día en que se tapó, no el de la carga ni el de la validación de Bacheo.
+  const [fechaEjecucion, setFechaEjecucion] = useState(hoyISO);
   const refFotoDespues = useRef<HTMLInputElement>(null);
   const [fotoDespues, setFotoDespues] = useState<File | null>(null);
   const [previewDespues, setPreviewDespues] = useState<string | null>(null);
@@ -217,6 +220,7 @@ export function ProponerItem({
     setYaTapado(false);
     setMedida(medidaVacia());
     setCapataz("");
+    setFechaEjecucion(hoyISO());
     void elegirFoto(undefined);
     void elegirFotoEn(undefined, previewDespues, setFotoDespues, setPreviewDespues);
   };
@@ -289,6 +293,9 @@ export function ProponerItem({
       medidaAFormData(fd, medida);
       fd.set("fotoDespues", fotoDespues);
       if (capataz.trim()) fd.set("capataz", capataz.trim());
+      // Mismo criterio que la carga sobre un item: hoy no se manda (y si queda
+      // en la cola, la cola le pone el día en que se guardó).
+      if (fechaEjecucion && fechaEjecucion !== hoyISO()) fd.set("fechaEjecucion", fechaEjecucion);
     }
 
     startTransition(async () => {
@@ -625,15 +632,36 @@ export function ProponerItem({
                 )}
               </button>
 
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
-                <input
-                  value={capataz}
-                  onChange={(e) => setCapataz(e.target.value)}
-                  placeholder="Tu nombre"
-                  className="w-full rounded-xl border border-borde-2 bg-panel px-3 py-3 text-base placeholder:text-texto-3"
-                />
-              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-texto-2">Capataz</span>
+                  <input
+                    value={capataz}
+                    onChange={(e) => setCapataz(e.target.value)}
+                    placeholder="Tu nombre"
+                    className="w-full rounded-xl border border-borde-2 bg-panel px-3 py-3 text-base placeholder:text-texto-3"
+                  />
+                </label>
+                {/* La carga viene atrasada (fotos por WhatsApp, se suben días
+                    después) y la validación de Bacheo más todavía: sin esto el
+                    bache quedaba fechado el día en que alguien lo validó. */}
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-texto-2">Fecha del trabajo</span>
+                  <input
+                    type="date"
+                    value={fechaEjecucion}
+                    max={hoyISO()}
+                    min={minimoEjecucion()}
+                    onChange={(e) => setFechaEjecucion(e.target.value)}
+                    className="num w-full rounded-xl border border-borde-2 bg-panel px-3 py-3 text-base"
+                  />
+                  {fechaEjecucion !== hoyISO() && (
+                    <span className="mt-1 block text-[11px] font-semibold text-amarillo">
+                      Se va a cargar con fecha {fechaEjecucion.split("-").reverse().join("/")}
+                    </span>
+                  )}
+                </label>
+              </div>
             </div>
           )}
         </div>

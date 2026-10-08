@@ -1372,6 +1372,7 @@ export async function proponerItem(formData: FormData) {
       observaciones: z.string().max(1000).optional(),
       capataz: z.string().max(120).optional(),
       tipoObra: z.enum(["provisorio", "planificado", "extendido", "sobre_adoquin"]).optional(),
+      fechaEjecucion: campoFechaEjecucion,
     })
     .parse({
       ordenId: formData.get("ordenId"),
@@ -1382,6 +1383,7 @@ export async function proponerItem(formData: FormData) {
       observaciones: formData.get("observaciones") || undefined,
       capataz: formData.get("capataz") || undefined,
       tipoObra: formData.get("tipoObra") || undefined,
+      fechaEjecucion: formData.get("fechaEjecucion") || undefined,
     });
 
   /**
@@ -1408,6 +1410,15 @@ export async function proponerItem(formData: FormData) {
         espesorCm: formData.get("espesorCm"),
       }))
     : null;
+
+  /**
+   * El día en que se tapó. Se guarda con el propuesto y se usa recién al
+   * validarlo (resolverPropuesto): antes el bache quedaba fechado el día en que
+   * Bacheo lo validó. Futura no; sin piso hacia atrás ("hasta que el sistema
+   * esté en marcha al 100% debe ser flexible", DOV 27/9).
+   */
+  if (medido && datos.fechaEjecucion) instanteEjecucion(datos.fechaEjecucion);
+  const fechaTapado = medido ? (datos.fechaEjecucion ?? hoyISO()) : null;
 
   const { dentroDeSMT } = await import("@cimba/domain");
   if (!dentroDeSMT({ lat: datos.lat, lon: datos.lon })) {
@@ -1498,6 +1509,17 @@ export async function proponerItem(formData: FormData) {
                     medicion: medido.medicion,
                     foto_despues: rutaDespues,
                     capataz: datos.capataz ?? null,
+                    fecha: fechaTapado,
+                    en: new Date().toISOString(),
+                  },
+                }
+              : {}),
+            // Misma marca que la carga sobre un item (reportarItemHecho).
+            ...(medido && datos.fechaEjecucion
+              ? {
+                  fecha_manual: {
+                    fecha: datos.fechaEjecucion,
+                    por: sesion.nombre,
                     en: new Date().toISOString(),
                   },
                 }
@@ -1825,12 +1847,25 @@ export async function resolverPropuestoConSesion(
     const yaEjecutado =
       datos.decision === "validar" && previa.superficie_m2 != null && previa.espesor_cm != null;
 
+    const meta = (previa.metadata ?? {}) as Record<string, unknown>;
+    const ejec = (meta.ya_ejecutado ?? {}) as Record<string, unknown>;
+    /**
+     * Cuándo se tapó: el día que cargó la cuadrilla, no el de esta validación.
+     * Todo lo que se escribe abajo usa este mismo instante, como en
+     * reportarItemHecho. Los propuestos anteriores a que existiera el dato
+     * siguen con now(), como antes.
+     */
+    const cuando =
+      typeof ejec.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(ejec.fecha)
+        ? instanteEjecucion(ejec.fecha)
+        : sql`now()`;
+
     const r = (await tx.execute(sql`
       update orden_items set
         estado = ${
           datos.decision === "rechazar" ? "rechazado" : yaEjecutado ? "hecho" : "pendiente"
         },
-        ${yaEjecutado ? sql`reportado_en = now(), reportado_por = ${sesion.sub}::uuid,` : sql``}
+        ${yaEjecutado ? sql`reportado_en = ${cuando}, reportado_por = ${sesion.sub}::uuid,` : sql``}
         metadata = metadata || ${JSON.stringify({
           validacion: {
             decision: datos.decision,
@@ -1864,7 +1899,7 @@ export async function resolverPropuestoConSesion(
           values (
             ${String(previa.tipo_trabajo) === "bache" ? "bache" : "pavimento_deteriorado"},
             'reparado', st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-            ${(previa.direccion as string) ?? null}, ${superficie}, now(), now(),
+            ${(previa.direccion as string) ?? null}, ${superficie}, ${cuando}, ${cuando},
             ${JSON.stringify({ origen: "orden_trabajo", orden: previa.numero, propuesto_por_cuadrilla: true })}::jsonb
           ) returning id
         `)) as unknown as Array<{ id: number }>;
@@ -1875,8 +1910,6 @@ export async function resolverPropuestoConSesion(
         `);
       }
 
-      const meta = (previa.metadata ?? {}) as Record<string, unknown>;
-      const ejec = (meta.ya_ejecutado ?? {}) as Record<string, unknown>;
       const iv = (await tx.execute(sql`
         insert into intervenciones (
           incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
@@ -1884,7 +1917,7 @@ export async function resolverPropuestoConSesion(
         ) values (
           ${incidenteId}, 'finalizada',
           st_setsrid(st_makepoint(${lon}, ${lat}), 4326),
-          now(), now(), ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
+          ${cuando}, ${cuando}, ${superficie}, ${volumen}, ${tipoObra}::tipo_obra_bacheo, ${tipoIntervencion},
           '{}'::jsonb, ${(previa.metadata as { observaciones?: string })?.observaciones ?? null},
           ${JSON.stringify({
             origen: "orden_trabajo",
@@ -1918,7 +1951,7 @@ export async function resolverPropuestoConSesion(
         }
       }
       await tx.execute(sql`
-        update incidentes set estado = 'reparado', cerrado_en = now()
+        update incidentes set estado = 'reparado', cerrado_en = ${cuando}
         where id = ${incidenteId} and estado <> 'verificado'
       `);
     }

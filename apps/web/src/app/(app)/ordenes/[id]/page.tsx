@@ -85,14 +85,17 @@ function datosYaEjecutado(metadata: Record<string, unknown>): {
   fotoDespues: string | null;
   medicion: string | null;
   capataz: string | null;
+  /** Día en que lo taparon (YYYY-MM-DD). Los propuestos viejos no lo tienen. */
+  fecha: string | null;
 } {
   const y = metadata.ya_ejecutado as
-    | { foto_despues?: unknown; medicion?: unknown; capataz?: unknown }
+    | { foto_despues?: unknown; medicion?: unknown; capataz?: unknown; fecha?: unknown }
     | undefined;
   return {
     fotoDespues: typeof y?.foto_despues === "string" ? y.foto_despues : null,
     medicion: typeof y?.medicion === "string" ? y.medicion : null,
     capataz: typeof y?.capataz === "string" ? y.capataz : null,
+    fecha: typeof y?.fecha === "string" ? y.fecha : null,
   };
 }
 
@@ -355,6 +358,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                               <>
                                 {" "}
                                 · capataz <b className="text-texto-2">{ejec.capataz}</b>
+                              </>
+                            )}
+                            {ejec.fecha && (
+                              <>
+                                {" "}
+                                · tapado el{" "}
+                                <b className="num text-texto-2">{ejec.fecha.split("-").reverse().join("/")}</b>
                               </>
                             )}
                             <span className="mt-0.5 block text-texto-3">
