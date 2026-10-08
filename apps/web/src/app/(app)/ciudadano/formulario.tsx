@@ -29,6 +29,10 @@ import { mensajeDeError } from "@/lib/errores";
  * en el mapa, que era la pregunta de fondo: sí, se completa solo.
  */
 
+/** Quién lo pide si no se cambia (pedido del 8/10). Si es un vecino, se pisa
+ *  con su nombre y apellido. */
+const SOLICITANTE_POR_DEFECTO = "Secretaría de Obra Pública";
+
 /**
  * Carga del pedido de un vecino que reclama en persona o por teléfono. El que
  * tipea es el personal, muchas veces con el vecino delante o al teléfono: por
@@ -49,7 +53,7 @@ export function FormularioCiudadano() {
   const [direccion, setDireccion] = useState("");
   const [buscandoDireccion, setBuscandoDireccion] = useState(false);
   const [descripcion, setDescripcion] = useState("");
-  const [solicitante, setSolicitante] = useState("");
+  const [solicitante, setSolicitante] = useState(SOLICITANTE_POR_DEFECTO);
   const [area, setArea] = useState("");
   /** Distrito/barrio/circuito del punto, resueltos por la base. Solo se muestran. */
   const [territorio, setTerritorio] = useState<{ distrito: number | null; barrio: string | null; circuito: string | null } | null>(null);
@@ -255,7 +259,7 @@ export function FormularioCiudadano() {
             setDesdeGps(false);
             setDireccion("");
             setDescripcion("");
-            setSolicitante("");
+            setSolicitante(SOLICITANTE_POR_DEFECTO);
           }}
           className="mt-4 rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white"
         >
@@ -412,11 +416,11 @@ export function FormularioCiudadano() {
           </select>
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Vecino que pide</label>
+          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Quién lo pide</label>
           <input
             value={solicitante}
             onChange={(e) => setSolicitante(e.target.value)}
-            placeholder="Nombre y apellido del vecino"
+            placeholder="Nombre y apellido del vecino, o la repartición"
             className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
           />
         </div>
