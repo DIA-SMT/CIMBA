@@ -35,6 +35,8 @@ export type {
   ResultadoCierreAc,
   SentenciaPlan,
 } from "./fuentes/cierre-ac";
+export { estadoActualAc, sincronizarEstadosAc } from "./fuentes/estado-ac";
+export type { EstadoAc, ResumenSincroEstados } from "./fuentes/estado-ac";
 export { mapearTipo } from "./archivos/util";
 export { detectarYParsear } from "./archivos/importar";
 export type { ResultadoDeteccion } from "./archivos/importar";
