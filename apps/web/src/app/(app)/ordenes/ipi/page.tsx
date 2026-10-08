@@ -31,6 +31,9 @@ export default async function PaginaIpi({
   const delSector = corredores.filter((c) => c.sector === sectorFoco);
   const calculado = corredores.find((c) => c.calculadoEn)?.calculadoEn ?? null;
   const sinCalcular = corredores.filter((c) => c.ipi == null).length;
+  // Puntaje guardado con la regla anterior (lo reparado sumaba en contra):
+  // hasta que alguien recalcule, el Estado de la tabla no es el de esta página.
+  const reglaAnterior = corredores.some((c) => c.ipi != null && c.rotos == null);
 
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -51,10 +54,12 @@ export default async function PaginaIpi({
         sector contra otro, porque cada uno ya tiene su cupo de obra licitado.
         <span className="mt-2 block">
           <b className="text-texto">Lo que aporta CIMBA.</b> La metodología pide reemplazar la apreciación
-          cualitativa del estado por una medición: acá el <b>Estado</b> sale de la densidad de patologías por
-          kilómetro de los últimos 24 meses —lo reparado más lo que sigue pendiente—, con los cortes
-          bueno &lt;{CORTES_ESTADO.bueno}, regular &lt;{CORTES_ESTADO.regular}, malo &lt;{CORTES_ESTADO.malo}, crítico de ahí
-          en más. Es lo único que ninguna planilla puede calcular sola.
+          cualitativa del estado por una medición: acá el <b>Estado</b> sale de lo que <b>sigue roto</b> por
+          kilómetro —problemas abiertos, pedidos sin atender y baches que se volvieron a abrir en los últimos 12
+          meses—, con los cortes bueno &lt;{CORTES_ESTADO.bueno}, regular &lt;{CORTES_ESTADO.regular}, malo
+          &lt;{CORTES_ESTADO.malo}, crítico de ahí en más. Un bache arreglado que aguanta deja de contar, y una obra
+          de paños o carpeta borra lo que había antes en su tramo: <b>intervenir un corredor lo mejora</b>. Lo
+          arreglado se muestra aparte, como trabajo hecho.
         </span>
         <span className="mt-2 block text-texto-3">
           Falta la capa de <b>equipamientos urbanos</b> (escuelas, centros de salud y edificios públicos a
@@ -63,6 +68,16 @@ export default async function PaginaIpi({
           DOV. La <b>factibilidad</b> arranca en «sin interferencias» hasta que alguien registre lo contrario.
         </span>
       </Panel>
+
+      {reglaAnterior && (
+        <p className="mb-5 rounded-xl border border-amarillo/40 bg-amarillo/10 p-4 text-[13px] leading-relaxed text-texto-2">
+          <b className="text-texto">El puntaje en pantalla es de la regla anterior</b>, la que contaba lo arreglado en
+          contra del corredor.{" "}
+          {puedeRecalcular
+            ? "Tocá «Recalcular el índice» para medirlo con la regla nueva."
+            : "Hace falta que planificación lo recalcule."}
+        </p>
+      )}
 
       {corredores.length === 0 ? (
         <Panel className="p-8 text-center text-sm text-texto-3">
@@ -104,15 +119,21 @@ export default async function PaginaIpi({
                     </span>
                   </p>
                 </div>
-                <table className="w-full min-w-[860px] text-sm">
+                <table className="w-full min-w-[940px] text-sm">
                   <thead>
                     <tr className="border-b border-borde text-left text-[10px] font-bold tracking-wider text-texto-3 uppercase">
                       <th className="px-5 py-2">#</th>
                       <th className="px-3 py-2">Corredor</th>
                       <th className="px-3 py-2 text-right">IPI</th>
                       <th className="px-3 py-2">Estado</th>
-                      <th className="px-3 py-2 text-right" title="Patologías por km en 24 meses: reparadas + pendientes">
-                        Patol./km
+                      <th
+                        className="px-3 py-2 text-right"
+                        title="Lo que sigue roto por km: problemas abiertos + pedidos sin atender + baches que se volvieron a abrir en 12 meses"
+                      >
+                        Roto/km
+                      </th>
+                      <th className="px-3 py-2 text-right" title="Baches arreglados sobre el corredor en los últimos 24 meses. No pesan en contra del Estado">
+                        Arreglados
                       </th>
                       <th className="px-3 py-2 text-right">Barrios</th>
                       <th className="px-3 py-2 text-center" title="Pasa transporte público">TP</th>
@@ -157,8 +178,18 @@ export default async function PaginaIpi({
                             {gradoEstado(c.vEstado)}
                           </span>
                         </td>
-                        <td className="num px-3 py-2.5 text-right" title={`${numero(c.baches24m ?? 0)} patologías en 24 meses`}>
+                        <td
+                          className="num px-3 py-2.5 text-right"
+                          title={
+                            c.rotos
+                              ? `${numero(c.rotos.pedidos)} pedidos sin atender · ${numero(c.rotos.problemas)} problemas abiertos · ${numero(c.rotos.reaperturas)} reaperturas`
+                              : undefined
+                          }
+                        >
                           {c.densidadKm != null ? c.densidadKm.toFixed(1) : "—"}
+                        </td>
+                        <td className="num px-3 py-2.5 text-right text-texto-2">
+                          {c.arreglados24m != null ? numero(c.arreglados24m) : "—"}
                         </td>
                         <td className="num px-3 py-2.5 text-right">{c.barriosConectados ?? "—"}</td>
                         <td className="px-3 py-2.5 text-center text-xs">{c.tieneTransporte ? "sí" : "—"}</td>

@@ -8,8 +8,8 @@ import { numero } from "@/lib/formato";
 import { esFalloDeRed, mensajeDeError } from "@/lib/errores";
 
 /**
- * Vuelve a medir el estado de cada corredor contra la operación de los últimos
- * 24 meses y rehace el índice. Es una pasada sobre toda la red: tarda.
+ * Vuelve a medir lo que sigue roto en cada corredor y rehace el índice. Es una
+ * pasada sobre toda la red: tarda unos segundos.
  */
 export function BotonRecalcularIpi() {
   const router = useRouter();
@@ -28,7 +28,7 @@ export function BotonRecalcularIpi() {
       } catch (e) {
         /**
          * Un corte de red se reintenta UNA vez y en silencio. El recálculo
-         * tarda 0,4 s del lado del servidor y no falla; lo que sí pasa es que
+         * tarda unos 6 s del lado del servidor y no falla; lo que sí pasa es que
          * la conexión se caiga en el medio (wifi que salta a datos, DNS que no
          * resuelve), y entonces la pantalla decía "No se pudo recalcular" y
          * parecía que la función estaba rota. Es idempotente: reintentar no

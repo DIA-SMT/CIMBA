@@ -13,8 +13,8 @@ import type { Sesion } from "./auth";
  *
  * Lo que CIMBA aporta es lo que la metodología pide expresamente en su
  * apartado 1.11: reemplazar la apreciación cualitativa del "Estado del
- * corredor" por una MEDICIÓN — la densidad de patologías por kilómetro que
- * sale de la operación diaria.
+ * corredor" por una MEDICIÓN — lo que sigue roto por kilómetro, según la
+ * operación diaria.
  */
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
@@ -33,55 +33,125 @@ export const NIVEL_IPI = {
 } as const;
 
 /**
- * Cortes de la variable "Estado", en patologías por km acumuladas en 24 meses.
+ * Cortes de la variable "Estado", en cosas rotas por km (ver recalcularIpi).
  *
- * Calibrados contra la distribución real de la ciudad (mediana ≈ 8/km) para
- * que los cuatro grados oficiales queden poblados y no todo caiga en uno.
- * Son el primer calibrado: se revisan con la DOV cuando haya un año completo
- * de operación cargada.
+ * Son cortes ABSOLUTOS, a propósito: bueno es menos de una cada 333 m, malo
+ * una por cuadra, crítico una cada 55 m. Un corte relativo a la mediana de la
+ * ciudad escondería la mejora — si se bachea toda la ciudad, la mitad de los
+ * corredores seguiría saliendo "mala" contra la otra mitad.
  */
 export const CORTES_ESTADO = { bueno: 3, regular: 8, malo: 18 } as const;
 
+/** Los tipos de problema que son calzada: los mismos que cuenta Avance. */
+const TIPOS_CALZADA = sql.raw(
+  `('bache', 'pavimento_deteriorado', 'hundimiento', 'fisura', 'bocacalle_rota', 'cuneta_rota', 'cuadra_completa')`,
+);
+
 /**
- * Se cuentan las patologías REPARADAS y las PENDIENTES juntas, no solo las
- * reparadas. La metodología habla de "densidad de baches reparados", pero su
- * propio objetivo 1 es registrar la patología "tanto previo a la intervención
- * como en su estado final reparado" — y contar solo lo reparado premia al
- * corredor que nadie atendió nunca: cero reparaciones se leería "bueno"
- * justo donde la calle está deshecha y abandonada.
+ * El Estado mide lo que SIGUE ROTO en el corredor, no lo que se trabajó en él.
+ *
+ * Antes se contaba "lo reparado en 24 meses + lo pendiente", y eso hacía que
+ * bachear un corredor nunca lo mejorara: cada pedido reparado salía de
+ * pendiente y entraba a reparado, y con el recuento previo (se reparan
+ * también los sin ticket) la cuenta subía. Mate de Luna, con 47 baches
+ * reparados en 90 días, figuraba "crítico". Ahora cuentan tres cosas:
+ *
+ *   - problemas de calzada abiertos (uno por bache, no uno por vecino que
+ *     reclamó: la unidad de registro es el bache, no el ticket);
+ *   - pedidos de bacheo sin atender: los mismos que la Brecha marca en rojo
+ *     (sin arreglo posterior ni problema abierto a 40 m). Un pedido vinculado
+ *     a un problema ya reparado no cuenta: antes contaba dos veces;
+ *   - reaperturas: un bacheo que cae a menos de 10 m de otro anterior en los
+ *     últimos 12 meses — el parche que no aguantó, mismo criterio que
+ *     /ordenes/escalamiento. El desgaste de fondo del corredor se sigue
+ *     viendo ahí (más del 30% de la cuadra bacheada → Tipo C / A).
+ *
+ * Un bache reparado que aguanta deja de contar. Y una obra (paño, carpeta o
+ * más de 50 m²) borra lo que había antes a menos de 40 m: el pavimento es
+ * nuevo. Lo reparado en 24 meses se guarda aparte, para mostrar el trabajo
+ * hecho en el corredor sin que pese en contra.
  */
 export async function recalcularIpi(sesion: Sesion): Promise<{ corredores: number }> {
   return conRls(claims(sesion), async (tx) => {
     await tx.execute(sql`
-      with patologias as (
+      with obras as materialized (
+        select i.geom_ejecucion as geom, i.finalizada_en from intervenciones i
+        where i.estado = 'finalizada' and i.geom_ejecucion is not null and i.finalizada_en is not null
+          and (coalesce(i.tipo_intervencion::text, 'bacheo') <> 'bacheo' or coalesce(i.superficie_m2, 0) >= 50)
+      ),
+      bacheos as materialized (
+        select i.id, i.geom_ejecucion as geom, i.finalizada_en from intervenciones i
+        where i.estado = 'finalizada' and i.geom_ejecucion is not null and i.finalizada_en is not null
+          and coalesce(i.tipo_intervencion::text, 'bacheo') = 'bacheo' and coalesce(i.superficie_m2, 0) < 50
+      ),
+      abiertos as materialized (
+        select i.geom, i.detectado_en from incidentes i
+        where i.estado in ('detectado', 'priorizado', 'programado', 'en_ejecucion')
+          and i.tipo::text in ${TIPOS_CALZADA}
+      ),
+      /**
+       * Cada "&& st_expand(…, 0.0005)" es un recorte por recuadro (~50 m)
+       * antes de medir en metros: deja usar el índice espacial y baja el
+       * cálculo de ~30 s a ~6 s. La distancia que decide es la de st_dwithin.
+       */
+      rotos as materialized (
+        select 'problema' as clase, a.geom from abiertos a
+        where not exists (select 1 from obras o
+                          where o.finalizada_en > a.detectado_en
+                            and o.geom && st_expand(a.geom, 0.0005)
+                            and st_dwithin(o.geom::geography, a.geom::geography, 40))
+        union all
+        select 'pedido', d.geom from demandas d
+        where d.estado in ('recibida', 'en_validacion') and d.geom is not null
+          and coalesce(d.destino::text, 'bacheo') = 'bacheo'
+          and not exists (select 1 from incidentes i
+                          where i.estado in ('reparado', 'verificado')
+                            and i.geom && st_expand(d.geom, 0.0005)
+                            and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                            and (d.metadata->>'sin_fecha' is not null or i.cerrado_en >= d.creado_en))
+          and not exists (select 1 from abiertos a
+                          where a.geom && st_expand(d.geom, 0.0005)
+                            and st_dwithin(a.geom::geography, d.geom::geography, 40))
+        union all
+        select 'reapertura', b.geom from bacheos b
+        where b.finalizada_en > now() - interval '12 months'
+          and exists (select 1 from bacheos p
+                      where p.id <> b.id and p.finalizada_en < b.finalizada_en
+                        and p.geom && st_expand(b.geom, 0.0005)
+                        and st_dwithin(p.geom::geography, b.geom::geography, 10))
+          and not exists (select 1 from obras o
+                          where o.finalizada_en > b.finalizada_en
+                            and o.geom && st_expand(b.geom, 0.0005)
+                            and st_dwithin(o.geom::geography, b.geom::geography, 40))
+      ),
+      por_corredor as (
         select c.id,
-          /**
-           * Solo el BACHEO cuenta como patología. Una repavimentación de 800
-           * m² no es evidencia de deterioro actual: es la obra que ya se hizo
-           * — y si contara, el corredor recién arreglado saldría "crítico".
-           * Mismo criterio que /ordenes/escalamiento, a propósito: dos
-           * pantallas que miden la misma calle tienen que medirla igual.
-           */
-          (select count(*) from intervenciones i
-            where i.geom_ejecucion is not null
-              and coalesce(i.tipo_intervencion::text, 'bacheo') = 'bacheo'
-              and coalesce(i.superficie_m2, 0) < 50
-              and i.finalizada_en > now() - interval '24 months'
-              and st_dwithin(i.geom_ejecucion::geography, c.geom::geography, 25)) as reparadas,
-          (select count(*) from demandas d
-            where d.geom is not null
-              and d.estado in ('recibida', 'en_validacion', 'vinculada')
-              and st_dwithin(d.geom::geography, c.geom::geography, 25)) as pendientes
+          count(r.clase) filter (where r.clase = 'problema')::int as problemas,
+          count(r.clase) filter (where r.clase = 'pedido')::int as pedidos,
+          count(r.clase) filter (where r.clase = 'reapertura')::int as reaperturas
         from corredores c
+        left join rotos r on r.geom && st_expand(c.geom, 0.0005)
+          and st_dwithin(r.geom::geography, c.geom::geography, 25)
+        group by c.id
+      ),
+      arreglados as (
+        select c.id, count(b.id)::int as arreglados
+        from corredores c
+        left join bacheos b on b.finalizada_en > now() - interval '24 months'
+          and b.geom && st_expand(c.geom, 0.0005)
+          and st_dwithin(b.geom::geography, c.geom::geography, 25)
+        group by c.id
       ),
       medido as (
-        select c.id, c.nivel, c.longitud_m,
-               (p.reparadas + p.pendientes) as total,
-               (p.reparadas + p.pendientes) / greatest(c.longitud_m / 1000.0, 0.05) as densidad
-        from corredores c join patologias p on p.id = c.id
+        select c.id, c.nivel, p.problemas, p.pedidos, p.reaperturas, a.arreglados,
+               (p.problemas + p.pedidos + p.reaperturas) / greatest(c.longitud_m / 1000.0, 0.05) as densidad
+        from corredores c
+        join por_corredor p on p.id = c.id
+        join arreglados a on a.id = c.id
       ),
       calificado as (
-        select id, nivel, total, round(densidad::numeric, 2) as densidad,
+        select id, nivel, problemas, pedidos, reaperturas, arreglados,
+               round(densidad::numeric, 2) as densidad,
                case
                  when densidad < ${CORTES_ESTADO.bueno} then 0
                  when densidad < ${CORTES_ESTADO.regular} then 25
@@ -91,9 +161,11 @@ export async function recalcularIpi(sesion: Sesion): Promise<{ corredores: numbe
         from medido
       )
       update corredores c set
-        baches_24m = k.total,
+        baches_24m = k.arreglados,
         densidad_km = k.densidad,
         v_estado = k.v_estado,
+        metadata = c.metadata || jsonb_build_object('estado', jsonb_build_object(
+          'problemas', k.problemas, 'pedidos', k.pedidos, 'reaperturas', k.reaperturas)),
         calculado_en = now(),
         /**
          * Los pesos se RENORMALIZAN sobre las variables que existen. Hoy falta
@@ -139,8 +211,12 @@ export interface CorredorIpi {
   vEquipamientos: number | null;
   vFactibilidad: number | null;
   barriosConectados: number | null;
-  baches24m: number | null;
+  /** Baches reparados en 24 meses: el trabajo hecho, que NO pesa en el Estado. */
+  arreglados24m: number | null;
+  /** Lo que sigue roto por km: es lo que decide el Estado. */
   densidadKm: number | null;
+  /** De qué se compone lo roto. Null si el corredor se calculó con la regla anterior. */
+  rotos: { problemas: number; pedidos: number; reaperturas: number } | null;
   tieneTransporte: boolean | null;
   compromiso: boolean;
   excluido: boolean;
@@ -155,34 +231,40 @@ export async function rankingIpi(sesion: Sesion, sectorId?: number): Promise<Cor
       select c.id, c.nombre, s.sector, c.nivel, c.longitud_m, c.ipi,
              c.v_estado, c.v_interconexion, c.v_accesibilidad, c.v_transporte,
              c.v_equipamientos, c.v_factibilidad, c.barrios_conectados,
-             c.baches_24m, c.densidad_km, c.tiene_transporte, c.compromiso,
-             c.excluido, c.calculado_en
+             c.baches_24m, c.densidad_km, c.metadata->'estado' as rotos, c.tiene_transporte,
+             c.compromiso, c.excluido, c.calculado_en
       from corredores c
       left join sectores_licitacion s on s.id = c.sector_id
       ${sectorId ? sql`where c.sector_id = ${sectorId}` : sql``}
       order by s.sector nulls last, c.nivel, c.ipi desc nulls last
     `)) as unknown as Array<Record<string, unknown>>;
-    return filas.map((f) => ({
-      id: Number(f.id),
-      nombre: String(f.nombre),
-      sector: (f.sector as string) ?? null,
-      nivel: Number(f.nivel) as 1 | 2 | 3,
-      longitudM: Number(f.longitud_m ?? 0),
-      ipi: f.ipi != null ? Number(f.ipi) : null,
-      vEstado: f.v_estado != null ? Number(f.v_estado) : null,
-      vInterconexion: f.v_interconexion != null ? Number(f.v_interconexion) : null,
-      vAccesibilidad: f.v_accesibilidad != null ? Number(f.v_accesibilidad) : null,
-      vTransporte: f.v_transporte != null ? Number(f.v_transporte) : null,
-      vEquipamientos: f.v_equipamientos != null ? Number(f.v_equipamientos) : null,
-      vFactibilidad: f.v_factibilidad != null ? Number(f.v_factibilidad) : null,
-      barriosConectados: f.barrios_conectados != null ? Number(f.barrios_conectados) : null,
-      baches24m: f.baches_24m != null ? Number(f.baches_24m) : null,
-      densidadKm: f.densidad_km != null ? Number(f.densidad_km) : null,
-      tieneTransporte: f.tiene_transporte as boolean | null,
-      compromiso: Boolean(f.compromiso),
-      excluido: Boolean(f.excluido),
-      calculadoEn: f.calculado_en != null ? String(f.calculado_en) : null,
-    }));
+    return filas.map((f) => {
+      const rotos = f.rotos as { problemas?: unknown; pedidos?: unknown; reaperturas?: unknown } | null;
+      return {
+        id: Number(f.id),
+        nombre: String(f.nombre),
+        sector: (f.sector as string) ?? null,
+        nivel: Number(f.nivel) as 1 | 2 | 3,
+        longitudM: Number(f.longitud_m ?? 0),
+        ipi: f.ipi != null ? Number(f.ipi) : null,
+        vEstado: f.v_estado != null ? Number(f.v_estado) : null,
+        vInterconexion: f.v_interconexion != null ? Number(f.v_interconexion) : null,
+        vAccesibilidad: f.v_accesibilidad != null ? Number(f.v_accesibilidad) : null,
+        vTransporte: f.v_transporte != null ? Number(f.v_transporte) : null,
+        vEquipamientos: f.v_equipamientos != null ? Number(f.v_equipamientos) : null,
+        vFactibilidad: f.v_factibilidad != null ? Number(f.v_factibilidad) : null,
+        barriosConectados: f.barrios_conectados != null ? Number(f.barrios_conectados) : null,
+        arreglados24m: f.baches_24m != null ? Number(f.baches_24m) : null,
+        densidadKm: f.densidad_km != null ? Number(f.densidad_km) : null,
+        rotos: rotos
+          ? { problemas: Number(rotos.problemas ?? 0), pedidos: Number(rotos.pedidos ?? 0), reaperturas: Number(rotos.reaperturas ?? 0) }
+          : null,
+        tieneTransporte: f.tiene_transporte as boolean | null,
+        compromiso: Boolean(f.compromiso),
+        excluido: Boolean(f.excluido),
+        calculadoEn: f.calculado_en != null ? String(f.calculado_en) : null,
+      };
+    });
   });
 }
 
