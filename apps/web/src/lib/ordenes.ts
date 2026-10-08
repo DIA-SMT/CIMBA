@@ -839,6 +839,25 @@ export async function demandasParaCerrar(
       join incidentes i on i.id = di.incidente_id
       where d.estado in ('recibida','en_validacion','vinculada')
         and i.estado in ('reparado','verificado')
+        /**
+         * LA REPARACIÓN TIENE QUE SER POSTERIOR AL RECLAMO.
+         *
+         * Sin esta línea, la pantalla ofrecía cerrar reclamos cuyo arreglo es
+         * ANTERIOR al pedido del vecino, y el texto que se le manda dice que
+         * se reparó lo que pidió. Medido el 08/10: de 323 "listos para
+         * cerrar", 283 estaban así. El 88% de la lista.
+         *
+         * No son datos rotos: son REINCIDENCIAS. Se bacheó, el vecino reclamó
+         * después porque volvió a romperse, y la demanda quedó vinculada al
+         * incidente viejo que ya figura reparado. El caso que lo destapó es el
+         * reclamo 117788 de Las Piedras 2603: reclamado el 08/09, con una
+         * reparación registrada el 06/08 — un mes antes.
+         *
+         * Decirle a esa persona "ya está arreglado" es contestarle con el
+         * arreglo que justamente falló. Quedan fuera de Cierres; merecen otra
+         * pantalla, no un cierre automático.
+         */
+        and i.cerrado_en >= d.creado_en
         and (${fuente}::text is null or d.fuente = (${fuente})::fuente_demanda)
         and (${tipo}::text is null or d.tipo = (${tipo})::tipo_problema)
         and (${destino}::text is null or d.destino = (${destino})::destino_resolucion)
