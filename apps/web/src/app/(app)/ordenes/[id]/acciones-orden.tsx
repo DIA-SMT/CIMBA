@@ -18,7 +18,6 @@ export function AccionesOrden({
   estado,
   puedePlanificar,
   itemsPendientes = 0,
-  emitidaEn,
   empresaId,
   empresas = [],
 }: {
@@ -27,8 +26,6 @@ export function AccionesOrden({
   puedePlanificar: boolean;
   /** Lo que quedaría sin hacer si se cierra ahora: se dice antes de cerrar. */
   itemsPendientes?: number;
-  /** Día en que se emitió, 'YYYY-MM-DD': el cierre no puede ser anterior. */
-  emitidaEn?: string | null;
   /** Para reasignar: quién la tiene hoy y a quién se le puede pasar. */
   empresaId?: number;
   empresas?: Array<{ id: number; nombre: string }>;
@@ -205,11 +202,12 @@ export function AccionesOrden({
               <input
                 type="date"
                 value={fecha}
-                /* El cierre no puede ser futuro ni anterior a la emisión: los
-                   mismos dos límites que valida el servidor, acá para que el
-                   calendario ni siquiera los ofrezca. */
+                /* El cierre no puede ser futuro: el mismo límite que valida el
+                   servidor, acá para que el calendario ni lo ofrezca. Hacia
+                   atrás no hay tope: hay órdenes que se cargan después del
+                   trabajo. */
                 max={hoyISO()}
-                min={emitidaEn ?? undefined}
+                min="2020-01-01"
                 onChange={(e) => setFecha(e.target.value)}
                 className="num rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm"
               />

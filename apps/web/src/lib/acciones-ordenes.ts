@@ -21,6 +21,8 @@ import { MOTIVO_POR_VALOR, VALORES_MOTIVO } from "./problemas-calle";
  */
 
 const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona: s.id_persona, id_empresa: s.id_empresa });
+/** Piso de las fechas de cierre: no es una regla, es la red para un año mal tipeado. */
+const FECHA_MINIMA = "2020-01-01";
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ── Planificación (Director) ─────────────────────────────────────────────────
@@ -491,14 +493,20 @@ export async function cerrarOrdenConSesion(
     .parse(entrada);
 
   /**
-   * Una orden no se puede cerrar en el futuro —sería certificar trabajo que
-   * todavía no pasó— ni antes de haberse emitido. Los dos límites se validan
-   * contra el día de Tucumán, no contra UTC: a las 21:30 de acá ya es el día
-   * siguiente en UTC y "hoy" habría sido rechazado por futuro.
+   * Una orden no se puede cerrar en el futuro: sería certificar trabajo que
+   * todavía no pasó. Se valida contra el día de Tucumán, no contra UTC: a las
+   * 21:30 de acá ya es el día siguiente en UTC y "hoy" habría sido rechazado
+   * por futuro.
+   *
+   * Hacia atrás NO hay tope, ni siquiera la emisión: muchas órdenes se cargan
+   * después del trabajo (la OT-2026-0030 es del viernes 2/10 y se emitió el
+   * 9/10). "Hasta que el sistema esté en marcha al 100% debe ser flexible"
+   * (Leo, 27/9). Lo único que se frena es un año mal tipeado.
    */
   const hoy = hoyISO();
   const fecha = datos.fecha ?? hoy;
   if (fecha > hoy) throw new ErrorVisible("La fecha de cierre no puede ser posterior a hoy");
+  if (fecha < FECHA_MINIMA) throw new ErrorVisible("Revisá el año de la fecha de cierre");
 
   const resultado = await conRls(claims(sesion), async (tx) => {
     const previa = (await tx.execute(sql`
@@ -512,9 +520,6 @@ export async function cerrarOrdenConSesion(
       throw new ErrorVisible("La orden todavía no se emitió: no hay nada que cerrar");
     }
     if (o.estado === "anulada") throw new ErrorVisible("La orden está anulada");
-    if (o.emitida && fecha < o.emitida) {
-      throw new ErrorVisible(`La orden se emitió el ${o.emitida}: no se puede cerrar antes de esa fecha`);
-    }
 
     // Lo que quedó sin hacer, contado ANTES de moverlo: es el dato que se deja
     // escrito en la orden y el que se le muestra a quien cierra.
@@ -587,6 +592,90 @@ export async function cerrarOrdenConSesion(
   revalidatePath(`/ordenes/${datos.ordenId}`);
   revalidatePath("/empresa");
   return { ok: true, ...resultado };
+}
+
+/**
+ * CORREGIR LA FECHA DE FINALIZACIÓN.
+ *
+ * "Me faltaría poder editar la fecha de finalización" (Dirección de Bacheo,
+ * 12/10; ya lo había pedido el 27/9). Una vez cerrada, la fecha quedaba como
+ * se hubiera puesto ese día —o la del momento en que se cargó el último
+ * bache, si se cerró sola— y no había forma de corregirla.
+ *
+ * Qué fecha se corrige depende de cómo esté la orden:
+ * - CERRADA: el día en que se terminó de trabajar. El mismo límite que al
+ *   cerrarla: no puede ser futura. Hacia atrás no hay tope (ver cerrarOrden).
+ * - VIVA (borrador, emitida, en ejecución): el vencimiento. No puede quedar en
+ *   el pasado —esa misma mañana la empresa recibiría el aviso de orden
+ *   vencida—, pero sí se puede dejar sin vencimiento.
+ *
+ * Cada corrección queda escrita en la orden: qué fecha, de cuál a cuál,
+ * quién y cuándo. Una anulada no se toca: su historia ya está cerrada.
+ */
+export async function corregirFechaOrden(entrada: { ordenId: number; fecha: string | null; motivo?: string }) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({
+      ordenId: z.number().int().positive(),
+      fecha: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha tiene que ser un día del calendario")
+        .nullable(),
+      motivo: z.string().max(500).optional(),
+    })
+    .parse(entrada);
+  const hoy = hoyISO();
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select estado::text, emitida_en::date::text as emitida, vence_en::text as vence,
+             (cerrada_en at time zone 'America/Argentina/Tucuman')::date::text as cerrada
+      from ordenes_trabajo where id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string; emitida: string | null; vence: string | null; cerrada: string | null }>;
+    const o = filas[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado === "anulada") throw new ErrorVisible("La orden está anulada: sus fechas quedan como estaban");
+
+    const cerrada = o.estado === "completada";
+    if (cerrada) {
+      if (!datos.fecha) throw new ErrorVisible("Una orden cerrada tiene que tener su fecha de cierre");
+      if (datos.fecha > hoy) throw new ErrorVisible("La fecha de cierre no puede ser posterior a hoy");
+      if (datos.fecha < FECHA_MINIMA) throw new ErrorVisible("Revisá el año de la fecha de cierre");
+    } else if (datos.fecha && datos.fecha < hoy) {
+      throw new ErrorVisible(
+        "El vencimiento no puede quedar en el pasado: la empresa recibiría el aviso de orden vencida",
+      );
+    }
+
+    const registro = JSON.stringify({
+      campo: cerrada ? "cierre" : "vencimiento",
+      antes: cerrada ? o.cerrada : o.vence,
+      despues: datos.fecha,
+      por: sesion.nombre,
+      en: new Date().toISOString(),
+      motivo: datos.motivo?.trim() || null,
+    });
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        ${
+          cerrada
+            ? /* A mediodía de Tucumán, igual que al cerrar: así el día no se
+                 corre al guardarse como timestamp con zona. */
+              sql`cerrada_en = (${datos.fecha}::date + time '12:00') at time zone 'America/Argentina/Tucuman'`
+            : sql`vence_en = ${datos.fecha}::date`
+        },
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'fechas_corregidas',
+          coalesce(metadata->'fechas_corregidas', '[]'::jsonb) || jsonb_build_array(${registro}::jsonb)
+        )
+      where id = ${datos.ordenId}
+    `);
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  return { ok: true };
 }
 
 /**

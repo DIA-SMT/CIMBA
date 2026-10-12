@@ -11,6 +11,7 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
+import { CorregirFecha } from "./corregir-fecha";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { BorrarItem } from "./borrar-item";
@@ -97,6 +98,17 @@ function datosYaEjecutado(metadata: Record<string, unknown>): {
     capataz: typeof y?.capataz === "string" ? y.capataz : null,
     fecha: typeof y?.fecha === "string" ? y.fecha : null,
   };
+}
+
+/** El día de Tucumán de una fecha con hora, 'YYYY-MM-DD'. Con slice(0, 10)
+ *  sobre UTC, lo cerrado a la noche quedaba en el día siguiente. */
+function diaEnTucuman(fecha: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Tucuman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(fecha));
 }
 
 /** Ruta en Storage de la foto que mandó la cuadrilla al proponer (si mandó). */
@@ -221,13 +233,29 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.venceEn && <> · vence {fechaCorta(o.venceEn)}</>}
               {o.cerradaEn && <> · cerrada {fechaCorta(o.cerradaEn)}</>}
             </p>
+            {/* La fecha de finalización se corrige acá mismo: el cierre si la
+                orden ya terminó, el vencimiento si sigue viva. */}
+            {puedePlanificar && o.estado !== "anulada" && (
+              <div className="mt-1">
+                <CorregirFecha
+                  ordenId={o.id}
+                  campo={o.estado === "completada" ? "cierre" : "vencimiento"}
+                  actual={
+                    o.estado === "completada"
+                      ? o.cerradaEn
+                        ? diaEnTucuman(o.cerradaEn)
+                        : null
+                      : (o.venceEn?.slice(0, 10) ?? null)
+                  }
+                />
+              </div>
+            )}
           </div>
           <AccionesOrden
             ordenId={o.id}
             estado={o.estado}
             puedePlanificar={puedePlanificar}
             itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente" || i.estado === "propuesto").length}
-            emitidaEn={o.emitidaEn ? o.emitidaEn.slice(0, 10) : null}
             empresaId={o.empresaId}
             empresas={empresas}
           />
