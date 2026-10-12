@@ -501,7 +501,12 @@ export async function crearDemandaCiudadano(formData: FormData) {
       descripcion: z.string().min(5).max(2000),
       direccion: z.string().min(3).max(300),
       solicitante: z.string().min(3).max(200),
-      area: z.string().min(2).max(200),
+      /**
+       * El área ya no se pregunta: era obligatoria y siempre se escribía lo
+       * mismo. Si no viene, es la Secretaría de Obras Públicas (pedido del
+       * 12/10). Se sigue aceptando por si algún día vuelve a hacer falta.
+       */
+      area: z.string().min(2).max(200).default("Secretaría de Obras Públicas"),
       desdeGps: z.coerce.boolean().optional(),
     })
     .parse({
@@ -511,7 +516,7 @@ export async function crearDemandaCiudadano(formData: FormData) {
       descripcion: formData.get("descripcion"),
       direccion: formData.get("direccion"),
       solicitante: formData.get("solicitante"),
-      area: formData.get("area"),
+      area: formData.get("area") || undefined,
       desdeGps: formData.get("desdeGps") || undefined,
     });
 
