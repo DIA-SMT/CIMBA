@@ -435,6 +435,16 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
           <span className="font-normal text-texto-3 normal-case">
             — cada carga de la empresa crea la intervención real que alimenta la brecha
           </span>
+          {/* El control del inspector de ESTA orden: fotos y medidas de cada
+              carga, con la baja para lo duplicado o mal cargado. */}
+          {o.hechos > 0 && (
+            <Link
+              href={`/ordenes/control?vista=todos&orden=${o.id}`}
+              className="ml-2 text-xs font-semibold text-celeste normal-case hover:underline"
+            >
+              Controlar lo cargado →
+            </Link>
+          )}
         </h2>
         <PanelTabla>
           <table className="w-full text-sm">

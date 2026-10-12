@@ -573,6 +573,24 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
 
       {error && <p className="mt-2 text-sm font-medium text-peligro">{error}</p>}
 
+      {/* La carga anterior la dio de baja el inspector por mal cargada: el
+          bache volvió acá. Sin decirlo, la empresa vería reaparecer un punto
+          que ya había cargado y no sabría qué corregir. */}
+      {(() => {
+        const bajas = Array.isArray(item.metadata.bajas)
+          ? (item.metadata.bajas as Array<{ motivo?: string; detalle?: string | null }>)
+          : [];
+        const ultima = bajas[bajas.length - 1];
+        if (!ultima || ultima.motivo !== "mal_cargado") return null;
+        return (
+          <div className="mt-2 rounded-lg border border-peligro/40 bg-peligro/5 px-3 py-2 text-[12px] leading-snug">
+            <b className="text-peligro">El inspector dio de baja la carga anterior de este bache.</b>{" "}
+            {ultima.detalle ? <>Dijo: «{ultima.detalle}». </> : null}
+            Cargalo de nuevo, con las fotos y las medidas que corresponden.
+          </div>
+        );
+      })()}
+
       {/* Que se note que el teléfono devolvió algo: un campo que aparece lleno
           sin explicación se envía sin mirar, y acá lo que se envía se certifica. */}
       {rescatado && (
