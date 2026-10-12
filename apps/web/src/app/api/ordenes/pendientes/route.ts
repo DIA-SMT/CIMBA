@@ -4,7 +4,6 @@ import { TIPOS_ORDEN, type TipoOrden } from "@cimba/domain";
 import {
   imbornalesEnColector,
   pendientesEnAmbito,
-  rojasRelevablesEnCircuito,
   type AmbitoOrden,
 } from "@/lib/ordenes";
 
@@ -66,7 +65,7 @@ export async function GET(req: NextRequest) {
   if (ambito === "colector") {
     const colector = (sp.get("ref") ?? "").trim().slice(0, 120);
     if (!colector) return NextResponse.json({ error: "colector inválido" }, { status: 400 });
-    return NextResponse.json({ imbornales: await imbornalesEnColector(sesion, colector), rojas: 0 });
+    return NextResponse.json({ imbornales: await imbornalesEnColector(sesion, colector) });
   }
 
   /* El polígono no tiene id: el recorte ES la geometría, y viaja entera. */
@@ -90,15 +89,8 @@ export async function GET(req: NextRequest) {
     ? (tipoCrudo as TipoOrden)
     : "bacheo";
 
-  const [datos, rojas] = await Promise.all([
-    pendientesEnAmbito(sesion, ambito, ref, tipo, poligono),
-    // El relevamiento de rojos limpios solo existe por circuito: es la unidad
-    // con la que se reparte el trabajo a las contratistas.
-    ambito === "circuito" ? rojasRelevablesEnCircuito(sesion, ref) : Promise.resolve(0),
-  ]);
-  return NextResponse.json({
-    pendientes: datos.pendientes,
-    fueraDeAlcance: datos.fueraDeAlcance,
-    rojas,
-  });
+  /* Los pedidos sueltos ya vienen en la lista —en cualquier ámbito, no solo
+     por circuito—, así que el paso aparte de "Relevar el circuito" se fue. */
+  const datos = await pendientesEnAmbito(sesion, ambito, ref, tipo, poligono);
+  return NextResponse.json(datos);
 }

@@ -82,6 +82,71 @@ export const EMPRESAS_HABILITADAS_AGUA = ["uocra", "ingeco"] as const;
 export const entraEnOrden = (tipoOrden: TipoOrden, tipo: TipoProblema | null): boolean =>
   tipo == null ? tipoOrden === "bacheo" : TIPOS_POR_ORDEN[tipoOrden].includes(tipo);
 
+/** A qué repartición va un pedido (la columna `destino` de demandas). */
+export type DestinoPedido = "bacheo" | "sat" | "ingenieria";
+
+/**
+ * Qué pedidos sueltos se ofrecen en cada tipo de orden, según su destino.
+ *
+ * El destino lo pone el clasificador: un "bache" que cae en una calle de
+ * ripio va a Ingeniería, no a la cuadrilla de bacheo. Por eso una orden de
+ * bacheo solo ofrece lo de Bacheo, y una de ripio o de cordón cuneta ofrece
+ * también lo de Ingeniería, que es justamente donde terminan esos pedidos.
+ */
+export const DESTINOS_POR_ORDEN: Record<TipoOrden, DestinoPedido[]> = {
+  bacheo: ["bacheo"],
+  pano_hormigon: ["bacheo"],
+  carpeta: ["bacheo"],
+  ripio: ["bacheo", "ingenieria"],
+  cordon_cuneta: ["bacheo", "ingenieria"],
+  imbornales: ["ingenieria"],
+  tapas: ["ingenieria", "sat"],
+  perdida_agua: ["bacheo", "ingenieria", "sat"],
+};
+
+/**
+ * Los reclamos de la SAT —las intimaciones a Aguas del Tucumán— solo entran
+ * en una orden de pérdida de agua. En cualquier otra son trabajo ajeno: "los
+ * reclamos de la SAT no deberían aparecer" (Dirección de Bacheo, 12/10).
+ */
+const aceptaReclamosSat = (tipoOrden: TipoOrden) => tipoOrden === "perdida_agua";
+
+/**
+ * ¿Este PROBLEMA ya relevado se ofrece en la orden?
+ *
+ * Dos cosas quedan afuera aunque el tipo coincida:
+ * - las OBRAS DEL SIGOV: ya tienen contratista y expediente por su propia vía
+ *   ("el SIGO sigue trabajando como venimos laborando"), así que ofrecerlas
+ *   era invitar a mandar dos veces la misma obra;
+ * - el problema que solo tiene detrás reclamos de la SAT, salvo en la orden
+ *   de pérdida de agua. Si además lo pidió un vecino, entra: ese pedido es
+ *   nuestro.
+ */
+export function problemaEntraEnOrden(
+  tipoOrden: TipoOrden,
+  p: { tipo: TipoProblema | null; origen: string | null; fuentes: readonly string[] },
+): boolean {
+  if (p.origen === "sigov") return false;
+  if (!aceptaReclamosSat(tipoOrden) && p.fuentes.length > 0 && p.fuentes.every((f) => f === "sat")) {
+    return false;
+  }
+  return entraEnOrden(tipoOrden, p.tipo);
+}
+
+/**
+ * ¿Este PEDIDO suelto —todavía no relevado como problema— se ofrece en la
+ * orden? El destino sin clasificar cuenta como Bacheo, el mismo criterio del
+ * mapa y de la brecha.
+ */
+export function pedidoEntraEnOrden(
+  tipoOrden: TipoOrden,
+  p: { tipo: TipoProblema | null; destino: DestinoPedido | null; fuente: string },
+): boolean {
+  if (!aceptaReclamosSat(tipoOrden) && p.fuente === "sat") return false;
+  if (!DESTINOS_POR_ORDEN[tipoOrden].includes(p.destino ?? "bacheo")) return false;
+  return entraEnOrden(tipoOrden, p.tipo);
+}
+
 /**
  * Lo que la orden NO va a poder resolver aunque esté en la zona: sirve para
  * decirlo en pantalla en vez de esconderlo. Que el Director vea "hay 59

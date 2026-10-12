@@ -24,8 +24,9 @@ import { mensajeDeError } from "@/lib/errores";
 interface CircuitoOpcion {
   id: number;
   codigo: string;
+  /** Problemas que la orden de bacheo ofrecería, y pedidos sin atender. */
   pendientes: number;
-  demandasAbiertas: number;
+  pedidos: number;
   empresaId: number | null;
   empresaNombre: string | null;
 }
@@ -34,6 +35,8 @@ interface OpcionAmbito {
   id: number;
   etiqueta: string;
   pendientes: number;
+  /** Pedidos sin atender que todavía no son un problema. */
+  pedidos: number;
   /** Solo corredores: jerarquía vial (1 = troncal) e índice de priorización. */
   nivel?: number | null;
   ipi?: number | null;
@@ -122,6 +125,17 @@ const AMBITOS: Array<{
 
 const ES_PLUVIAL = (t: TipoOrden) => t === "imbornales" || t === "tapas";
 
+/**
+ * Cómo se nombra lo que no entra cuando el motivo no es el tipo de problema
+ * (las claves que arma pendientesEnAmbito en lib/ordenes.ts).
+ */
+const ETIQUETA_FUERA: Record<string, string> = {
+  reclamos_sat: "intimaciones a la SAT",
+  destino_sat: "pedidos derivados a la SAT",
+  destino_ingenieria: "pedidos de Ingeniería",
+  destino_bacheo: "pedidos de Bacheo",
+};
+
 interface Tramo {
   direccion: string;
   tipoTrabajo: "bache" | "carpeta" | "tramo";
@@ -192,16 +206,17 @@ export function FormularioOrden({
   const [imbornales, setImbornales] = useState<ImbornalPend[]>([]);
   const [circuitoId, setCircuitoId] = useState<number>(0);
   const [pendientes, setPendientes] = useState<PendienteCircuito[]>([]);
-  // Pedidos ROJOS limpios del circuito que todavía no son incidentes: el
-  // botón de relevar los convierte en cola de un paso.
-  const [rojas, setRojas] = useState(0);
   /** Lo que hay en la zona y no entra en ESTA orden, por tipo. Se dice, no se esconde. */
   const [fueraDeAlcance, setFueraDeAlcance] = useState<Array<{ tipo: string; n: number }>>([]);
-  const [relevando, setRelevando] = useState(false);
-  const [avisoRelevar, setAvisoRelevar] = useState<string | null>(null);
+  /** Pedidos que no se listan porque ya los cubre otra cosa (mismo semáforo del mapa). */
+  const [cubiertos, setCubiertos] = useState({ yaArreglados: 0, conTrabajoCerca: 0 });
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
-  const [seleccion, setSeleccion] = useState<Set<number>>(new Set());
+  /**
+   * Lo tildado, por clave: "i:<id>" un problema, "p:<id>" un punto con pedidos
+   * sueltos, y el id a secas para las bocas de tormenta.
+   */
+  const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
   // Si vino un recorrido del mapa, el formulario abre con ese tramo puesto.
   const [tramos, setTramos] = useState<Tramo[]>(
     recorrido ? [{ direccion: "Recorrido dibujado en el mapa", tipoTrabajo: "tramo", recorrido }] : [],
@@ -241,9 +256,8 @@ export function FormularioOrden({
     setPendientes([]);
     setImbornales([]);
     setErrorCarga(null);
-    setRojas(0);
     setFueraDeAlcance([]);
-    setAvisoRelevar(null);
+    setCubiertos({ yaArreglados: 0, conTrabajoCerca: 0 });
     /* El área dibujada no tiene "ref": el recorte es la geometría. */
     if (!ref && ambito !== "poligono") return;
     const pedido = ++pedidoRef.current;
@@ -260,8 +274,9 @@ export function FormularioOrden({
       const j = (await r.json()) as {
         pendientes?: PendienteCircuito[];
         imbornales?: ImbornalPend[];
-        rojas?: number;
         fueraDeAlcance?: Array<{ tipo: string; n: number }>;
+        yaArreglados?: number;
+        conTrabajoCerca?: number;
       };
       if (pedido !== pedidoRef.current) return;
       setPendientes(j.pendientes ?? []);
@@ -272,13 +287,11 @@ export function FormularioOrden({
        * pedirle que lo diga dos veces. Se puede destildar lo que sobre.
        */
       if (ambito === "poligono") {
-        setSeleccion(
-          new Set((j.pendientes ?? []).filter((p) => !p.enOrden).map((p) => p.incidenteId)),
-        );
+        setSeleccion(new Set((j.pendientes ?? []).filter((p) => !p.enOrden).map((p) => p.clave)));
       }
       setImbornales(j.imbornales ?? []);
-      setRojas(j.rojas ?? 0);
       setFueraDeAlcance(j.fueraDeAlcance ?? []);
+      setCubiertos({ yaArreglados: j.yaArreglados ?? 0, conTrabajoCerca: j.conTrabajoCerca ?? 0 });
       /**
        * La empresa se propone sola. El circuito ya lo hacía por su columna
        * empresa_id; el resto de los ámbitos no tenía cómo — y era justo donde
@@ -316,8 +329,6 @@ export function FormularioOrden({
     }
   };
 
-  const elegirCircuito = elegirAmbitoRef;
-
   /** Cambiar el tipo o el ámbito invalida lo elegido: no se puede armar media
    *  orden de bacheo por circuito y terminarla como imbornales por colector. */
   const cambiarTipo = (t: TipoOrden) => {
@@ -344,9 +355,13 @@ export function FormularioOrden({
    * decisión sigue siendo suya, y hay empresas que no trabajan por zonas
    * (Administración cubre toda la ciudad; las de SIGOV van por obra).
    */
+  /** Lo mismo que va a ofrecer la lista: problemas y pedidos sin atender. */
+  const cuantos = (o: { pendientes: number; pedidos: number }) =>
+    `${numero(o.pendientes)} problemas · ${numero(o.pedidos)} pedidos sin atender`;
+
   const detalleAmbito = (o: OpcionAmbito) =>
     [
-      `${numero(o.pendientes)} pendientes`,
+      cuantos(o),
       // Corredores: los mismos datos con los que se los mira en el IPI.
       o.nivel != null ? `nivel ${o.nivel}` : null,
       o.ipi != null ? `IPI ${o.ipi.toFixed(1)}` : null,
@@ -381,7 +396,7 @@ export function FormularioOrden({
       ? circuitos.map((c) => ({
           ref: c.id,
           etiqueta: c.empresaNombre ? `${c.codigo} · ${c.empresaNombre}` : c.codigo,
-          detalle: `${numero(c.pendientes)} pendientes · ${numero(c.demandasAbiertas)} reclamos`,
+          detalle: cuantos(c),
         }))
       : ambito === "distrito"
         ? distritos.map((o) => ({ ref: o.id, etiqueta: o.etiqueta, detalle: detalleAmbito(o) }))
@@ -405,7 +420,7 @@ export function FormularioOrden({
   const empresaHabilitada = (slug: string) =>
     tipo !== "perdida_agua" || (EMPRESAS_HABILITADAS_AGUA as readonly string[]).includes(slug);
 
-  const alternarSeleccion = (id: number) => {
+  const alternarSeleccion = (id: string) => {
     setSeleccion((s) => {
       const nuevo = new Set(s);
       if (nuevo.has(id)) nuevo.delete(id);
@@ -417,7 +432,7 @@ export function FormularioOrden({
   // La consulta ya viene ordenada por reclamos desc + score desc: el "top"
   // es simplemente los primeros N que no estén en otra orden.
   const elegirTop = (n: number) => {
-    setSeleccion(new Set(pendientes.filter((p) => !p.enOrden).slice(0, n).map((p) => p.incidenteId)));
+    setSeleccion(new Set(pendientes.filter((p) => !p.enOrden).slice(0, n).map((p) => p.clave)));
   };
 
   const actualizarTramo = (i: number, cambios: Partial<Tramo>) =>
@@ -517,7 +532,7 @@ export function FormularioOrden({
   };
 
   // ── Estimación en vivo ─────────────────────────────────────────────────────
-  const seleccionados = pendientes.filter((p) => seleccion.has(p.incidenteId));
+  const seleccionados = pendientes.filter((p) => seleccion.has(p.clave));
   const tramosValidos = tramos.filter((t) => t.direccion.trim().length >= 3);
   // Misma regla que crearOrden: pavimento deteriorado → carpeta, el resto →
   // bache. Un "tramo" manual se estima como carpeta (el costo alto), mejor
@@ -573,8 +588,17 @@ export function FormularioOrden({
           venceEn: venceEn || undefined,
           // En una orden pluvial lo tildado son bocas de tormenta, no
           // incidentes de calzada: viajan por su propia lista.
-          incidenteIds: ambito === "colector" ? [] : [...seleccion],
-          imbornalIds: ambito === "colector" ? [...seleccion] : [],
+          incidenteIds:
+            ambito === "colector"
+              ? []
+              : seleccionados.flatMap((p) => (p.incidenteId != null ? [p.incidenteId] : [])),
+          // Los pedidos sueltos van por punto: cada grupo se releva como un
+          // problema al crear la orden.
+          pedidos:
+            ambito === "colector"
+              ? []
+              : seleccionados.filter((p) => p.incidenteId == null).map((p) => p.demandaIds),
+          imbornalIds: ambito === "colector" ? [...seleccion].map(Number) : [],
           tramos: tramosValidos.map((t) => ({
             direccion: t.direccion.trim(),
             /**
@@ -680,8 +704,8 @@ export function FormularioOrden({
                   <input
                     type="checkbox"
                     disabled={im.enOrden}
-                    checked={seleccion.has(im.id)}
-                    onChange={() => alternarSeleccion(im.id)}
+                    checked={seleccion.has(String(im.id))}
+                    onChange={() => alternarSeleccion(String(im.id))}
                     className="mt-1 accent-[#0066ff]"
                   />
                   <span className="min-w-0 flex-1">
@@ -728,7 +752,7 @@ export function FormularioOrden({
             <b className="text-amarillo">Acá hay {numero(fueraDeAlcance.reduce((a, f) => a + f.n, 0))} pedidos que no entran en esta orden:</b>{" "}
             <span className="text-texto-2">
               {fueraDeAlcance
-                .map((f) => `${numero(f.n)} ${ETIQUETA_TIPO[f.tipo as keyof typeof ETIQUETA_TIPO] ?? f.tipo}`)
+                .map((f) => `${numero(f.n)} ${ETIQUETA_FUERA[f.tipo] ?? ETIQUETA_TIPO[f.tipo as keyof typeof ETIQUETA_TIPO] ?? f.tipo}`)
                 .join(", ")}
               . No son de Bacheo: van a la SAT o a Ingeniería por nota.
             </span>
@@ -752,6 +776,22 @@ export function FormularioOrden({
                 <span className="font-normal text-texto-3">
                   — {numero(pendientes.length)} pendientes; los reclamos detrás de cada bache mandan
                 </span>
+                {/* Lo que no se lista y por qué, para que el número cierre con
+                    el del mapa: el mismo semáforo, dicho en palabras. */}
+                {!cargando && cubiertos.yaArreglados + cubiertos.conTrabajoCerca > 0 && (
+                  <span className="mt-0.5 block text-[11px] font-normal text-texto-3">
+                    No se listan{" "}
+                    {[
+                      cubiertos.yaArreglados > 0 &&
+                        `${numero(cubiertos.yaArreglados)} pedidos con un arreglo posterior a menos de 40 m (se cierran con el vecino)`,
+                      cubiertos.conTrabajoCerca > 0 &&
+                        `${numero(cubiertos.conTrabajoCerca)} con un trabajo en marcha a menos de 40 m`,
+                    ]
+                      .filter(Boolean)
+                      .join(" ni ")}
+                    .
+                  </span>
+                )}
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -778,47 +818,6 @@ export function FormularioOrden({
               </div>
             </div>
 
-            {/* La brecha roja del circuito, convertible en cola con un botón:
-                sin esto, cada pedido rojo era una ficha a mano. */}
-            {!cargando && rojas > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde bg-encurso/10 px-4 py-2.5">
-                <p className="text-xs leading-snug text-texto-2">
-                  Este circuito tiene <b className="num text-encurso">{numero(rojas)}</b> pedidos{" "}
-                  <b>sin atención</b> que todavía no son incidentes (ubicación confiable, tipo claro, nada
-                  trabajándose cerca). Relevarlos los agrupa (~25 m) y los suma a esta lista, ya priorizados
-                  y con sus reclamos vinculados.
-                </p>
-                <button
-                  type="button"
-                  disabled={relevando}
-                  onClick={async () => {
-                    setRelevando(true);
-                    setAvisoRelevar(null);
-                    try {
-                      const { relevarCircuito } = await import("@/lib/acciones-ordenes");
-                      const r = await relevarCircuito({ circuitoId });
-                      // elegirCircuito limpia el aviso: el mensaje va DESPUÉS.
-                      await elegirCircuito(circuitoId);
-                      setAvisoRelevar(
-                        `Relevado: ${r.demandas} pedidos agrupados en ${r.incidentes} incidentes, ya en la lista.`,
-                      );
-                    } catch (e) {
-                      setAvisoRelevar(mensajeDeError(e, "No se pudo relevar el circuito"));
-                    } finally {
-                      setRelevando(false);
-                    }
-                  }}
-                  className="shrink-0 rounded-lg bg-azul px-3 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
-                >
-                  {relevando ? "Relevando…" : `Relevar el circuito (${numero(rojas)})`}
-                </button>
-              </div>
-            )}
-            {avisoRelevar && (
-              <p className="border-b border-borde px-4 py-2 text-xs font-semibold" style={{ color: "var(--color-hecho)" }}>
-                {avisoRelevar}
-              </p>
-            )}
             {cargando ? (
               <p className="px-4 py-8 text-center text-sm text-texto-3">Cargando pendientes…</p>
             ) : pendientes.length === 0 ? (
@@ -844,11 +843,11 @@ export function FormularioOrden({
                   </thead>
                   <tbody>
                     {pendientes.map((p) => {
-                      const marcado = seleccion.has(p.incidenteId);
+                      const marcado = seleccion.has(p.clave);
                       return (
                         <tr
-                          key={p.incidenteId}
-                          onClick={() => !p.enOrden && alternarSeleccion(p.incidenteId)}
+                          key={p.clave}
+                          onClick={() => !p.enOrden && alternarSeleccion(p.clave)}
                           className={`border-b border-borde/60 transition ${
                             p.enOrden ? "opacity-40" : "cursor-pointer hover:bg-panel-2"
                           } ${marcado ? "bg-celeste/5" : ""}`}
@@ -858,7 +857,7 @@ export function FormularioOrden({
                               type="checkbox"
                               checked={marcado}
                               disabled={p.enOrden}
-                              onChange={() => alternarSeleccion(p.incidenteId)}
+                              onChange={() => alternarSeleccion(p.clave)}
                               onClick={(e) => e.stopPropagation()}
                               className="accent-[#2eb1ff]"
                             />
@@ -870,14 +869,21 @@ export function FormularioOrden({
                               <ChipMiniMapa
                                 lat={p.lat}
                                 lon={p.lon}
-                                etiqueta={p.direccion ?? `Incidente #${p.incidenteId}`}
+                                etiqueta={p.direccion ?? (p.incidenteId != null ? `Problema #${p.incidenteId}` : "Pedido sin dirección")}
                               />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate" title={p.direccion ?? undefined}>
-                                  {p.direccion ?? `Incidente #${p.incidenteId}`}
+                                  {p.direccion ?? (p.incidenteId != null ? `Problema #${p.incidenteId}` : "Pedido sin dirección")}
                                 </span>
                                 {p.enOrden && (
                                   <span className="text-[10px] text-texto-3">ya está en otra orden activa</span>
+                                )}
+                                {/* Todavía no es un problema: se releva solo al
+                                    crear la orden, con sus pedidos vinculados. */}
+                                {p.incidenteId == null && (
+                                  <span className="text-[10px] text-texto-3">
+                                    {p.reclamos > 1 ? "pedidos sin relevar" : "pedido sin relevar"}
+                                  </span>
                                 )}
                               </span>
                             </div>
@@ -900,7 +906,16 @@ export function FormularioOrden({
                           <td className="num px-3 py-2 text-right text-xs text-texto-2">
                             {p.superficieM2 != null ? numero(Math.round(p.superficieM2)) : "—"}
                           </td>
-                          <td className="num px-3 py-2 text-right text-xs text-texto-2">{numero(diasDesde(p.detectadoEn))} d</td>
+                          <td className="num px-3 py-2 text-right text-xs text-texto-2">
+                            {/* El pedido que vino en una planilla sin fecha no
+                                tiene antigüedad conocida: contar desde el día
+                                en que se cargó sería inventarla. */}
+                            {p.sinFecha ? (
+                              <span title="Vino en una planilla sin fecha: no se sabe desde cuándo espera">s/f</span>
+                            ) : (
+                              <>{numero(diasDesde(p.detectadoEn))} d</>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}

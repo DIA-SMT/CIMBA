@@ -52,9 +52,12 @@ export default async function PaginaNuevaOrden({
     )
     .slice(0, 500);
   const sesion = (await leerSesion())!;
-  const [circuitos, empresas, parametros, distritos, barrios, corredores, zonas, colectores] =
+  const [circuitos, conteoCircuitos, empresas, parametros, distritos, barrios, corredores, zonas, colectores] =
     await Promise.all([
       resumenCircuitos(sesion),
+      // Los números del circuito con la misma regla que los demás ámbitos:
+      // resumenCircuitos cuenta todo lo abierto y lo usa el simulador así.
+      opcionesAmbito(sesion, "circuito"),
       listarEmpresas(sesion),
       obtenerCapacidad(sesion),
       opcionesAmbito(sesion, "distrito"),
@@ -80,8 +83,8 @@ export default async function PaginaNuevaOrden({
         circuitos={circuitos.map((c) => ({
           id: c.id,
           codigo: c.codigo,
-          pendientes: c.pendientes,
-          demandasAbiertas: c.demandasAbiertas,
+          pendientes: conteoCircuitos.find((x) => x.id === c.id)?.pendientes ?? 0,
+          pedidos: conteoCircuitos.find((x) => x.id === c.id)?.pedidos ?? 0,
           empresaId: c.empresaId,
           empresaNombre: c.empresaNombre,
         }))}

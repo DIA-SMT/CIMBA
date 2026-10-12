@@ -77,7 +77,7 @@ export async function firmarActaMedicion(entrada: z.infer<typeof actaSchema>) {
 
   return conRls(claims(sesion), async (tx) => {
     // Lista IN parametrizada, nunca concatenada: es el idioma del proyecto
-    // (ver relevarCircuito) y además evita el bug de serialización de arrays
+    // (ver relevarPedidos en acciones-ordenes.ts) y además evita el bug de serialización de arrays
     // del driver, que rompe con `= any($n::bigint[])`.
     const pedidos = sql.join(d.mediciones.map((m) => sql`${m.itemId}`), sql`, `);
     const items = (await tx.execute(sql`

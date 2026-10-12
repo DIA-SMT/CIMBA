@@ -1,5 +1,14 @@
 import { conRls, sql, getDb } from "@cimba/db";
-import { entraEnOrden, type TipoOrden } from "@cimba/domain";
+import {
+  entraEnOrden,
+  pedidoEntraEnOrden,
+  problemaEntraEnOrden,
+  scorePriorizacion,
+  DESTINOS_POR_ORDEN,
+  TIPOS_POR_ORDEN,
+  type DestinoPedido,
+  type TipoOrden,
+} from "@cimba/domain";
 import type { EstadoItemOrden, EstadoOrden, PrioridadVial, TipoProblema } from "@cimba/domain";
 import type { Sesion } from "./auth";
 import { puedeVerContacto } from "./auth";
@@ -73,7 +82,19 @@ export async function resumenCircuitos(sesion: Sesion): Promise<CircuitoResumen[
 // ── Lo pendiente adentro de un circuito (para armar la orden) ───────────────
 
 export interface PendienteCircuito {
-  incidenteId: number;
+  /**
+   * Clave de la fila para tildarla: "i:<id>" un problema ya relevado, "p:<id>"
+   * un punto con pedidos sueltos (el id es el del pedido más viejo).
+   */
+  clave: string;
+  /** El problema, cuando ya existe. Null en un punto de pedidos sueltos. */
+  incidenteId: number | null;
+  /**
+   * PEDIDOS SUELTOS que todavía no son un problema. Al crear la orden se
+   * relevan —un problema por punto— y quedan vinculados, igual que lo hacía
+   * "Relevar el circuito" pero sin el paso aparte.
+   */
+  demandaIds: number[];
   tipo: TipoProblema;
   estado: string;
   direccion: string | null;
@@ -85,6 +106,8 @@ export interface PendienteCircuito {
   fuentes: string[];
   superficieM2: number | null;
   detectadoEn: string;
+  /** El pedido vino en una planilla sin fecha: la antigüedad no se conoce. */
+  sinFecha: boolean;
   lat: number;
   lon: number;
   /** Ya está en otra orden activa: no ofrecerlo de nuevo. */
@@ -127,21 +150,29 @@ export function poligonoSql(anillo: Array<[number, number]>) {
  * incidentes, así que se resuelven contra su geometría: el corredor por
  * cercanía (es una línea) y el barrio por contención (es un polígono).
  */
-function filtroAmbito(ambito: AmbitoOrden, refId: number, poligono?: Array<[number, number]>) {
+function filtroAmbito(
+  ambito: AmbitoOrden,
+  refId: number,
+  poligono?: Array<[number, number]>,
+  /** Sobre qué tabla se recorta: "i" incidentes, "d" demandas. Las dos tienen
+   *  geom, distrito_id y circuito_id con el mismo nombre. */
+  tabla: "i" | "d" = "i",
+) {
+  const t = sql.raw(tabla);
   /* El polígono dibujado no tiene id: el recorte ES la geometría. */
   if (ambito === "poligono") {
     if (!poligono || poligono.length < 3) return sql`false`;
-    return sql`st_contains(${poligonoSql(poligono)}, i.geom)`;
+    return sql`st_contains(${poligonoSql(poligono)}, ${t}.geom)`;
   }
-  if (ambito === "circuito") return sql`i.circuito_id = ${refId}`;
-  if (ambito === "distrito") return sql`i.distrito_id = ${refId}`;
+  if (ambito === "circuito") return sql`${t}.circuito_id = ${refId}`;
+  if (ambito === "distrito") return sql`${t}.distrito_id = ${refId}`;
   if (ambito === "barrio") {
-    return sql`exists (select 1 from barrios b where b.id = ${refId} and st_contains(b.geom, i.geom))`;
+    return sql`exists (select 1 from barrios b where b.id = ${refId} and st_contains(b.geom, ${t}.geom))`;
   }
   if (ambito === "corredor") {
     return sql`exists (
       select 1 from corredores c
-      where c.id = ${refId} and st_dwithin(c.geom::geography, i.geom::geography, 30)
+      where c.id = ${refId} and st_dwithin(c.geom::geography, ${t}.geom::geography, 30)
     )`;
   }
   /* La zona del contrato de bacheo integral: contención pura, como el barrio.
@@ -149,7 +180,7 @@ function filtroAmbito(ambito: AmbitoOrden, refId: number, poligono?: Array<[numb
      tolerancia de metros que valga. */
   if (ambito === "zona") {
     return sql`exists (
-      select 1 from zonas_bacheo z where z.id = ${refId} and st_contains(z.geom, i.geom)
+      select 1 from zonas_bacheo z where z.id = ${refId} and st_contains(z.geom, ${t}.geom)
     )`;
   }
   // El colector agrupa imbornales, no incidentes de calzada: no aporta
@@ -158,20 +189,63 @@ function filtroAmbito(ambito: AmbitoOrden, refId: number, poligono?: Array<[numb
 }
 
 /**
- * Los incidentes abiertos dentro de un ámbito. El ámbito ya no es solo el
- * circuito: Leo pidió poder armar la orden por distrito, circuito, corredor o
- * barrio — "son esas cuatro alternativas". El corredor filtra por cercanía
- * (30 m) porque es una línea, no un polígono con incidentes adentro.
+ * Lo pendiente dentro de un ámbito, para armar la orden. El ámbito ya no es
+ * solo el circuito: Leo pidió poder armar la orden por distrito, circuito,
+ * corredor o barrio — "son esas cuatro alternativas". El corredor filtra por
+ * cercanía (30 m) porque es una línea, no un polígono con incidentes adentro.
  */
 export interface PendientesDelAmbito {
   pendientes: PendienteCircuito[];
   /**
-   * Lo que hay en la zona y NO entra en esta orden, contado por tipo. No se
-   * esconde: se cuenta y se dice. Sacar 59 pérdidas de agua de la lista sin
-   * avisar sería cambiar un problema (ofrecer lo que no corresponde) por otro
-   * peor (que el Director no sepa que están ahí).
+   * Lo que hay en la zona y NO entra en esta orden. No se esconde: se cuenta
+   * y se dice. Sacar 59 pérdidas de agua de la lista sin avisar sería cambiar
+   * un problema (ofrecer lo que no corresponde) por otro peor (que el Director
+   * no sepa que están ahí).
+   *
+   * La clave es el tipo de problema, o el motivo cuando no es el tipo:
+   * "reclamos_sat" (intimaciones a la SAT), "destino_sat" y
+   * "destino_ingenieria" (pedidos que el clasificador mandó a otra
+   * repartición).
    */
-  fueraDeAlcance: Array<{ tipo: TipoProblema; n: number }>;
+  fueraDeAlcance: Array<{ tipo: string; n: number }>;
+  /**
+   * Pedidos del ámbito que no se ofrecen porque ya los cubre otra cosa, con el
+   * MISMO criterio del semáforo del mapa: un arreglo posterior a menos de 40 m
+   * (falta avisarle al vecino, no mandar a bachear) o un trabajo en marcha a
+   * menos de 40 m. Se cuentan para que el número cierre con el del mapa.
+   */
+  yaArreglados: number;
+  conTrabajoCerca: number;
+}
+
+/** Metros entre dos puntos, sin ir a la base: para agrupar pedidos vecinos. */
+function metrosEntre(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const rad = Math.PI / 180;
+  const x = (b.lon - a.lon) * rad * Math.cos(((a.lat + b.lat) / 2) * rad);
+  const y = (b.lat - a.lat) * rad;
+  return Math.sqrt(x * x + y * y) * 6_371_000;
+}
+
+/**
+ * Diez vecinos, un pozo: los pedidos a menos de 25 m entre sí son el mismo
+ * punto (el radio del cotejo automático). Encadenado, como el agrupamiento
+ * que usaba "Relevar el circuito": si A está cerca de B y B de C, van juntos.
+ */
+const RADIO_MISMO_PUNTO_M = 25;
+function agruparPorCercania<T extends { lat: number; lon: number }>(puntos: T[]): T[][] {
+  const grupo = puntos.map((_, i) => i);
+  const raiz = (i: number): number => (grupo[i] === i ? i : (grupo[i] = raiz(grupo[i]!)));
+  for (let i = 0; i < puntos.length; i++) {
+    for (let j = i + 1; j < puntos.length; j++) {
+      if (metrosEntre(puntos[i]!, puntos[j]!) <= RADIO_MISMO_PUNTO_M) grupo[raiz(j)] = raiz(i);
+    }
+  }
+  const porRaiz = new Map<number, T[]>();
+  puntos.forEach((p, i) => {
+    const r = raiz(i);
+    porRaiz.set(r, [...(porRaiz.get(r) ?? []), p]);
+  });
+  return [...porRaiz.values()];
 }
 
 export async function pendientesEnAmbito(
@@ -186,6 +260,7 @@ export async function pendientesEnAmbito(
     const filas = (await tx.execute(sql`
       select i.id, i.tipo, i.estado, i.direccion, i.score_prioridad, i.superficie_m2,
              i.detectado_en, st_y(i.geom) as lat, st_x(i.geom) as lon,
+             i.metadata->>'origen' as origen,
              (select count(*) from demanda_incidente di where di.incidente_id = i.id)::int as reclamos,
              coalesce((select array_agg(distinct d.fuente::text)
                        from demanda_incidente di
@@ -204,68 +279,184 @@ export async function pendientesEnAmbito(
       order by reclamos desc, i.score_prioridad desc nulls last, i.detectado_en
     `)) as unknown as Array<Record<string, unknown>>;
 
-    const todos = filas.map((f) => ({
-      incidenteId: Number(f.id),
-      tipo: f.tipo as TipoProblema,
-      estado: String(f.estado),
-      direccion: (f.direccion as string) ?? null,
-      score: f.score_prioridad != null ? Number(f.score_prioridad) : null,
-      reclamos: Number(f.reclamos ?? 0),
-      fuentes: (f.fuentes as string[]) ?? [],
-      superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
-      detectadoEn: String(f.detectado_en),
-      lat: Number(f.lat),
-      lon: Number(f.lon),
-      enOrden: Boolean(f.en_orden),
-    }));
+    /**
+     * LOS PEDIDOS QUE TODAVÍA NO SON UN PROBLEMA.
+     *
+     * La lista mostraba solo problemas ya relevados, y casi todo lo que piden
+     * los vecinos sigue siendo un pedido suelto: en el distrito 9 había 172
+     * pedidos de Bacheo abiertos y la lista ofrecía siete puntos — cuatro
+     * obras del SIGOV y tres intimaciones a la SAT, justo lo que no va (12/10).
+     *
+     * Cada pedido se clasifica con el semáforo del mapa (consultas.ts,
+     * geodata): solo se ofrece el SIN ATENCIÓN. El que tiene un arreglo
+     * posterior cerca se cierra con el vecino; el que tiene un trabajo en
+     * marcha cerca ya está en la cola. Esos dos se cuentan, no se listan.
+     */
+    const crudos = (await tx.execute(sql`
+      select d.id, d.tipo::text as tipo, d.fuente::text as fuente, d.destino::text as destino,
+             -- La dirección como la dijo quien reclamó ("Miguel Cane 2427"),
+             -- no la del mapa ("2469, Miguel Cané, Floresta, …"): es la que
+             -- va a leer la cuadrilla en la hoja de la orden.
+             coalesce(nullif(trim(d.direccion_texto), ''), d.direccion_normalizada) as direccion,
+             d.creado_en, coalesce(d.metadata->>'sin_fecha' = 'true', false) as sin_fecha,
+             coalesce(d.menciones, 0) as menciones, d.prioridad_informada,
+             st_y(d.geom) as lat, st_x(d.geom) as lon,
+             case
+               when exists (select 1 from incidentes i
+                 where i.estado in ('reparado','verificado')
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40)
+                   and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
+                 then 'posible_resuelta'
+               when exists (select 1 from incidentes i
+                 where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                   and st_dwithin(i.geom::geography, d.geom::geography, 40))
+                 then 'en_cola'
+               else 'sin_atencion'
+             end as brecha
+      from demandas d
+      where ${filtroAmbito(ambito, refId, poligono, "d")}
+        and d.estado in ('recibida','en_validacion')
+        and d.geom is not null
+        and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    const cuenta = new Map<string, number>();
+    const sumar = (clave: string) => cuenta.set(clave, (cuenta.get(clave) ?? 0) + 1);
+
+    const problemas: PendienteCircuito[] = [];
+    for (const f of filas) {
+      const p = {
+        tipo: f.tipo as TipoProblema,
+        origen: (f.origen as string) ?? null,
+        fuentes: (f.fuentes as string[]) ?? [],
+      };
+      if (!problemaEntraEnOrden(tipoOrden, p)) {
+        /* Las obras del SIGOV no son pedidos: tienen su propio circuito y no
+           se cuentan como algo que "no entra". Lo demás sí se dice. */
+        if (p.origen !== "sigov") sumar(entraEnOrden(tipoOrden, p.tipo) ? "reclamos_sat" : p.tipo);
+        continue;
+      }
+      problemas.push({
+        clave: `i:${f.id}`,
+        incidenteId: Number(f.id),
+        demandaIds: [],
+        tipo: p.tipo,
+        estado: String(f.estado),
+        direccion: (f.direccion as string) ?? null,
+        score: f.score_prioridad != null ? Number(f.score_prioridad) : null,
+        reclamos: Number(f.reclamos ?? 0),
+        fuentes: p.fuentes,
+        superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
+        detectadoEn: String(f.detectado_en),
+        sinFecha: false,
+        lat: Number(f.lat),
+        lon: Number(f.lon),
+        enOrden: Boolean(f.en_orden),
+      });
+    }
+
+    let yaArreglados = 0;
+    let conTrabajoCerca = 0;
+    const sinAtencion: Array<{
+      id: number;
+      tipo: TipoProblema | null;
+      fuente: string;
+      direccion: string | null;
+      creadoEn: string;
+      sinFecha: boolean;
+      menciones: number;
+      prioridadInformada: number | null;
+      lat: number;
+      lon: number;
+    }> = [];
+    for (const f of crudos) {
+      const pedido = {
+        tipo: (f.tipo as TipoProblema) ?? null,
+        destino: (f.destino as DestinoPedido) ?? null,
+        fuente: String(f.fuente),
+      };
+      if (!pedidoEntraEnOrden(tipoOrden, pedido)) {
+        sumar(
+          pedido.fuente === "sat" && tipoOrden !== "perdida_agua"
+            ? "reclamos_sat"
+            : !entraEnOrden(tipoOrden, pedido.tipo)
+              ? (pedido.tipo ?? "otro")
+              : `destino_${pedido.destino ?? "bacheo"}`,
+        );
+        continue;
+      }
+      if (f.brecha === "posible_resuelta") yaArreglados++;
+      else if (f.brecha === "en_cola") conTrabajoCerca++;
+      else {
+        sinAtencion.push({
+          id: Number(f.id),
+          tipo: pedido.tipo,
+          fuente: pedido.fuente,
+          direccion: (f.direccion as string) ?? null,
+          creadoEn: new Date(String(f.creado_en)).toISOString(),
+          sinFecha: Boolean(f.sin_fecha),
+          menciones: Number(f.menciones ?? 0),
+          prioridadInformada: f.prioridad_informada != null ? Number(f.prioridad_informada) : null,
+          lat: Number(f.lat),
+          lon: Number(f.lon),
+        });
+      }
+    }
 
     /**
-     * EL TIPO DE ORDEN MANDA. Antes este filtro no existía y una orden de
-     * bacheo ofrecía exactamente lo mismo que una de imbornales: todo lo
-     * abierto de la zona. Por eso las pérdidas de agua y las tapas de registro
-     * —que son de la SAT— aparecían listas para mandárselas a una contratista
-     * que no puede resolverlas.
+     * Un punto por grupo de pedidos vecinos, con el score que va a tener el
+     * problema cuando se cree (la misma cuenta que recalcularScore): así se
+     * ordenan contra los problemas ya relevados con la misma vara.
      */
-    const pendientes = todos.filter((p) => entraEnOrden(tipoOrden, p.tipo));
-    const cuenta = new Map<TipoProblema, number>();
-    for (const p of todos) {
-      if (entraEnOrden(tipoOrden, p.tipo)) continue;
-      cuenta.set(p.tipo, (cuenta.get(p.tipo) ?? 0) + 1);
-    }
+    const puntos: PendienteCircuito[] = agruparPorCercania(sinAtencion).map((g) => {
+      const orden = [...g].sort((a, b) => a.creadoEn.localeCompare(b.creadoEn));
+      const primero = orden[0]!;
+      const informadas = g.map((x) => x.prioridadInformada).filter((x): x is number => x != null);
+      const score = scorePriorizacion({
+        demandasVinculadas: g.length,
+        menciones: g.reduce((s, x) => s + x.menciones, 0),
+        diasAbierto: Math.max(0, (Date.now() - Date.parse(primero.creadoEn)) / 86_400_000),
+        prioridadInformada: informadas.length > 0 ? Math.min(...informadas) : null,
+        tipo: primero.tipo,
+        intervencionesPrevias: 0,
+        enCorredorPrincipal: /\bavenida\b|\bav\.?\s/i.test(primero.direccion ?? ""),
+      }).total;
+      return {
+        clave: `p:${primero.id}`,
+        incidenteId: null,
+        demandaIds: orden.map((x) => x.id),
+        tipo: primero.tipo ?? "bache",
+        estado: "pedido",
+        direccion: primero.direccion,
+        score,
+        reclamos: g.length,
+        fuentes: [...new Set(g.map((x) => x.fuente))],
+        superficieM2: null,
+        detectadoEn: primero.creadoEn,
+        sinFecha: g.every((x) => x.sinFecha),
+        lat: g.reduce((s, x) => s + x.lat, 0) / g.length,
+        lon: g.reduce((s, x) => s + x.lon, 0) / g.length,
+        enOrden: false,
+      };
+    });
+
+    /* Los reclamos detrás mandan, después el score y después la antigüedad:
+       el mismo orden que ya tenía la lista, ahora sobre las dos cosas juntas. */
+    const pendientes = [...problemas, ...puntos].sort(
+      (a, b) =>
+        b.reclamos - a.reclamos ||
+        (b.score ?? -1) - (a.score ?? -1) ||
+        Date.parse(a.detectadoEn) - Date.parse(b.detectadoEn),
+    );
+
     return {
       pendientes,
       fueraDeAlcance: [...cuenta.entries()]
         .map(([tipo, n]) => ({ tipo, n }))
         .sort((a, b) => b.n - a.n),
+      yaArreglados,
+      conTrabajoCerca,
     };
-  });
-}
-
-/**
- * Cuántos pedidos ROJOS limpios del circuito esperan relevamiento — la misma
- * condición exacta que relevarCircuito (acciones-ordenes.ts): si cambia una,
- * cambia la otra, o el botón promete un número y releva otro.
- */
-export async function rojasRelevablesEnCircuito(sesion: Sesion, circuitoId: number): Promise<number> {
-  return conRls(claims(sesion), async (tx) => {
-    const filas = (await tx.execute(sql`
-      select count(*)::int as n
-      from demandas d
-      join circuitos c on c.id = ${circuitoId} and st_contains(c.geom, d.geom)
-      where d.estado in ('recibida', 'en_validacion')
-        and d.geom is not null
-        and coalesce(d.destino::text, 'bacheo') = 'bacheo'
-        and coalesce(d.geocod_confianza, 0) >= 0.75
-        and d.tipo is not null
-        and not exists (
-          select 1 from incidentes i
-          where st_dwithin(i.geom::geography, d.geom::geography, 40)
-            and (i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                 or (i.estado in ('reparado','verificado')
-                     and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)))
-        )
-    `)) as unknown as Array<{ n: number }>;
-    return Number(filas[0]?.n ?? 0);
   });
 }
 
@@ -1061,7 +1252,10 @@ export async function empresasParaTipo(
 export interface OpcionAmbito {
   id: number;
   etiqueta: string;
+  /** Problemas ya relevados que una orden de bacheo ofrecería acá. */
   pendientes: number;
+  /** Pedidos sin atender que todavía no son un problema (también se ofrecen). */
+  pedidos: number;
   /**
    * QUÉ EMPRESAS TRABAJAN ACÁ, según las zonas del contrato de bacheo integral.
    *
@@ -1087,14 +1281,65 @@ export interface OpcionAmbito {
  * es lo que hace elegible una opción: sin él, elegir "barrio" es adivinar.
  */
 export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promise<OpcionAmbito[]> {
-  if (ambito === "circuito" || ambito === "colector") return [];
+  if (ambito === "colector") return [];
+  /**
+   * LO QUE LA LISTA VA A OFRECER, contado igual que la lista.
+   *
+   * El número contaba todos los problemas abiertos —obras del SIGOV e
+   * intimaciones a la SAT incluidas— y ningún pedido suelto: el distrito 9
+   * decía "7 pendientes" con 99 pedidos de vecinos sin atender adentro. Ahora
+   * son dos números, problemas y pedidos, con la regla de una orden de bacheo
+   * (problemaEntraEnOrden / pedidoEntraEnOrden, escrita acá en SQL con las
+   * mismas listas) y el semáforo del mapa para el "sin atender".
+   */
+  const tiposBacheo = sql.join(TIPOS_POR_ORDEN.bacheo.map((x) => sql`${x}`), sql`, `);
+  const destinosBacheo = sql.join(DESTINOS_POR_ORDEN.bacheo.map((x) => sql`${x}`), sql`, `);
+  const base = sql`
+    with problemas as materialized (
+      select i.id, i.geom, i.distrito_id, i.circuito_id
+      from incidentes i
+      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
+        and i.geom is not null
+        and coalesce(i.tipo::text, 'bache') in (${tiposBacheo})
+        and coalesce(i.metadata->>'origen', '') <> 'sigov'
+        and (
+          not exists (select 1 from demanda_incidente di where di.incidente_id = i.id)
+          or exists (select 1 from demanda_incidente di join demandas dd on dd.id = di.demanda_id
+                     where di.incidente_id = i.id and dd.fuente <> 'sat')
+        )
+    ),
+    rojos as materialized (
+      select d.id, d.geom, d.distrito_id, d.circuito_id
+      from demandas d
+      where d.estado in ('recibida','en_validacion')
+        and d.geom is not null
+        and d.fuente <> 'sat'
+        and coalesce(d.destino::text, 'bacheo') in (${destinosBacheo})
+        and coalesce(d.tipo::text, 'bache') in (${tiposBacheo})
+        and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)
+        and not exists (
+          select 1 from incidentes i
+          where st_dwithin(i.geom::geography, d.geom::geography, 40)
+            and (i.estado in ('detectado','priorizado','programado','en_ejecucion')
+                 or (i.estado in ('reparado','verificado')
+                     and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)))
+        )
+    )
+  `;
   return conRls(claims(sesion), async (tx) => {
     const consulta =
-      ambito === "distrito"
-        ? sql`
+      ambito === "circuito"
+        ? sql`${base}
+            select c.id, c.codigo as etiqueta,
+                   (select count(*) from problemas p where p.circuito_id = c.id)::int as pendientes,
+                   (select count(*) from rojos r where r.circuito_id = c.id)::int as pedidos,
+                   '[]'::json as empresas
+            from circuitos c order by c.codigo`
+      : ambito === "distrito"
+        ? sql`${base}
             select d.id, 'Distrito ' || d.id as etiqueta,
-                   (select count(*) from incidentes i where i.distrito_id = d.id
-                      and i.estado in ('detectado','priorizado','programado','en_ejecucion'))::int as pendientes,
+                   (select count(*) from problemas p where p.distrito_id = d.id)::int as pendientes,
+                   (select count(*) from rojos r where r.distrito_id = d.id)::int as pedidos,
                    (select coalesce(json_agg(json_build_object(
                         'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
                         'pct', round(100 * st_area(st_intersection(st_makevalid(d.geom), st_makevalid(z.geom)))
@@ -1106,22 +1351,20 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                             > 0.05 * st_area(st_makevalid(d.geom))) as empresas
             from distritos d order by d.id`
         : ambito === "zona"
-          ? sql`
+          ? sql`${base}
             select z.id,
                    z.nombre || coalesce(' · ' || z.empresa, '') as etiqueta,
-                   (select count(*) from incidentes i
-                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(z.geom, i.geom))::int as pendientes,
+                   (select count(*) from problemas p where st_contains(z.geom, p.geom))::int as pendientes,
+                   (select count(*) from rojos r where st_contains(z.geom, r.geom))::int as pedidos,
                    (select coalesce(json_agg(json_build_object(
                       'empresaId', z.empresa_id, 'nombre', coalesce(e2.nombre, z.empresa), 'pct', 100
                     )), '[]'::json) from empresas e2 where e2.id = z.empresa_id) as empresas
             from zonas_bacheo z order by z.nombre`
         : ambito === "barrio"
-          ? sql`
+          ? sql`${base}
             select b.id, b.nombre as etiqueta,
-                   (select count(*) from incidentes i
-                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null and st_contains(b.geom, i.geom))::int as pendientes,
+                   (select count(*) from problemas p where st_contains(b.geom, p.geom))::int as pendientes,
+                   (select count(*) from rojos r where st_contains(b.geom, r.geom))::int as pedidos,
                    (select coalesce(json_agg(json_build_object(
                         'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
                         'pct', round(100 * st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
@@ -1132,7 +1375,7 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
                         and st_area(st_intersection(st_makevalid(b.geom), st_makevalid(z.geom)))
                             > 0.05 * st_area(st_makevalid(b.geom))) as empresas
             from barrios b order by b.nombre`
-          : sql`
+          : sql`${base}
             /* Los MISMOS corredores que lista el IPI, y con sus datos: el
                Director pidió "que aparezcan todos los del filtro del IPI"
                para poder dar tramos de guía a recorrer. El nivel y el índice
@@ -1141,10 +1384,10 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
             select c.id,
                    c.nombre || coalesce(' · ' || s.sector, '') as etiqueta,
                    c.nivel, c.ipi,
-                   (select count(*) from incidentes i
-                      where i.estado in ('detectado','priorizado','programado','en_ejecucion')
-                        and i.geom is not null
-                        and st_dwithin(c.geom::geography, i.geom::geography, 30))::int as pendientes,
+                   (select count(*) from problemas p
+                      where st_dwithin(c.geom::geography, p.geom::geography, 30))::int as pendientes,
+                   (select count(*) from rojos r
+                      where st_dwithin(c.geom::geography, r.geom::geography, 30))::int as pedidos,
                    (select coalesce(json_agg(json_build_object(
                         'empresaId', z.empresa_id, 'nombre', coalesce(e.nombre, z.empresa),
                         'pct', round(100 * st_length(st_intersection(c.geom, st_makevalid(z.geom))::geography)
@@ -1177,6 +1420,7 @@ export async function opcionesAmbito(sesion: Sesion, ambito: AmbitoOrden): Promi
       id: Number(f.id),
       etiqueta: String(f.etiqueta),
       pendientes: Number(f.pendientes ?? 0),
+      pedidos: Number(f.pedidos ?? 0),
       nivel: f.nivel != null ? Number(f.nivel) : null,
       ipi: f.ipi != null ? Number(f.ipi) : null,
       /**
