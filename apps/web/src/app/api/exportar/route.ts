@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { leerSesion } from "@/lib/auth";
 import { listarDemandas, listarIncidentes, listarIntervenciones } from "@/lib/consultas";
 import { csv, respuestaCsv } from "@/lib/csv";
+import { NIVEL_IPI, gradoEstado, nombreCorredor, rankingIpi } from "@/lib/ipi";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -92,5 +93,92 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ error: "entidad inválida: demandas | incidentes | intervenciones" }, { status: 400 });
+  /**
+   * EL IPI RECALCULADO, para trabajarlo afuera: "que se pueda descargar un
+   * .csv con el IPI recalculado para poder procesar esa información en la toma
+   * de decisiones" (Dirección de Bacheo, 12/10).
+   *
+   * Una fila por corredor, en el orden de la metodología (sector, nivel, IPI)
+   * y con su puesto dentro del sector y el nivel, que es como se lee. Van las
+   * seis variables y el desglose del Estado, para poder rehacer la cuenta.
+   *
+   * Los decimales van con COMA: es lo que entiende como número el Excel con
+   * configuración argentina (con punto, "17.9" queda como texto o como fecha).
+   */
+  if (entidad === "ipi") {
+    const corredores = await rankingIpi(sesion);
+    const dec = (v: number | null, n = 1) =>
+      v == null ? null : v.toLocaleString("es-AR", { minimumFractionDigits: n, maximumFractionDigits: n, useGrouping: false });
+    const puesto = new Map<number, number>();
+    const contador = new Map<string, number>();
+    for (const c of corredores) {
+      if (c.excluido || c.ipi == null) continue;
+      const clave = `${c.sector ?? ""}|${c.nivel}`;
+      const n = (contador.get(clave) ?? 0) + 1;
+      contador.set(clave, n);
+      puesto.set(c.id, n);
+    }
+    return respuesta(
+      "cimba-ipi",
+      csv(
+        [
+          "sector",
+          "nivel",
+          "jerarquia",
+          "puesto_en_sector_y_nivel",
+          "corredor",
+          "ipi",
+          "estado_valor",
+          "estado_grado",
+          "roto_por_km",
+          "problemas_abiertos",
+          "pedidos_sin_atender",
+          "reaperturas_12m",
+          "arreglados_24m",
+          "interconexion_valor",
+          "barrios_conectados",
+          "accesibilidad_valor",
+          "transporte_publico",
+          "transporte_valor",
+          "equipamientos_valor",
+          "factibilidad_valor",
+          "compromiso_asumido",
+          "no_factible",
+          "largo_km",
+          "calculado_en",
+        ],
+        corredores.map((c) => [
+          c.sector,
+          c.nivel,
+          NIVEL_IPI[c.nivel],
+          puesto.get(c.id) ?? null,
+          nombreCorredor(c.nombre),
+          dec(c.ipi),
+          dec(c.vEstado, 0),
+          c.vEstado != null ? gradoEstado(c.vEstado) : null,
+          dec(c.densidadKm),
+          c.rotos?.problemas ?? null,
+          c.rotos?.pedidos ?? null,
+          c.rotos?.reaperturas ?? null,
+          c.arreglados24m,
+          dec(c.vInterconexion, 0),
+          c.barriosConectados,
+          dec(c.vAccesibilidad, 0),
+          c.tieneTransporte == null ? null : c.tieneTransporte ? "sí" : "no",
+          dec(c.vTransporte, 0),
+          dec(c.vEquipamientos, 0),
+          dec(c.vFactibilidad, 0),
+          c.compromiso ? "sí" : "no",
+          c.excluido ? "sí" : "no",
+          dec(c.longitudM / 1000, 2),
+          c.calculadoEn ? new Date(c.calculadoEn).toISOString().slice(0, 10) : null,
+        ]),
+      ),
+    );
+  }
+
+  return NextResponse.json(
+    { error: "entidad inválida: demandas | incidentes | intervenciones | ipi" },
+    { status: 400 },
+  );
 }

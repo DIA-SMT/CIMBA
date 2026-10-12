@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { CORTES_ESTADO, NIVEL_IPI, gradoEstado, nombreCorredor, rankingIpi } from "@/lib/ipi";
 import { fechaCorta, numero } from "@/lib/formato";
@@ -43,7 +43,21 @@ export default async function PaginaIpi({
       <TituloPagina
         titulo="Prioridad de corredores (IPI)"
         sub="El índice oficial del municipio, calculado con lo que pasa en la calle. Ordena qué corredor se interviene primero dentro de cada sector."
-        extra={puedeRecalcular ? <BotonRecalcularIpi /> : undefined}
+        extra={
+          <div className="flex flex-wrap items-center gap-2">
+            {/* La planilla con todos los corredores de todos los sectores,
+                para trabajarla en Excel. Un link común: el navegador la baja. */}
+            <a
+              href="/api/exportar?entidad=ipi"
+              download
+              className="flex items-center gap-1.5 rounded-lg border border-borde-2 px-3 py-2 text-xs font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
+              title="Bajar el IPI de todos los corredores, con sus seis variables, para abrirlo en Excel"
+            >
+              <Download size={14} /> Descargar planilla
+            </a>
+            {puedeRecalcular && <BotonRecalcularIpi />}
+          </div>
+        }
       />
 
       <Panel className="mb-5 p-4 text-[13px] leading-relaxed text-texto-2">
