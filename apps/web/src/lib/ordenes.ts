@@ -108,6 +108,12 @@ export interface PendienteCircuito {
   detectadoEn: string;
   /** El pedido vino en una planilla sin fecha: la antigüedad no se conoce. */
   sinFecha: boolean;
+  /**
+   * Hay un arreglo POSTERIOR a menos de 40 m: puede que ya esté hecho. Se
+   * ofrece igual, al final, para que la cuadrilla lo confirme en el lugar con
+   * "Ya estaba hecho" (Leo, 13/10).
+   */
+  arregloCerca?: { metros: number; fecha: string | null } | null;
   lat: number;
   lon: number;
   /** Ya está en otra orden activa: no ofrecerlo de nuevo. */
@@ -209,10 +215,10 @@ export interface PendientesDelAmbito {
    */
   fueraDeAlcance: Array<{ tipo: string; n: number }>;
   /**
-   * Pedidos del ámbito que no se ofrecen porque ya los cubre otra cosa, con el
-   * MISMO criterio del semáforo del mapa: un arreglo posterior a menos de 40 m
-   * (falta avisarle al vecino, no mandar a bachear) o un trabajo en marcha a
-   * menos de 40 m. Se cuentan para que el número cierre con el del mapa.
+   * Con el MISMO criterio del semáforo del mapa: los pedidos con un arreglo
+   * posterior a menos de 40 m (van al final de la lista, avisados) y los que
+   * tienen un trabajo en marcha a menos de 40 m (no se listan: ese trabajo ya
+   * está en la cola).
    */
   yaArreglados: number;
   conTrabajoCerca: number;
@@ -288,9 +294,11 @@ export async function pendientesEnAmbito(
      * obras del SIGOV y tres intimaciones a la SAT, justo lo que no va (12/10).
      *
      * Cada pedido se clasifica con el semáforo del mapa (consultas.ts,
-     * geodata): solo se ofrece el SIN ATENCIÓN. El que tiene un arreglo
-     * posterior cerca se cierra con el vecino; el que tiene un trabajo en
-     * marcha cerca ya está en la cola. Esos dos se cuentan, no se listan.
+     * geodata). El SIN ATENCIÓN va primero. El que tiene un arreglo posterior
+     * cerca también se ofrece, al final y avisado: "si está hecho, el operador
+     * lo confirma con la opción que ya existe y verificamos en campo" (Leo,
+     * 13/10). El que tiene un trabajo en marcha cerca no se lista: ya está en
+     * la cola.
      */
     const crudos = (await tx.execute(sql`
       select d.id, d.tipo::text as tipo, d.fuente::text as fuente, d.destino::text as destino,
@@ -301,12 +309,9 @@ export async function pendientesEnAmbito(
              d.creado_en, coalesce(d.metadata->>'sin_fecha' = 'true', false) as sin_fecha,
              coalesce(d.menciones, 0) as menciones, d.prioridad_informada,
              st_y(d.geom) as lat, st_x(d.geom) as lon,
+             rep.metros as arreglo_metros, rep.fecha as arreglo_fecha,
              case
-               when exists (select 1 from incidentes i
-                 where i.estado in ('reparado','verificado')
-                   and st_dwithin(i.geom::geography, d.geom::geography, 40)
-                   and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en))
-                 then 'posible_resuelta'
+               when rep.metros is not null then 'posible_resuelta'
                when exists (select 1 from incidentes i
                  where i.estado in ('detectado','priorizado','programado','en_ejecucion')
                    and st_dwithin(i.geom::geography, d.geom::geography, 40))
@@ -314,6 +319,18 @@ export async function pendientesEnAmbito(
                else 'sin_atencion'
              end as brecha
       from demandas d
+      /* El arreglo posterior más cercano (mismo criterio que geodata): con
+         su distancia y su fecha se le avisa a la cuadrilla qué ir a mirar. */
+      left join lateral (
+        select round(st_distance(i.geom::geography, d.geom::geography))::int as metros,
+               (i.cerrado_en at time zone 'America/Argentina/Tucuman')::date::text as fecha
+        from incidentes i
+        where i.estado in ('reparado','verificado')
+          and st_dwithin(i.geom::geography, d.geom::geography, 40)
+          and (d.metadata->>'sin_fecha' = 'true' or i.cerrado_en >= d.creado_en)
+        order by i.geom::geography <-> d.geom::geography
+        limit 1
+      ) rep on true
       where ${filtroAmbito(ambito, refId, poligono, "d")}
         and d.estado in ('recibida','en_validacion')
         and d.geom is not null
@@ -357,7 +374,7 @@ export async function pendientesEnAmbito(
 
     let yaArreglados = 0;
     let conTrabajoCerca = 0;
-    const sinAtencion: Array<{
+    type PedidoSuelto = {
       id: number;
       tipo: TipoProblema | null;
       fuente: string;
@@ -368,7 +385,10 @@ export async function pendientesEnAmbito(
       prioridadInformada: number | null;
       lat: number;
       lon: number;
-    }> = [];
+      arreglo: { metros: number; fecha: string | null } | null;
+    };
+    const sinAtencion: PedidoSuelto[] = [];
+    const conArregloCerca: PedidoSuelto[] = [];
     for (const f of crudos) {
       const pedido = {
         tipo: (f.tipo as TipoProblema) ?? null,
@@ -385,22 +405,30 @@ export async function pendientesEnAmbito(
         );
         continue;
       }
-      if (f.brecha === "posible_resuelta") yaArreglados++;
-      else if (f.brecha === "en_cola") conTrabajoCerca++;
-      else {
-        sinAtencion.push({
-          id: Number(f.id),
-          tipo: pedido.tipo,
-          fuente: pedido.fuente,
-          direccion: (f.direccion as string) ?? null,
-          creadoEn: new Date(String(f.creado_en)).toISOString(),
-          sinFecha: Boolean(f.sin_fecha),
-          menciones: Number(f.menciones ?? 0),
-          prioridadInformada: f.prioridad_informada != null ? Number(f.prioridad_informada) : null,
-          lat: Number(f.lat),
-          lon: Number(f.lon),
-        });
+      if (f.brecha === "en_cola") {
+        conTrabajoCerca++;
+        continue;
       }
+      const suelto: PedidoSuelto = {
+        id: Number(f.id),
+        tipo: pedido.tipo,
+        fuente: pedido.fuente,
+        direccion: (f.direccion as string) ?? null,
+        creadoEn: new Date(String(f.creado_en)).toISOString(),
+        sinFecha: Boolean(f.sin_fecha),
+        menciones: Number(f.menciones ?? 0),
+        prioridadInformada: f.prioridad_informada != null ? Number(f.prioridad_informada) : null,
+        lat: Number(f.lat),
+        lon: Number(f.lon),
+        arreglo:
+          f.arreglo_metros != null
+            ? { metros: Number(f.arreglo_metros), fecha: (f.arreglo_fecha as string) ?? null }
+            : null,
+      };
+      if (f.brecha === "posible_resuelta") {
+        yaArreglados++;
+        conArregloCerca.push(suelto);
+      } else sinAtencion.push(suelto);
     }
 
     /**
@@ -408,46 +436,57 @@ export async function pendientesEnAmbito(
      * problema cuando se cree (la misma cuenta que recalcularScore): así se
      * ordenan contra los problemas ya relevados con la misma vara.
      */
-    const puntos: PendienteCircuito[] = agruparPorCercania(sinAtencion).map((g) => {
-      const orden = [...g].sort((a, b) => a.creadoEn.localeCompare(b.creadoEn));
-      const primero = orden[0]!;
-      const informadas = g.map((x) => x.prioridadInformada).filter((x): x is number => x != null);
-      const score = scorePriorizacion({
-        demandasVinculadas: g.length,
-        menciones: g.reduce((s, x) => s + x.menciones, 0),
-        diasAbierto: Math.max(0, (Date.now() - Date.parse(primero.creadoEn)) / 86_400_000),
-        prioridadInformada: informadas.length > 0 ? Math.min(...informadas) : null,
-        tipo: primero.tipo,
-        intervencionesPrevias: 0,
-        enCorredorPrincipal: /\bavenida\b|\bav\.?\s/i.test(primero.direccion ?? ""),
-      }).total;
-      return {
-        clave: `p:${primero.id}`,
-        incidenteId: null,
-        demandaIds: orden.map((x) => x.id),
-        tipo: primero.tipo ?? "bache",
-        estado: "pedido",
-        direccion: primero.direccion,
-        score,
-        reclamos: g.length,
-        fuentes: [...new Set(g.map((x) => x.fuente))],
-        superficieM2: null,
-        detectadoEn: primero.creadoEn,
-        sinFecha: g.every((x) => x.sinFecha),
-        lat: g.reduce((s, x) => s + x.lat, 0) / g.length,
-        lon: g.reduce((s, x) => s + x.lon, 0) / g.length,
-        enOrden: false,
-      };
-    });
+    const aPuntos = (sueltos: PedidoSuelto[]): PendienteCircuito[] =>
+      agruparPorCercania(sueltos).map((g) => {
+        const orden = [...g].sort((a, b) => a.creadoEn.localeCompare(b.creadoEn));
+        const primero = orden[0]!;
+        const informadas = g.map((x) => x.prioridadInformada).filter((x): x is number => x != null);
+        const score = scorePriorizacion({
+          demandasVinculadas: g.length,
+          menciones: g.reduce((s, x) => s + x.menciones, 0),
+          diasAbierto: Math.max(0, (Date.now() - Date.parse(primero.creadoEn)) / 86_400_000),
+          prioridadInformada: informadas.length > 0 ? Math.min(...informadas) : null,
+          tipo: primero.tipo,
+          intervencionesPrevias: 0,
+          enCorredorPrincipal: /\bavenida\b|\bav\.?\s/i.test(primero.direccion ?? ""),
+        }).total;
+        return {
+          clave: `p:${primero.id}`,
+          incidenteId: null,
+          demandaIds: orden.map((x) => x.id),
+          tipo: primero.tipo ?? "bache",
+          estado: "pedido",
+          direccion: primero.direccion,
+          score,
+          reclamos: g.length,
+          fuentes: [...new Set(g.map((x) => x.fuente))],
+          superficieM2: null,
+          detectadoEn: primero.creadoEn,
+          sinFecha: g.every((x) => x.sinFecha),
+          lat: g.reduce((s, x) => s + x.lat, 0) / g.length,
+          lon: g.reduce((s, x) => s + x.lon, 0) / g.length,
+          enOrden: false,
+          // El arreglo más cercano del grupo: es lo que la cuadrilla va a ir a mirar.
+          arregloCerca:
+            g
+              .map((x) => x.arreglo)
+              .filter((x): x is NonNullable<PedidoSuelto["arreglo"]> => x != null)
+              .sort((a, b) => a.metros - b.metros)[0] ?? null,
+        };
+      });
 
     /* Los reclamos detrás mandan, después el score y después la antigüedad:
-       el mismo orden que ya tenía la lista, ahora sobre las dos cosas juntas. */
-    const pendientes = [...problemas, ...puntos].sort(
-      (a, b) =>
-        b.reclamos - a.reclamos ||
-        (b.score ?? -1) - (a.score ?? -1) ||
-        Date.parse(a.detectadoEn) - Date.parse(b.detectadoEn),
-    );
+       el mismo orden que ya tenía la lista, ahora sobre las dos cosas juntas.
+       Lo que puede estar ya arreglado va DESPUÉS de todo lo sin atender, con el
+       mismo orden adentro: así "Top 10" elige primero lo que seguro falta. */
+    const porPrioridad = (a: PendienteCircuito, b: PendienteCircuito) =>
+      b.reclamos - a.reclamos ||
+      (b.score ?? -1) - (a.score ?? -1) ||
+      Date.parse(a.detectadoEn) - Date.parse(b.detectadoEn);
+    const pendientes = [
+      ...[...problemas, ...aPuntos(sinAtencion)].sort(porPrioridad),
+      ...aPuntos(conArregloCerca).sort(porPrioridad),
+    ];
 
     return {
       pendientes,

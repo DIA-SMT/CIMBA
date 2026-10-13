@@ -12,7 +12,7 @@ import {
 } from "@cimba/domain";
 import { crearOrden } from "@/lib/acciones-ordenes";
 import { proyectar, type ParametrosCapacidad } from "@/lib/capacidad";
-import { ETIQUETA_FUENTE, ETIQUETA_TIPO, numero } from "@/lib/formato";
+import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 // Solo tipos: se borran al compilar, así que no arrastran @cimba/db al cliente.
 import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
@@ -776,20 +776,18 @@ export function FormularioOrden({
                 <span className="font-normal text-texto-3">
                   — {numero(pendientes.length)} pendientes; los reclamos detrás de cada bache mandan
                 </span>
-                {/* Lo que no se lista y por qué, para que el número cierre con
-                    el del mapa: el mismo semáforo, dicho en palabras. */}
-                {!cargando && cubiertos.yaArreglados + cubiertos.conTrabajoCerca > 0 && (
+                {/* Lo que va al final y lo que no se lista, para que el número
+                    cierre con el del mapa: el mismo semáforo, dicho en palabras. */}
+                {!cargando && cubiertos.yaArreglados > 0 && (
                   <span className="mt-0.5 block text-[11px] font-normal text-texto-3">
-                    No se listan{" "}
-                    {[
-                      cubiertos.yaArreglados > 0 &&
-                        `${numero(cubiertos.yaArreglados)} pedidos con un arreglo posterior a menos de 40 m (se cierran con el vecino)`,
-                      cubiertos.conTrabajoCerca > 0 &&
-                        `${numero(cubiertos.conTrabajoCerca)} con un trabajo en marcha a menos de 40 m`,
-                    ]
-                      .filter(Boolean)
-                      .join(" ni ")}
-                    .
+                    Al final van {numero(cubiertos.yaArreglados)} pedidos con un arreglo posterior a menos de 40 m:
+                    puede que ya estén hechos. Si los mandás, la cuadrilla lo confirma en el lugar con «Ya estaba
+                    hecho».
+                  </span>
+                )}
+                {!cargando && cubiertos.conTrabajoCerca > 0 && (
+                  <span className="mt-0.5 block text-[11px] font-normal text-texto-3">
+                    No se listan {numero(cubiertos.conTrabajoCerca)} pedidos con un trabajo en marcha a menos de 40 m.
                   </span>
                 )}
               </p>
@@ -880,9 +878,17 @@ export function FormularioOrden({
                                 )}
                                 {/* Todavía no es un problema: se releva solo al
                                     crear la orden, con sus pedidos vinculados. */}
-                                {p.incidenteId == null && (
+                                {p.incidenteId == null && !p.arregloCerca && (
                                   <span className="text-[10px] text-texto-3">
                                     {p.reclamos > 1 ? "pedidos sin relevar" : "pedido sin relevar"}
+                                  </span>
+                                )}
+                                {/* Puede que ya esté hecho: se manda igual y la
+                                    cuadrilla lo confirma en el lugar. */}
+                                {p.arregloCerca && (
+                                  <span className="text-[10px] font-semibold" style={{ color: "var(--color-hecho)" }}>
+                                    ¿ya arreglado? hay un arreglo a {p.arregloCerca.metros} m
+                                    {p.arregloCerca.fecha ? ` del ${fechaCorta(p.arregloCerca.fecha)}` : ""}
                                   </span>
                                 )}
                               </span>

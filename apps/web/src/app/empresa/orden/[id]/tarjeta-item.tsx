@@ -27,7 +27,7 @@ import {
 import { mensajeDeError } from "@/lib/errores";
 import { enviarOEncolar } from "@/lib/cola-envios";
 import { describirPrecision, mejorPosicion } from "@/lib/gps";
-import { hoyISO, minimoEjecucion } from "@/lib/formato";
+import { fechaCorta, hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
   borradorTieneAlgo,
   borrarBorrador,
@@ -577,6 +577,21 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       </div>
 
       {error && <p className="mt-2 text-sm font-medium text-peligro">{error}</p>}
+
+      {/* Puede que ya esté arreglado: hay un arreglo posterior al pedido a
+          menos de 40 m. Se manda igual, para confirmarlo en el lugar. */}
+      {(() => {
+        const p = item.metadata.posible_arreglado as { metros?: number; fecha?: string | null } | undefined;
+        if (!p || typeof p !== "object") return null;
+        return (
+          <div className="mt-2 rounded-lg border border-resuelto/40 bg-resuelto/10 px-3 py-2 text-[12px] leading-snug">
+            <b className="text-resuelto">Puede que ya esté arreglado.</b> Hay un arreglo
+            {typeof p.metros === "number" ? ` a ${p.metros} m` : " cerca"}
+            {p.fecha ? `, del ${fechaCorta(p.fecha)}` : ""}. Si al llegar está tapado, usá «Ya estaba hecho» con
+            la foto de cómo está hoy.
+          </div>
+        );
+      })()}
 
       {/* La carga anterior la dio de baja el inspector por mal cargada: el
           bache volvió acá. Sin decirlo, la empresa vería reaparecer un punto

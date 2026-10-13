@@ -226,9 +226,13 @@ export async function crearOrden(entrada: {
     // único parcial sobre orden_items.incidente_id para items pendientes.
     for (const incidenteId of [...datos.incidenteIds, ...relevados]) {
       await tx.execute(sql`
-        insert into orden_items (orden_id, incidente_id, direccion, geom, tipo_trabajo)
+        insert into orden_items (orden_id, incidente_id, direccion, geom, tipo_trabajo, metadata)
         select ${orden.id}, i.id, i.direccion, i.geom,
-               case when i.tipo = 'pavimento_deteriorado' then 'carpeta' else 'bache' end
+               case when i.tipo = 'pavimento_deteriorado' then 'carpeta' else 'bache' end,
+               -- "Puede que ya esté arreglado" viaja al item: lo ve la cuadrilla.
+               case when i.metadata ? 'posible_arreglado'
+                    then jsonb_build_object('posible_arreglado', i.metadata->'posible_arreglado')
+                    else '{}'::jsonb end
         from incidentes i
         where i.id = ${incidenteId}
           and not exists (
@@ -316,7 +320,8 @@ async function relevarPedidos(
   const lista = sql.join(ids.map((x) => sql`${x}`), sql`, `);
   const vivos = (await tx.execute(sql`
     select d.id, d.tipo::text as tipo,
-           coalesce(nullif(trim(d.direccion_texto), ''), d.direccion_normalizada) as direccion, d.creado_en
+           coalesce(nullif(trim(d.direccion_texto), ''), d.direccion_normalizada) as direccion, d.creado_en,
+           coalesce(d.metadata->>'sin_fecha' = 'true', false) as sin_fecha
     from demandas d
     where d.id in (${lista})
       and d.estado in ('recibida', 'en_validacion')
@@ -324,7 +329,13 @@ async function relevarPedidos(
       and not exists (select 1 from demanda_incidente di where di.demanda_id = d.id)
     order by d.creado_en
     for update of d
-  `)) as unknown as Array<{ id: number; tipo: string | null; direccion: string | null; creado_en: unknown }>;
+  `)) as unknown as Array<{
+    id: number;
+    tipo: string | null;
+    direccion: string | null;
+    creado_en: unknown;
+    sin_fecha: boolean;
+  }>;
   const primero = vivos[0];
   if (!primero) return null;
 
@@ -357,6 +368,33 @@ async function relevarPedidos(
     update demandas set estado = 'vinculada'
     where id in (${idsVivos}) and estado in ('recibida', 'en_validacion')
   `);
+  /**
+   * ¿PUEDE QUE YA ESTÉ ARREGLADO? Un arreglo POSTERIOR a los pedidos, a menos
+   * de 40 m (el mismo criterio del semáforo). Se manda igual —"si está hecho,
+   * el operador lo confirma con la opción que ya existe" (Leo, 13/10)— pero
+   * marcado, para que la cuadrilla sepa qué ir a mirar antes de bachear.
+   */
+  const todosSinFecha = vivos.every((v) => Boolean(v.sin_fecha));
+  const arreglo = ((await tx.execute(sql`
+    select round(st_distance(i.geom::geography, nuevo.geom::geography))::int as metros,
+           (i.cerrado_en at time zone 'America/Argentina/Tucuman')::date::text as fecha
+    from incidentes nuevo
+    join incidentes i on i.id <> nuevo.id
+      and i.estado in ('reparado', 'verificado')
+      and st_dwithin(i.geom::geography, nuevo.geom::geography, 40)
+      and (${todosSinFecha}::boolean or i.cerrado_en >= nuevo.detectado_en)
+    where nuevo.id = ${inc.id}
+    order by i.geom::geography <-> nuevo.geom::geography
+    limit 1
+  `)) as unknown as Array<{ metros: number; fecha: string | null }>)[0];
+  if (arreglo) {
+    await tx.execute(sql`
+      update incidentes set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+        'posible_arreglado', jsonb_build_object('metros', ${Number(arreglo.metros)}::int, 'fecha', ${arreglo.fecha}::text))
+      where id = ${inc.id}
+    `);
+  }
+
   const { recalcularScore } = await import("./acciones");
   await recalcularScore(tx as Parameters<typeof recalcularScore>[0], Number(inc.id));
   return Number(inc.id);
