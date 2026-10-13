@@ -1170,7 +1170,24 @@ function FichaEnCurso({ p, color }: { p: EnCursoProps; color: (e: string) => str
         {p.m2 ? `${numero(Math.round(p.m2))} m²` : "sin medida cargada"}
         {p.tipo ? ` · ${ETIQUETA_TIPO[p.tipo] ?? p.tipo.replaceAll("_", " ")}` : ""}
       </p>
-      <p className="mt-1 text-xs text-texto-3">Empezada y no terminada según la planilla de la empresa.</p>
+      <p className="mt-1 text-xs text-texto-3">
+        {p.fuente === "orden"
+          ? "Empezada y no terminada según su orden de CIMBA."
+          : `Empezada y no terminada según ${
+              p.fuente === "sigov"
+                ? "el SIGOV"
+                : p.fuente === "empresas"
+                  ? "la planilla de las empresas"
+                  : p.fuente === "planillas"
+                    ? "las planillas de Bacheo"
+                    : "la fuente que la cargó"
+            }${p.actualizado ? `, con datos al ${fechaLarga(p.actualizado)}` : ""}.`}
+      </p>
+      {p.cargadoComo && (
+        <p className="mt-1 text-xs text-texto-3">
+          Figura como «{p.cargadoComo}», que no coincide con ninguna empresa: por eso sale como Otros.
+        </p>
+      )}
     </>
   );
 }

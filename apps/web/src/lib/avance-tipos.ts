@@ -141,6 +141,12 @@ export interface EnCursoProps {
   /** Cuándo empezó, YYYY-MM-DD, si se cargó. */
   iniciada: string | null;
   direccion: string | null;
+  /** De dónde sale que está en curso: una orden de CIMBA, el SIGOV o una planilla. */
+  fuente: "orden" | "sigov" | "empresas" | "planillas" | null;
+  /** Cuando la empresa no se reconoce: el nombre tal como figura en la fuente. */
+  cargadoComo: string | null;
+  /** La última vez que entró algo de esa fuente (YYYY-MM-DD): de cuándo es el dato. */
+  actualizado: string | null;
 }
 
 export interface OrdenActiva {

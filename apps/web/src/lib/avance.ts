@@ -550,7 +550,13 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
      * un mes que figura así, que se vea es justamente el punto).
      */
     const qEnCurso = db.execute(sql`
-      select b.id, ${EMPRESA_CORTA} as empresa,
+      select b.id, b.orden_id, er.sistema,
+             /* El nombre tal como vino, cuando no coincide con ninguna empresa
+                (en la planilla a veces figura quien cargó, no la empresa). Nunca
+                en la versión pública: puede ser el nombre de una persona. */
+             ${publico ? sql`null::text` : sql`case when b.slug = 'otros' then nullif(trim(coalesce(ivx.metadata->>'contratista', ivx.metadata->>'empresa')), '') end`} as cargado_como,
+             /* De cuándo es el dato: la última vez que entró algo de esa fuente. */
+             (select to_char(max(x.sincronizado_en) at time zone ${TZ}, 'YYYY-MM-DD') from external_ref x where x.sistema = er.sistema) as actualizado, ${EMPRESA_CORTA} as empresa,
              b.superficie_m2::float as m2, b.tipo,
              to_char(b.iniciada_en at time zone ${TZ}, 'YYYY-MM-DD') as iniciada,
              i.direccion,
@@ -558,6 +564,12 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              st_y(st_centroid(b.geom_ejecucion))::float as lat
       from (${baseDe("en_curso", t)}) b
       left join incidentes i on i.id = b.incidente_id
+      left join intervenciones ivx on ivx.id = b.id
+      left join lateral (
+        select er.sistema from external_ref er
+        where er.entidad_local = 'intervencion' and er.id_local = b.id
+        order by er.id desc limit 1
+      ) er on true
       order by b.superficie_m2 desc nulls last
     `);
 
@@ -1083,6 +1095,9 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           tipo: texto(f.tipo),
           iniciada: texto(f.iniciada),
           direccion: texto(f.direccion),
+          fuente: f.orden_id != null ? "orden" : f.sistema === "sigov" ? "sigov" : f.sistema === "bacheo_empresas" ? "empresas" : f.sistema === "bacheo_planillas" ? "planillas" : null,
+          cargadoComo: texto(f.cargado_como),
+          actualizado: texto(f.actualizado),
         } satisfies EnCursoProps,
       })),
     },
