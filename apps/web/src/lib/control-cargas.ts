@@ -1,5 +1,6 @@
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
+import { BITS_FOTO_REPETIDA } from "@cimba/domain";
 
 /**
  * EL CONTROL DE LO CARGADO.
@@ -66,7 +67,10 @@ export interface CargaControl {
   baja: BajaCarga | null;
   /** Lo que hace sospechar de la carga, en palabras. */
   alarmas: string[];
-  /** Otras cargas de la misma empresa cerca: los candidatos a "original". */
+  /**
+   * Los candidatos a "original" si esta carga es un duplicado: primero las
+   * que tienen la misma foto, después las de la misma empresa a menos de 30 m.
+   */
   cercanas: Array<{
     itemId: number;
     orden: string;
@@ -74,6 +78,8 @@ export interface CargaControl {
     reportadoEn: string | null;
     metros: number;
     foto: string | null;
+    /** Es la carga que tiene la misma foto que esta. */
+    mismaFoto?: boolean;
   }>;
 }
 
@@ -165,7 +171,36 @@ export async function cargasParaControlar(
                  order by metros
                  limit 5
                ) c
-             ), '[]'::json) as cercanas
+             ), '[]'::json) as cercanas,
+             /* LA MISMA FOTO EN OTRO LADO: otra foto de un trabajo vigente
+                cuya huella está a BITS_FOTO_REPETIDA bits o menos de alguna de las de esta
+                carga. Incluye el caso de la foto del antes repetida como
+                foto del después del mismo bache. */
+             coalesce((
+               select json_agg(r order by r.mismo desc, r.bits)
+               from (
+                 select distinct on (g.intervencion_id)
+                        (g.intervencion_id = f.intervencion_id) as mismo,
+                        bit_count(f.huella # g.huella) as bits,
+                        f.momento::text as "momento", g.momento::text as "momentoOtra",
+                        o3.id as "itemId", ot3.numero as orden, o3.direccion,
+                        o3.reportado_en as "reportadoEn",
+                        round(st_distance(o3.geom::geography, oi.geom::geography))::int as metros,
+                        g.storage_path as foto
+                 from fotografias f
+                 join fotografias g on g.id <> f.id and g.huella is not null
+                   and bit_count(f.huella # g.huella) <= ${BITS_FOTO_REPETIDA}
+                 join intervenciones ivg on ivg.id = g.intervencion_id and ivg.estado <> 'anulada'
+                 left join orden_items o3 on o3.intervencion_id = g.intervencion_id
+                 left join ordenes_trabajo ot3 on ot3.id = o3.orden_id
+                 where f.huella is not null
+                   and f.intervencion_id = coalesce(
+                     oi.intervencion_id,
+                     (oi.metadata->'bajas'->-1->>'intervencion')::bigint)
+                 order by g.intervencion_id, bit_count(f.huella # g.huella)
+                 limit 5
+               ) r
+             ), '[]'::json) as fotos_repetidas
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
       join empresas e on e.id = ot.empresa_id
@@ -178,13 +213,50 @@ export async function cargasParaControlar(
       const m = (f.metadata as Record<string, unknown>) ?? {};
       const bajas = Array.isArray(m.bajas) ? (m.bajas as BajaCarga[]) : [];
       const fotos = (f.fotos as CargaControl["fotos"]) ?? [];
-      const cercanas = (f.cercanas as CargaControl["cercanas"]) ?? [];
+      const repetidas =
+        (f.fotos_repetidas as Array<{
+          mismo: boolean;
+          momento: string;
+          momentoOtra: string;
+          itemId: number | null;
+          orden: string | null;
+          direccion: string | null;
+          reportadoEn: string | null;
+          metros: number | null;
+          foto: string | null;
+        }>) ?? [];
+      /* La carga con la misma foto es la primera candidata a "original",
+         esté a la distancia que esté: es el duplicado más claro que hay. */
+      const cercanas = [
+        ...repetidas
+          .filter((r) => !r.mismo && r.itemId != null)
+          .map((r) => ({
+            itemId: Number(r.itemId),
+            orden: r.orden ?? "",
+            direccion: r.direccion,
+            reportadoEn: r.reportadoEn,
+            metros: Number(r.metros ?? 0),
+            foto: r.foto,
+            mismaFoto: true,
+          })),
+        ...((f.cercanas as CargaControl["cercanas"]) ?? []).map((c) => ({ ...c, mismaFoto: false })),
+      ].filter((c, i, todas) => todas.findIndex((x) => x.itemId === c.itemId) === i);
       const superficie = f.superficie_m2 != null ? Number(f.superficie_m2) : null;
       const medicion = typeof m.medicion === "string" ? m.medicion : null;
 
       /* Lo que hace sospechar, dicho en palabras y no como un número. */
       const alarmas: string[] = [];
-      const cerca = cercanas.find((c) => c.metros <= METROS_ALARMA_CERCA);
+      /* La foto repetida va primero: es la alarma que pidió la Dirección. */
+      if (repetidas.some((r) => r.mismo)) alarmas.push("La foto del antes y la del después son la misma");
+      const otra = repetidas.find((r) => !r.mismo);
+      if (otra) {
+        alarmas.push(
+          `Foto repetida: es la misma que la ${otra.momentoOtra === "antes" ? "del antes" : "del después"} de ${
+            otra.direccion ?? "otro bache"
+          }${otra.orden ? ` (${otra.orden})` : ""}`,
+        );
+      }
+      const cerca = cercanas.find((c) => !c.mismaFoto && c.metros <= METROS_ALARMA_CERCA);
       if (cerca) alarmas.push(`Hay otra carga a ${cerca.metros} m (${cerca.orden})`);
       if (!fotos.some((x) => x.momento === "antes")) alarmas.push("Sin foto del antes");
       if (superficie != null && superficie >= 50) alarmas.push("Más de 50 m²: ¿es un bache o una obra?");

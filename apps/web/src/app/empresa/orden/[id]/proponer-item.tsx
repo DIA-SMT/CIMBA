@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT } from "@cimba/domain";
 import { proponerItem, reportarProblemaCalle } from "@/lib/acciones-ordenes";
 import { comprimirFoto } from "@/lib/comprimir-foto";
+import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
@@ -177,16 +178,20 @@ export function ProponerItem({
 
   /** Se achica en el teléfono antes de subir: ver comprimir-foto.ts. */
   const [preparandoFoto, setPreparandoFoto] = useState(false);
+  /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
+  const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
   const elegirFotoEn = async (
     archivo: File | undefined,
     previoUrl: string | null,
     setArchivo: (f: File | null) => void,
     setUrl: (u: string | null) => void,
+    cuadro: "antes" | "despues" = "antes",
   ) => {
     if (previoUrl) URL.revokeObjectURL(previoUrl);
     if (!archivo) {
       setArchivo(null);
       setUrl(null);
+      revisarFotoUsada(cuadro, null);
       return;
     }
     setPreparandoFoto(true);
@@ -194,12 +199,13 @@ export function ProponerItem({
       const { archivo: listo } = await comprimirFoto(archivo);
       setArchivo(listo);
       setUrl(URL.createObjectURL(listo));
+      revisarFotoUsada(cuadro, listo);
     } finally {
       setPreparandoFoto(false);
     }
   };
   const elegirFoto = (archivo: File | undefined) =>
-    elegirFotoEn(archivo, preview, setFoto, setPreview);
+    elegirFotoEn(archivo, preview, setFoto, setPreview, "antes");
 
   const cerrar = () => {
     setAbierto(false);
@@ -222,7 +228,7 @@ export function ProponerItem({
     setCapataz("");
     setFechaEjecucion(hoyISO());
     void elegirFoto(undefined);
-    void elegirFotoEn(undefined, previewDespues, setFotoDespues, setPreviewDespues);
+    void elegirFotoEn(undefined, previewDespues, setFotoDespues, setPreviewDespues, "despues");
   };
 
   const enviar = () => {
@@ -600,7 +606,7 @@ export function ProponerItem({
                 capture="environment"
                 className="hidden"
                 onChange={(e) =>
-                  void elegirFotoEn(e.target.files?.[0], previewDespues, setFotoDespues, setPreviewDespues)
+                  void elegirFotoEn(e.target.files?.[0], previewDespues, setFotoDespues, setPreviewDespues, "despues")
                 }
               />
               <button
@@ -631,6 +637,7 @@ export function ProponerItem({
                   </span>
                 )}
               </button>
+              <AvisosFotoUsada revisiones={fotosUsadas} nombres={{ antes: "del bache", despues: "del trabajo terminado" }} />
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block">

@@ -997,16 +997,20 @@ export async function reportarItemHecho(formData: FormData) {
   );
   const subirArchivo = async (archivo: File, momento: "antes" | "despues") => {
     const ruta = `ordenes/${datos.itemId}/${momento}-${Date.now()}.${TIPOS_FOTO[archivo.type]}`;
+    const bytes = Buffer.from(await archivo.arrayBuffer());
     const subida = await supabase.storage
       .from("fotografias")
-      .upload(ruta, Buffer.from(await archivo.arrayBuffer()), {
+      .upload(ruta, bytes, {
         contentType: archivo.type,
         upsert: false,
       });
     if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
-    return { momento, ruta };
+    /* La huella para la alarma de foto repetida, de la foto que ya está en
+       memoria. Si no se puede calcular queda vacía: nunca frena la carga. */
+    const { huellaDeImagen } = await import("./huella-foto");
+    return { momento, ruta, huella: await huellaDeImagen(bytes) };
   };
-  const fotos: Array<{ momento: "antes" | "despues"; ruta: string }> = [];
+  const fotos: Array<{ momento: "antes" | "despues"; ruta: string; huella: string | null }> = [];
   if (fotoAntes) fotos.push(await subirArchivo(fotoAntes, "antes"));
   fotos.push(await subirArchivo(foto, "despues"));
 
@@ -1165,9 +1169,9 @@ export async function reportarItemHecho(formData: FormData) {
     // transacción, para que la intervención nunca quede sin su evidencia.
     for (const f of fotos) {
       await tx.execute(sql`
-        insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en)
+        insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en, huella)
         values (${intervencionId}, ${f.momento}, ${f.ruta},
-                st_setsrid(st_makepoint(${lon}, ${lat}), 4326), now())
+                st_setsrid(st_makepoint(${lon}, ${lat}), 4326), now(), ${f.huella}::bit(64))
       `);
     }
 
@@ -2194,6 +2198,12 @@ export async function resolverPropuestoConSesion(
     /* sin aviso, pero decidido: el portal muestra el estado real */
   }
 
+  // La huella de las fotos que la cuadrilla había mandado, ahora que son de un trabajo.
+  if (datos.decision === "validar") {
+    const { completarHuellas } = await import("./huella-foto");
+    await completarHuellas({ items: [datos.itemId] });
+  }
+
   revalidatePath("/ordenes");
   revalidatePath("/empresa");
   return {
@@ -2340,6 +2350,12 @@ export async function marcarYaResuelto(formData: FormData) {
   } catch (e) {
     await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
     throw e;
+  }
+
+  // La huella de la foto, para la alarma de foto repetida. Nunca falla.
+  {
+    const { completarHuellas } = await import("./huella-foto");
+    await completarHuellas({ items: [datos.itemId] });
   }
 
   revalidatePath("/empresa");

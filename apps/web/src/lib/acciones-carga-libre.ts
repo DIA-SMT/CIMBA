@@ -260,6 +260,12 @@ export async function reportarTrabajoLibre(formData: FormData) {
       return id;
     });
 
+    // La huella de las fotos, para la alarma de foto repetida. Nunca falla.
+    {
+      const { completarHuellas } = await import("./huella-foto");
+      await completarHuellas({ incidentes: [Number(incidenteId)] });
+    }
+
     revalidatePath("/empresa");
     revalidatePath("/intervenciones");
     revalidatePath("/mapa");

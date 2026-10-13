@@ -6,3 +6,4 @@ export * from "./priorizacion";
 export * from "./geocoder";
 export * from "./alcance";
 export * from "./sigov";
+export * from "./huella";

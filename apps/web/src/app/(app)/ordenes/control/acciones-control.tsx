@@ -16,6 +16,8 @@ interface Cercana {
   metros: number;
   /** URL ya resuelta de la foto del después, para reconocerla a simple vista. */
   foto: string | null;
+  /** Tiene la misma foto que esta carga. */
+  mismaFoto?: boolean;
 }
 
 /**
@@ -136,8 +138,8 @@ export function AccionesControl({
           {motivo === "duplicado" &&
             (cercanas.length === 0 ? (
               <p className="mt-2 text-[12px] leading-snug text-amarillo">
-                No hay otra carga de esta empresa a menos de 30 m. Si el punto no corresponde, usá «Mal
-                cargado».
+                No hay otra carga con la misma foto ni de esta empresa a menos de 30 m. Si el punto no
+                corresponde, usá «Mal cargado».
               </p>
             ) : (
               <div className="mt-2">
@@ -168,7 +170,7 @@ export function AccionesControl({
                       <span className="min-w-0">
                         <b className="block truncate">{x.direccion ?? `Item #${x.itemId}`}</b>
                         <span className="num text-texto-3">
-                          a {x.metros} m · {x.orden}
+                          {x.mismaFoto && <b className="text-amarillo">misma foto · </b>}a {x.metros} m · {x.orden}
                           {x.reportadoEn && <> · {fechaCorta(x.reportadoEn)}</>}
                         </span>
                       </span>

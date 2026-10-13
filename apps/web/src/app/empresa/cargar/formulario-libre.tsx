@@ -8,6 +8,7 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
 import { enviarOEncolar } from "@/lib/cola-envios";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
+import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { Panel } from "@/components/ui";
 import {
   CamposMedida,
@@ -122,6 +123,8 @@ export function FormularioLibre({
     }
   }, []);
 
+  /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
+  const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
   const elegirFoto = async (
     clave: string,
     archivo: File | undefined,
@@ -133,6 +136,7 @@ export function FormularioLibre({
     if (!archivo) {
       setFoto(null);
       setPreview(null);
+      revisarFotoUsada(clave, null);
       return;
     }
     setPreparandoFotos((n) => n + 1);
@@ -142,6 +146,7 @@ export function FormularioLibre({
       setFoto(listo);
       setPreview(URL.createObjectURL(listo));
       if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
+      revisarFotoUsada(clave, listo);
     } finally {
       setPreparandoFotos((n) => n - 1);
       setCuadroOcupado((v) => ({ ...v, [clave]: false }));
@@ -418,6 +423,9 @@ export function FormularioLibre({
                 </span>
               )}
             </button>
+          </div>
+          <div className="mt-2">
+            <AvisosFotoUsada revisiones={fotosUsadas} nombres={{ antes: "del antes", despues: "de cómo quedó" }} />
           </div>
         </div>
 

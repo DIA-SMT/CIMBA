@@ -12,6 +12,7 @@ import {
 } from "@/lib/acciones-ordenes";
 import { ETIQUETA_FAMILIA, MOTIVOS_CALLE, MOTIVO_POR_VALOR } from "@/lib/problemas-calle";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
+import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
 import { BarraConfianza, Panel } from "@/components/ui";
@@ -374,6 +375,8 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
    */
   const [cuadroOcupado, setCuadroOcupado] = useState<Record<string, boolean>>({});
   const [ahorroFoto, setAhorroFoto] = useState<string | null>(null);
+  /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
+  const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
   const elegirFoto = async (
     clave: string,
     archivo: File | undefined,
@@ -385,6 +388,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     if (!archivo) {
       setFoto(null);
       setPreview(null);
+      revisarFotoUsada(clave, null);
       return;
     }
     setPreparandoFotos((n) => n + 1);
@@ -394,6 +398,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       setFoto(listo);
       setPreview(URL.createObjectURL(listo));
       if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
+      revisarFotoUsada(clave, listo);
     } finally {
       setPreparandoFotos((n) => n - 1);
       setCuadroOcupado((v) => ({ ...v, [clave]: false }));
@@ -1003,6 +1008,13 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               )}
             </button>
           </div>
+          <AvisosFotoUsada
+            revisiones={{
+              ...(fotosUsadas.antes ? { antes: fotosUsadas.antes } : {}),
+              ...(fotosUsadas.despues ? { despues: fotosUsadas.despues } : {}),
+            }}
+            nombres={{ antes: "del antes", despues: "del después" }}
+          />
 
           {/* Ubicación */}
           {!mostrarPicker && ubicacion && (
