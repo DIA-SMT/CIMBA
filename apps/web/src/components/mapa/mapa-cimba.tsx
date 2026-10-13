@@ -7171,7 +7171,7 @@ function PanelDetalle({
           </button>
         )}
         <Link
-          href={esIncidente ? `/incidentes?foco=${String(p.id)}` : `/demandas/${String(p.id)}`}
+          href={esIncidente ? `/incidentes/${String(p.id)}` : `/demandas/${String(p.id)}`}
           className={
             !esIncidente && alCotejar
               ? "block text-center text-xs font-semibold text-celeste hover:underline"
