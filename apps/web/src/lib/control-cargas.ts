@@ -258,7 +258,12 @@ export async function cargasParaControlar(
       }
       const cerca = cercanas.find((c) => !c.mismaFoto && c.metros <= METROS_ALARMA_CERCA);
       if (cerca) alarmas.push(`Hay otra carga a ${cerca.metros} m (${cerca.orden})`);
-      if (!fotos.some((x) => x.momento === "antes")) alarmas.push("Sin foto del antes");
+      /* Los baches que entraron desde una planilla llegan sin foto y, a veces,
+         sin lugar: la empresa los completa desde su portal. Hasta entonces no
+         se certifican (CERTIFICABLE) y el inspector lo ve acá. */
+      if (f.lat == null || f.lon == null) alarmas.push("Sin ubicar en el mapa");
+      if (!fotos.some((x) => x.momento === "despues")) alarmas.push("Sin foto del después: no entra en un acta");
+      else if (!fotos.some((x) => x.momento === "antes")) alarmas.push("Sin foto del antes");
       if (superficie != null && superficie >= 50) alarmas.push("Más de 50 m²: ¿es un bache o una obra?");
       if (medicion === "volumen") alarmas.push("Superficie estimada desde el volumen de mezcla");
 
