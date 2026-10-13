@@ -498,9 +498,10 @@ export async function crearDemandaCiudadano(formData: FormData) {
       lat: z.coerce.number().min(-27.2).max(-26.4),
       lon: z.coerce.number().min(-65.6).max(-64.9),
       tipo: tipoProblemaSchema,
-      descripcion: z.string().min(5).max(2000),
+      /* Opcional (Leo, 13/10): si no se escribe nada, el pedido queda
+         descripto por su tipo ("Bache"). */
+      descripcion: z.string().trim().max(2000).optional(),
       direccion: z.string().min(3).max(300),
-      solicitante: z.string().min(3).max(200),
       /**
        * El área ya no se pregunta: era obligatoria y siempre se escribía lo
        * mismo. Si no viene, es la Secretaría de Obras Públicas (pedido del
@@ -515,7 +516,6 @@ export async function crearDemandaCiudadano(formData: FormData) {
       tipo: formData.get("tipo"),
       descripcion: formData.get("descripcion"),
       direccion: formData.get("direccion"),
-      solicitante: formData.get("solicitante"),
       area: formData.get("area") || undefined,
       desdeGps: formData.get("desdeGps") || undefined,
     });
@@ -546,13 +546,23 @@ export async function crearDemandaCiudadano(formData: FormData) {
     area: datos.area,
     desde_gps: datos.desdeGps ?? false,
   };
+  /**
+   * QUIÉN LO PIDE ES QUIEN LO CARGA. "Debería quedar grabado con el usuario
+   * de quien lo carga. Si es un pedido particular, que lo escriba en la
+   * descripción: así evitamos que alguien cargue un punto como un reclamo del
+   * HCD" (Leo, 13/10). Lo pone el servidor desde la sesión: el formulario ya no
+   * lo pregunta, y si un pedido armado a mano lo mandara, se ignora.
+   */
+  const solicitante = sesion.nombre;
+  const { ETIQUETA_TIPO } = await import("./formato");
+  const descripcion = datos.descripcion || ETIQUETA_TIPO[datos.tipo];
   const id = await conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
       insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
                             solicitante, creado_por, metadata)
-      values ('carga_manual', ${datos.tipo}, ${datos.descripcion}, ${datos.direccion},
+      values ('carga_manual', ${datos.tipo}, ${descripcion}, ${datos.direccion},
               st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), 1.0,
-              ${datos.solicitante}, ${sesion.sub}, ${JSON.stringify(metadata)}::jsonb)
+              ${solicitante}, ${sesion.sub}, ${JSON.stringify(metadata)}::jsonb)
       returning id
     `)) as unknown as Array<{ id: number }>;
     return filas[0]?.id;
@@ -585,6 +595,32 @@ export async function crearDemandaCiudadano(formData: FormData) {
       }
     } catch {
       // el pedido ya está registrado: la foto se puede volver a subir después
+    }
+  }
+
+  /**
+   * EL AVISO DE PEDIDO CARGADO (Leo, 13/10: "que por Telegram salte una
+   * alerta cuando alguien cargue un punto"). Va a quien esté anotado para
+   * este evento en el tablero de Avisos; si no hay nadie, no sale nada. Nunca
+   * rompe la carga: el pedido ya está guardado.
+   */
+  if (id != null) {
+    try {
+      const territorio = (await getDb().execute(sql`
+        select distrito_id from demandas where id = ${id}
+      `)) as unknown as Array<{ distrito_id: number | null }>;
+      const distrito = territorio[0]?.distrito_id;
+      const { notificarEvento } = await import("./notificar");
+      await notificarEvento("pedido_cargado", {
+        titulo: `Pedido cargado: ${ETIQUETA_TIPO[datos.tipo]} en ${datos.direccion}`,
+        cuerpo: `Lo cargó ${solicitante}${distrito != null ? ` · Distrito ${distrito}` : ""}${
+          datos.descripcion ? ` — ${datos.descripcion.slice(0, 140)}` : ""
+        }`,
+        url: `/demandas/${id}`,
+        tag: `pedido-${id}`,
+      });
+    } catch {
+      /* sin aviso, pero el pedido está registrado */
     }
   }
 

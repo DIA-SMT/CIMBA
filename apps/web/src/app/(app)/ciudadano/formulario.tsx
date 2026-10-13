@@ -29,10 +29,6 @@ import { mensajeDeError } from "@/lib/errores";
  * en el mapa, que era la pregunta de fondo: sí, se completa solo.
  */
 
-/** Quién lo pide si no se cambia (pedido del 8/10). Si es un vecino, se pisa
- *  con su nombre y apellido. */
-const SOLICITANTE_POR_DEFECTO = "Secretaría de Obras Públicas";
-
 /**
  * Carga del pedido de un vecino que reclama en persona o por teléfono. El que
  * tipea es el personal, muchas veces con el vecino delante o al teléfono: por
@@ -53,7 +49,6 @@ export function FormularioCiudadano() {
   const [direccion, setDireccion] = useState("");
   const [buscandoDireccion, setBuscandoDireccion] = useState(false);
   const [descripcion, setDescripcion] = useState("");
-  const [solicitante, setSolicitante] = useState(SOLICITANTE_POR_DEFECTO);
   /** Distrito/barrio/circuito del punto, resueltos por la base. Solo se muestran. */
   const [territorio, setTerritorio] = useState<{ distrito: number | null; barrio: string | null; circuito: string | null } | null>(null);
   /** Nominatim casi nunca trae altura en SMT: si falta, se pide. */
@@ -209,8 +204,6 @@ export function FormularioCiudadano() {
     const falta: string[] = [];
     if (!punto) falta.push("la ubicación en el mapa");
     if (direccion.trim().length < 3) falta.push("la dirección");
-    if (descripcion.trim().length < 5) falta.push("qué pasa (al menos una frase)");
-    if (solicitante.trim().length < 3) falta.push("el nombre de quien reclama");
     if (falta.length > 0) {
       setError(
         falta.length === 1
@@ -226,9 +219,8 @@ export function FormularioCiudadano() {
         fd.set("lat", String(punto!.lat));
         fd.set("lon", String(punto!.lon));
         fd.set("tipo", tipo);
-        fd.set("descripcion", descripcion.trim());
+        if (descripcion.trim()) fd.set("descripcion", descripcion.trim());
         fd.set("direccion", direccion.trim());
-        fd.set("solicitante", solicitante.trim());
         if (desdeGps) fd.set("desdeGps", "1");
         if (fotos[0]) fd.set("foto1", fotos[0]);
         if (fotos[1]) fd.set("foto2", fotos[1]);
@@ -256,7 +248,6 @@ export function FormularioCiudadano() {
             setDesdeGps(false);
             setDireccion("");
             setDescripcion("");
-            setSolicitante(SOLICITANTE_POR_DEFECTO);
           }}
           className="mt-4 rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white"
         >
@@ -412,23 +403,15 @@ export function FormularioCiudadano() {
             ))}
           </select>
         </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">Quién lo pide</label>
-          <input
-            value={solicitante}
-            onChange={(e) => setSolicitante(e.target.value)}
-            placeholder="Nombre y apellido del vecino, o la repartición"
-            className="w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
-          />
-        </div>
-        {/* "Área que lo atiende" se fue: se escribía siempre lo mismo y era
-            obligatorio. Se graba sola como Secretaría de Obras Públicas
-            (pedido del 12/10), en el servidor. */}
+        {/* "Área que lo atiende" se fue (12/10): se graba sola como Secretaría
+            de Obras Públicas. "Quién lo pide" también (13/10): queda grabado
+            con el usuario que carga, en el servidor. Si lo pide un particular,
+            va en la descripción. */}
       </div>
 
       <div>
         <label className="mb-1.5 block text-xs font-semibold tracking-wider text-texto-3 uppercase">
-          Descripción
+          Descripción <span className="normal-case">(opcional)</span>
           {dictadoDescripcion.escuchando && <span className="text-peligro"> · escuchando…</span>}
         </label>
         <div className="flex items-stretch gap-2">
@@ -438,8 +421,8 @@ export function FormularioCiudadano() {
             rows={3}
             placeholder={
               dictadoDescripcion.hayVoz
-                ? "Qué cuenta el vecino y dónde exactamente… (podés dictarlo con el micrófono)"
-                : "Qué cuenta el vecino y dónde exactamente…"
+                ? "Qué pasa y dónde exactamente; si lo pide un vecino, su nombre… (podés dictarlo con el micrófono)"
+                : "Qué pasa y dónde exactamente; si lo pide un vecino, su nombre…"
             }
             className="w-full min-w-0 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2.5 text-sm placeholder:text-texto-3"
           />

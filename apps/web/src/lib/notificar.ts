@@ -31,7 +31,9 @@ export type EventoAviso =
   | "item_validado"
   | "item_rechazado"
   | "orden_reasignada"
-  | "orden_cerrada";
+  | "orden_cerrada"
+  /* Alguien registró un pedido en la pantalla Ciudadano (Leo, 13/10). */
+  | "pedido_cargado";
 
 export interface ResultadoAviso {
   push: number;

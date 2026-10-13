@@ -31,6 +31,7 @@ const eventoSchema = z.enum([
   "item_rechazado",
   "orden_reasignada",
   "orden_cerrada",
+  "pedido_cargado",
 ]);
 
 export async function agregarDestinatario(entrada: {

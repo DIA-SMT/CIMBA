@@ -13,7 +13,8 @@ export type EventoAviso =
   | "item_validado"
   | "item_rechazado"
   | "orden_reasignada"
-  | "orden_cerrada";
+  | "orden_cerrada"
+  | "pedido_cargado";
 
 export interface Destinatario {
   id: number;
@@ -102,6 +103,12 @@ export const EVENTOS: Array<{ evento: EventoAviso; titulo: string; dispara: stri
     evento: "orden_cerrada",
     titulo: "Orden cerrada",
     dispara: "Se dispara cuando una orden se cierra —sola, al terminar, o a mano por la Dirección.",
+  },
+  {
+    evento: "pedido_cargado",
+    titulo: "Pedido cargado a mano",
+    dispara:
+      "Se dispara cada vez que alguien registra un pedido en la pantalla Ciudadano: qué es, dónde, en qué distrito y quién lo cargó.",
   },
   {
     evento: "aviso_general",
