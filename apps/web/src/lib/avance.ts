@@ -524,6 +524,10 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
       join empresas e on e.id = ot.empresa_id
       left join orden_items oi on oi.orden_id = ot.id
       where ot.estado in ('emitida', 'en_ejecucion')
+        /* Una orden cargada desde una planilla (Ingeco, septiembre de 2026)
+           es trabajo ya terminado que la empresa completa con fotos: queda
+           abierta para eso, pero no es obra en curso y no se dibuja como tal. */
+        and not (ot.metadata ? 'importada_de')
         ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``}
       group by ot.id, ot.numero, ot.estado, ot.tipo, e.nombre, ot.emitida_en, ot.vence_en
       order by max(oi.reportado_en) desc nulls last, ot.emitida_en desc
@@ -553,6 +557,7 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
         (select count(*) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_n,
         (select round(coalesce(sum(iv.superficie_m2), 0)) from intervenciones iv where iv.estado = 'en_curso' and iv.geom_ejecucion is not null ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)})::int as ec_m2,
         (select count(*) from ordenes_trabajo ot where ot.estado in ('emitida', 'en_ejecucion')
+          and not (ot.metadata ? 'importada_de')
           ${t ? sql`and exists (select 1 from orden_items x where x.orden_id = ot.id and st_intersects(${geomDe(t)}, x.geom))` : sql``})::int as ordenes_activas,
         (select count(*) from demandas d
           where d.estado in ('recibida', 'en_validacion') and d.geom is not null
