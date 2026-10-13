@@ -5,7 +5,7 @@ import { z } from "zod";
 import { conRls, sql } from "@cimba/db";
 import { requerirRol, type Sesion } from "./auth";
 import { desviacionPct, sortearMuestra } from "@cimba/domain";
-import { REGIMEN } from "./certificacion";
+import { CERTIFICABLE, REGIMEN } from "./certificacion";
 import { ErrorVisible } from "./errores";
 
 /**
@@ -113,14 +113,14 @@ export async function firmarActaMedicion(entrada: z.infer<typeof actaSchema>) {
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
       where ot.empresa_id = ${d.empresaId}
-        and oi.estado = 'hecho' and oi.acta_id is null
+        and ${CERTIFICABLE}
         and oi.id in (${pedidos})
       for update of oi
     `)) as unknown as Array<{ id: number; direccion: string | null; superficie_m2: number }>;
     if (items.length === 0) throw new ErrorVisible("Ninguno de esos puntos está pendiente de certificar para esta empresa");
     if (items.length < new Set(d.itemIds).size) {
       throw new ErrorVisible(
-        `${new Set(d.itemIds).size - items.length} de los puntos elegidos ya no están para certificar (se certificaron o se dieron de baja). Volvé a abrir el acta.`,
+        `${new Set(d.itemIds).size - items.length} de los puntos elegidos ya no están para certificar (se certificaron, se dieron de baja o no tienen la foto del después). Volvé a abrir el acta.`,
       );
     }
 

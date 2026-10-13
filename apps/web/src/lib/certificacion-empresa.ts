@@ -1,7 +1,7 @@
 import "server-only";
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
-import { REGIMEN } from "./certificacion";
+import { CERTIFICABLE, FALTA_FOTO, REGIMEN } from "./certificacion";
 
 /**
  * LO MISMO QUE VE SUPERVISIÓN, PERO DEL LADO DE LA EMPRESA.
@@ -30,8 +30,10 @@ export interface CertificacionEmpresa {
   empresa: string;
   modalidad: "total" | "muestreo";
   motivo: string;
-  /** Trabajo cargado que todavía no entró en ningún acta firmada. */
+  /** Trabajo cargado, con su foto, que todavía no entró en ningún acta firmada. */
   sinCertificar: { items: number; m2: number; tn: number };
+  /** Hecho pero sin la foto del después: no entra al acta hasta que la suban. */
+  faltaFoto: { items: number; m2: number; tn: number };
   /** Lo que ya pasó por acta: es lo único que se certifica a los fines del pago. */
   certificado: { items: number; m2: number; tn: number };
   /** Cargado en los últimos 30 días, para tener una referencia de ritmo. */
@@ -62,17 +64,26 @@ export async function certificacionDeEmpresa(
       select e.nombre,
         (select count(*) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null)::int as sin_items,
+          where ot.empresa_id = e.id and ${CERTIFICABLE})::int as sin_items,
         coalesce((select sum(oi.superficie_m2) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as sin_m2,
+          where ot.empresa_id = e.id and ${CERTIFICABLE}), 0) as sin_m2,
         /* TONELADAS: la unidad con la que se certifica el pago. Sale del
            volumen (columna generada) por la densidad de la mezcla, 2,4 t/m³.
            Los m² se muestran igual porque son lo tangible, pero el acta se
            firma por tonelada y hasta ahora había que sacarla a mano. */
         coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as sin_tn,
+          where ot.empresa_id = e.id and ${CERTIFICABLE}), 0) as sin_tn,
+        (select count(*) from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and ${FALTA_FOTO})::int as ff_items,
+        coalesce((select sum(oi.superficie_m2) from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and ${FALTA_FOTO}), 0) as ff_m2,
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and ${FALTA_FOTO}), 0) as ff_tn,
         (select count(*) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
           where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is not null)::int as cert_items,
@@ -151,6 +162,7 @@ export async function certificacionDeEmpresa(
       modalidad,
       motivo,
       sinCertificar: { items: Number(f.sin_items ?? 0), m2: Number(f.sin_m2 ?? 0), tn: Number(f.sin_tn ?? 0) },
+      faltaFoto: { items: Number(f.ff_items ?? 0), m2: Number(f.ff_m2 ?? 0), tn: Number(f.ff_tn ?? 0) },
       certificado: { items: Number(f.cert_items ?? 0), m2: Number(f.cert_m2 ?? 0), tn: Number(f.cert_tn ?? 0) },
       ultimos30: { items: Number(f.m30_items ?? 0), m2: Number(f.m30_m2 ?? 0), tn: Number(f.m30_tn ?? 0) },
       sinOrden: { items: Number(f.libre_items ?? 0), m2: Number(f.libre_m2 ?? 0), tn: Number(f.libre_tn ?? 0) },

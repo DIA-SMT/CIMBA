@@ -151,6 +151,29 @@ export async function conteoInspecciones(sesion: Sesion): Promise<Record<string,
   });
 }
 
+/**
+ * QUÉ PUEDE ENTRAR EN UN ACTA: el trabajo hecho, que todavía no está en
+ * ninguna y que tiene la foto del DESPUÉS. La foto es la evidencia sobre la que
+ * se mide en el acta conjunta. Un trabajo cargado desde una planilla (Ingeco,
+ * septiembre de 2026) entra hecho pero sin foto, y no se certifica hasta que la
+ * empresa la suba desde su portal.
+ *
+ * Al 13/10/2026 los 391 hechos sin acta tenían todos su foto del después: la
+ * regla no cambió nada de lo que ya estaba cargado.
+ *
+ * Es el mismo fragmento en todas las consultas que dicen "sin certificar"
+ * (supervisión, la empresa y la firma del acta). Si cambia acá, cambia en
+ * todas; usa el alias `oi` de orden_items.
+ */
+export const CERTIFICABLE = sql`(oi.estado = 'hecho' and oi.acta_id is null and exists (
+  select 1 from fotografias f_acta
+  where f_acta.intervencion_id = oi.intervencion_id and f_acta.momento = 'despues'))`;
+
+/** Hecho y sin acta, pero sin la foto del después: le falta completarlo a la empresa. */
+export const FALTA_FOTO = sql`(oi.estado = 'hecho' and oi.acta_id is null and not exists (
+  select 1 from fotografias f_acta
+  where f_acta.intervencion_id = oi.intervencion_id and f_acta.momento = 'despues'))`;
+
 export interface RegimenEmpresa {
   empresaId: number;
   empresa: string;
@@ -161,6 +184,9 @@ export interface RegimenEmpresa {
   m2SinCertificar: number;
   /** Toneladas de asfalto sin certificar: la unidad con la que se paga. */
   tnSinCertificar: number;
+  /** Hechos que no entran al acta porque les falta la foto del después. */
+  itemsFaltaFoto: number;
+  tnFaltaFoto: number;
   ultimaActa: string | null;
   ultimaDesviacion: number | null;
 }
@@ -176,15 +202,21 @@ export async function regimenPorEmpresa(sesion: Sesion): Promise<RegimenEmpresa[
       select e.id, e.nombre,
         (select count(*) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null)::int as sin_certificar,
+          where ot.empresa_id = e.id and ${CERTIFICABLE})::int as sin_certificar,
         coalesce((select sum(oi.superficie_m2) from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as m2_sin,
+          where ot.empresa_id = e.id and ${CERTIFICABLE}), 0) as m2_sin,
         /* La tonelada es la unidad con la que se firma el acta: volumen
            (columna generada) por la densidad de la mezcla, 2,4 t/m³. */
         coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
           join ordenes_trabajo ot on ot.id = oi.orden_id
-          where ot.empresa_id = e.id and oi.estado = 'hecho' and oi.acta_id is null), 0) as tn_sin,
+          where ot.empresa_id = e.id and ${CERTIFICABLE}), 0) as tn_sin,
+        (select count(*) from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and ${FALTA_FOTO})::int as falta_foto,
+        coalesce((select sum(oi.volumen_m3) * 2.4 from orden_items oi
+          join ordenes_trabajo ot on ot.id = oi.orden_id
+          where ot.empresa_id = e.id and ${FALTA_FOTO}), 0) as tn_falta_foto,
         (select max(a.fecha) from actas_medicion a
           where a.empresa_id = e.id and a.estado = 'firmada') as ultima_acta,
         (select min(a.fecha) from actas_medicion a
@@ -223,6 +255,8 @@ export async function regimenPorEmpresa(sesion: Sesion): Promise<RegimenEmpresa[
         itemsSinCertificar: Number(f.sin_certificar ?? 0),
         m2SinCertificar: Number(f.m2_sin ?? 0),
         tnSinCertificar: Number(f.tn_sin ?? 0),
+        itemsFaltaFoto: Number(f.falta_foto ?? 0),
+        tnFaltaFoto: Number(f.tn_falta_foto ?? 0),
         ultimaActa: f.ultima_acta != null ? String(f.ultima_acta) : null,
         ultimaDesviacion: desviacion,
       };
@@ -310,7 +344,7 @@ export async function puntosParaActa(sesion: Sesion, empresaId: number): Promise
       from orden_items oi
       join ordenes_trabajo ot on ot.id = oi.orden_id
       where ot.empresa_id = ${empresaId}
-        and oi.estado = 'hecho' and oi.acta_id is null
+        and ${CERTIFICABLE}
       order by ot.numero, oi.reportado_en nulls last, oi.id
     `)) as unknown as Array<Record<string, unknown>>;
     return filas.map((f) => ({

@@ -97,6 +97,20 @@ export default async function PaginaCertificacionEmpresa({
         />
       </div>
 
+      {c.faltaFoto.items > 0 && (
+        <Panel className="mb-4 border-amarillo/40 p-4">
+          <p className="text-sm font-bold text-amarillo">
+            {c.faltaFoto.items === 1
+              ? "1 trabajo hecho no tiene la foto del después"
+              : `${numero(c.faltaFoto.items)} trabajos hechos no tienen la foto del después`}
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-texto-2">
+            Suman {m2(c.faltaFoto.m2)} m² y {formatoToneladas(c.faltaFoto.tn)}. No entran en un acta hasta que tengan
+            la foto: se sube desde la orden, en cada bache marcado «Falta completar».
+          </p>
+        </Panel>
+      )}
+
       <h2 className="mt-6 mb-2 text-xs font-bold tracking-wider text-texto-3 uppercase">
         Actas de medición
       </h2>

@@ -53,7 +53,7 @@ export default async function PaginaCertificacion() {
     momento: m,
     lista: pendientes.filter((p) => p.momento === m),
   }));
-  const conDeuda = regimenes.filter((r) => r.itemsSinCertificar > 0);
+  const conDeuda = regimenes.filter((r) => r.itemsSinCertificar > 0 || r.itemsFaltaFoto > 0);
 
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -79,7 +79,7 @@ export default async function PaginaCertificacion() {
           <p className="text-sm font-bold">
             Pendiente de certificar
             <span className="ml-2 text-[11px] font-normal text-texto-3">
-              trabajo cargado, con foto y medidas, que todavía no pasó por acta
+              trabajo cargado, con foto del después y medidas, que todavía no pasó por acta
             </span>
           </p>
         </div>
@@ -113,7 +113,14 @@ export default async function PaginaCertificacion() {
                     </span>
                     <span className="block text-[11px] leading-snug text-texto-3">{r.motivo}</span>
                   </td>
-                  <td className="num px-3 py-2.5 text-right font-bold">{numero(r.itemsSinCertificar)}</td>
+                  <td className="num px-3 py-2.5 text-right font-bold">
+                    {numero(r.itemsSinCertificar)}
+                    {r.itemsFaltaFoto > 0 && (
+                      <span className="block text-[11px] font-normal text-texto-3">
+                        + {numero(r.itemsFaltaFoto)} sin foto
+                      </span>
+                    )}
+                  </td>
                   <td className="num px-3 py-2.5 text-right">{numero(Math.round(r.m2SinCertificar))}</td>
                   {/* La unidad con la que se firma el acta y se paga. */}
                   <td className="num px-3 py-2.5 text-right font-bold text-amarillo">{formatoToneladas(r.tnSinCertificar)}</td>
