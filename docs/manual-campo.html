@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<title>CIMBA · Manual de campo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  /* Manual impreso A4. Capturas reales del portal (13/10/2026). */
+  @page { size: A4; margin: 0; }
+  :root {
+    --azul: #0066ff; --celeste: #2eb1ff; --celeste-txt: #0a6fb8; --amarillo: #f4dc00;
+    --texto: #16202c; --texto-2: #3f4a59; --texto-3: #5b6676;
+    --panel: #eef2f7; --borde: #d3dae5; --blanco: #ffffff;
+    --rojo: #c42a1e; --verde: #15803d; --ambar-txt: #8a6d00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #cfd6e0; color: var(--texto); font-family: "Poppins", system-ui, sans-serif; font-size: 9.6pt; line-height: 1.38; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .pagina {
+    width: 210mm; height: 297mm; background: var(--blanco); position: relative; overflow: hidden;
+    padding: 11mm 12mm 11mm; margin: 0 auto; page-break-after: always; break-after: page;
+    display: flex; flex-direction: column; gap: 4mm;
+  }
+  .pagina:last-child { page-break-after: auto; break-after: auto; }
+  @media screen { .pagina { margin: 8mm auto; box-shadow: 0 2mm 8mm rgba(0,0,0,.25); } }
+
+  /* Cabecera */
+  .cab { display: flex; align-items: flex-end; justify-content: space-between; gap: 6mm; border-bottom: 0.4mm solid var(--borde); padding-bottom: 2.5mm; flex: none; }
+  .lockup { display: flex; align-items: center; gap: 3mm; }
+  .lockup .smt { display: flex; align-items: center; gap: 1.6mm; }
+  .lockup .smt img { height: 7mm; width: auto; }
+  .lockup .smt .t1 { font-size: 6pt; font-weight: 600; letter-spacing: .16em; color: var(--texto-2); line-height: 1; }
+  .lockup .smt .t2 { font-size: 10pt; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+  .lockup .sep { width: 0.3mm; height: 8mm; background: var(--borde); }
+  .lockup .cimba { display: flex; align-items: center; gap: 2mm; }
+  .lockup .cimba svg { width: 8.5mm; height: 8.5mm; }
+  .lockup .cimba .n { font-size: 12pt; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+  .lockup .cimba .n b { color: #c9b400; }
+  .lockup .cimba .s { font-size: 6pt; font-weight: 600; letter-spacing: .14em; color: var(--texto-2); line-height: 1; margin-top: 1mm; }
+  .cab .donde { font-size: 8pt; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--texto-3); text-align: right; line-height: 1.3; }
+  .cab .donde b { color: var(--azul); }
+
+  h1 { font-size: 24pt; font-weight: 800; letter-spacing: -.025em; line-height: 1.08; margin: 0; text-wrap: balance; }
+  h2 { font-size: 16pt; font-weight: 800; letter-spacing: -.02em; line-height: 1.12; margin: 0; text-wrap: balance; }
+  h2 small { display: block; font-size: 8pt; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--celeste-txt); margin-bottom: 1.2mm; }
+  .lead { font-size: 11pt; color: var(--texto-2); margin: 0; max-width: 160mm; }
+  p { margin: 0; }
+
+  /* Grillas */
+  .dos { display: grid; grid-template-columns: var(--izq, 64mm) 1fr; gap: 7mm; align-items: start; flex: 1; min-height: 0; }
+  .col { display: flex; flex-direction: column; gap: 3.2mm; min-width: 0; }
+  .tres { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; align-items: start; }
+
+  /* Teléfono con captura: el alto lo da la captura, que ya viene recortada. */
+  .tel { margin: 0; display: flex; flex-direction: column; gap: 1.6mm; width: var(--w); }
+  .tel .pant { width: 100%; overflow: hidden; border-radius: 3.4mm; border: 1mm solid #1b2430; background: #fff; box-shadow: 0 1.2mm 4mm rgba(0,0,0,.16); }
+  .tel .pant img { width: 100%; display: block; }
+  figcaption { font-size: 8.4pt; color: var(--texto-2); line-height: 1.32; }
+  figcaption b { color: var(--texto); }
+
+  /* Captura de computadora */
+  .pc { margin: 0; display: flex; flex-direction: column; gap: 1.6mm; }
+  .pc .marco { border-radius: 2.2mm; border: 0.5mm solid #1b2430; overflow: hidden; box-shadow: 0 1.2mm 4mm rgba(0,0,0,.14); background: #fff; }
+  .pc .marco img { width: 100%; display: block; }
+  .pc.hero .marco img { height: 75.5mm; object-fit: cover; object-position: top left; }
+
+  /* Pasos */
+  ol.pasos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2.4mm; counter-reset: paso; }
+  ol.pasos li { position: relative; padding-left: 9mm; counter-increment: paso; }
+  ol.pasos li::before { content: counter(paso); position: absolute; left: 0; top: 0.1mm; width: 6.6mm; height: 6.6mm; border-radius: 50%; background: var(--azul); color: #fff; font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 8.6pt; display: flex; align-items: center; justify-content: center; }
+  /* Azul = algo que se toca en la pantalla. Negrita negra = la idea. */
+  .ui { font-weight: 700; color: var(--azul); white-space: nowrap; }
+  .ui.largo { white-space: normal; }
+  .ui.verde { color: var(--verde); } .ui.rojo { color: var(--rojo); } .ui.ambar { color: var(--ambar-txt); }
+
+  /* Cajas */
+  .caja { background: var(--panel); border-radius: 2.4mm; padding: 3mm 3.6mm; font-size: 9pt; }
+  .caja h3 { margin: 0 0 1.2mm; font-size: 8pt; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--celeste-txt); }
+  .caja.ojo { background: #fff8d6; border: 0.3mm solid #e2cf63; }
+  .caja.ojo h3 { color: var(--ambar-txt); }
+  .caja ul { margin: 0; padding-left: 4mm; display: flex; flex-direction: column; gap: 1.1mm; }
+  .caja p + p { margin-top: 1.2mm; }
+  .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 2.2mm; }
+  .boton { border-radius: 2.2mm; padding: 2.4mm 3mm; font-size: 8.8pt; border: 0.3mm solid var(--borde); background: #fff; }
+  .boton b { display: block; font-size: 9.2pt; margin-bottom: 0.5mm; }
+  .boton.azul { background: var(--azul); color: #fff; border-color: var(--azul); }
+  .boton.celeste b { color: var(--celeste-txt); }
+  .boton.ambar b { color: var(--ambar-txt); }
+  .boton.gris b { color: var(--texto-2); }
+
+  /* Portada */
+  .primera { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4mm; }
+  .primera .caja { display: flex; flex-direction: column; gap: 1.6mm; font-size: 8.9pt; }
+  .primera h3 { margin: 0; font-size: 10.5pt; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--texto); }
+  .primera .fila { display: flex; gap: 3mm; align-items: center; }
+  .qr { flex: none; width: 21mm; height: 21mm; border-radius: 1.4mm; background: #fff; padding: 0.8mm; border: 0.3mm solid var(--borde); }
+  .qr img { width: 100%; height: 100%; display: block; }
+  .url { font-family: "JetBrains Mono", monospace; font-weight: 700; color: var(--azul); font-size: 8.6pt; }
+  .eyebrow { font-size: 8pt; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--celeste-txt); margin-bottom: -2mm; }
+  .quien { display: flex; gap: 6mm; font-size: 9pt; color: var(--texto-2); }
+  .quien b { color: var(--texto); }
+  .contacto { display: flex; align-items: flex-end; gap: 3mm; font-size: 9.4pt; font-weight: 600; }
+  .contacto .linea { flex: 1; border-bottom: 0.35mm solid var(--texto-3); height: 5mm; }
+
+  .pie { margin-top: auto; border-top: 0.4mm solid var(--borde); padding-top: 2.2mm; display: flex; justify-content: space-between; align-items: flex-end; gap: 6mm; font-size: 8pt; color: var(--texto-3); flex: none; }
+  .pie b { color: var(--texto-2); }
+  .pie .pag { font-family: "JetBrains Mono", monospace; font-weight: 700; color: var(--texto-2); white-space: nowrap; }
+
+  .reglas { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4mm 6mm; }
+  .regla { display: flex; gap: 2.6mm; align-items: flex-start; font-size: 8.9pt; }
+  .regla .m { flex: none; width: 5mm; height: 5mm; border-radius: 50%; background: var(--amarillo); margin-top: 0.6mm; box-shadow: inset 0 0 0 1.1mm #fff, 0 0 0 0.35mm #c9b400; }
+  .regla b { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════ 1 · PORTADA ═══════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <div class="smt"><img src="manual-campo/isotipo-smt.png" alt="Isotipo de la Municipalidad de San Miguel de Tucumán"><div><div class="t1">CIUDAD</div><div class="t2">SMT</div></div></div>
+      <div class="sep"></div>
+      <div class="cimba">
+        <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+        <div><div class="n">CIMBA<b>.</b></div><div class="s">MONITOREO DE BACHES Y ASFALTO</div></div>
+      </div>
+    </div>
+    <div class="donde">Manual de campo<br><b>Cuadrillas y capataces</b><br>Octubre 2026</div>
+  </header>
+
+  <h1>Cargar un bache desde el celular</h1>
+  <p class="lead">Cada bache que tapan se carga en CIMBA con la foto, las medidas y el lugar. Con eso la Dirección ve el trabajo en el momento, lo certifica para el pago y le responde al vecino que reclamó.</p>
+
+  <figure class="pc hero">
+    <div class="marco"><img src="manual-campo/avance.jpg" alt="Pantalla Avance de CIMBA: el mapa de la ciudad con los trabajos del mes y la columna de números"></div>
+    <figcaption><b>Así ve la Dirección lo que cargan.</b> Cada bache confirmado aparece en el mapa de la ciudad con sus metros cuadrados, sus toneladas y el barrio donde se hizo.</figcaption>
+  </figure>
+
+  <p class="eyebrow">La primera vez</p>
+  <div class="primera">
+    <div class="caja">
+      <div class="fila">
+        <div class="qr"><img src="manual-campo/qr-portal.svg" alt="Código QR que abre el portal de cuadrillas"></div>
+        <h3>Entrá</h3>
+      </div>
+      <p>En el celular, abrí <span class="url">cimba.smt.gob.ar/empresa</span> o escaneá el código. Entrá con el usuario de la empresa, por ejemplo <b>calleri@cimba.com</b>, y la clave que les dio la Dirección. La primera vez te pide elegir una clave nueva.</p>
+      <p>Mientras lo usen, no hace falta volver a entrar. Si pasa una semana sin abrirlo, pide la clave de nuevo.</p>
+    </div>
+    <div class="caja">
+      <h3>Instalá la app</h3>
+      <p>Al rato de entrar aparece el cartel <b>Tené CIMBA a mano</b>: tocá <span class="ui">Instalar la app</span>. Sale una sola vez.</p>
+      <p>En iPhone, tocá <b>Compartir</b> y después <b>Agregar a inicio</b>.</p>
+      <p>Queda el ícono de CIMBA en el teléfono y abre sin la barra del navegador.</p>
+    </div>
+    <div class="caja">
+      <h3>Activá los avisos</h3>
+      <p>Tocá <span class="ui">Activar avisos</span> y aceptá el permiso.</p>
+      <p>Te llega un aviso al teléfono cuando les emiten una orden nueva, cuando una orden se vence y cuando Bacheo valida o rechaza un bache que propusieron.</p>
+      <p>Los avisos llegan solo si entraste con el usuario de la empresa.</p>
+    </div>
+  </div>
+
+  <div class="quien">
+    <p><b>Bacheo</b> es la Dirección que les emite las órdenes y valida los baches que proponen.</p>
+    <p><b>El inspector</b> controla cada carga y arma con la empresa el acta de medición.</p>
+  </div>
+
+  <div class="contacto"><span>Consultas a la Dirección:</span><span class="linea"></span></div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Dirección de Obras Viales · Municipalidad de San Miguel de Tucumán</div><div class="pag">1 / 6</div></footer>
+</section>
+
+<!-- ═══════════════════════════ 2 · MIS ÓRDENES ═══════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <h2><small>Paso 1</small>Mis órdenes: por dónde se empieza</h2>
+    <div class="donde">El portal<br><b>Inicio</b></div>
+  </header>
+
+  <div class="dos" style="--izq: 70mm">
+    <figure class="tel" style="--w: 70mm">
+      <div class="pant"><img src="manual-campo/inicio.png" alt="Pantalla Mis órdenes del portal: el cartel para activar los avisos, dos órdenes y el botón Cargar un bache"></div>
+      <figcaption><b>Mis órdenes.</b> Arriba, el cartel para activar los avisos. Debajo, las órdenes abiertas de la empresa y el botón <b>Cargar un bache</b>.</figcaption>
+    </figure>
+
+    <div class="col">
+      <ol class="pasos">
+        <li><b>Tocá la orden en la que está trabajando tu cuadrilla.</b> Si la empresa tiene más de una abierta, la primera tiene borde verde y dice <b>LA QUE ESTÁS TRABAJANDO</b>: es la de la carga más reciente. Como el usuario es de toda la empresa, mirá el número y el nombre antes de cargar.</li>
+        <li><b>Leé la tarjeta.</b> El número de orden, la prioridad, cuántos baches van hechos de cuántos, los m² y las toneladas, y cuándo vence. «3 sin trabajo» son los que se cerraron con <b>Ya estaba hecho</b>, <b>No lo encontré</b> o <b>No se puede ejecutar</b>: no suman m².</li>
+        <li><span class="ui">Cargar un bache</span> sirve para cargar sin entrar antes a la orden: te pregunta de qué orden es y te lleva ahí.</li>
+        <li>En <b>TERMINADAS</b>, al final, quedan las órdenes completadas o anuladas. Se pueden mirar; ya no se carga en ellas.</li>
+      </ol>
+
+      <div class="caja">
+        <h3>El vencimiento, en tres colores</h3>
+        <p><b>Vence el 31/10/26</b> en gris: hay tiempo. <b class="ui ambar">Vence HOY</b> en amarillo: es el último día. <b class="ui rojo">VENCIDA</b> en rojo: pasó la fecha. Se sigue cargando igual.</p>
+      </div>
+
+      <div class="caja">
+        <h3>Sin señal</h3>
+        <p>Se guardan en el teléfono y se mandan solos cuando vuelve la señal: <b>REPORTAR HECHO</b>, el bache propuesto y el trabajo sin orden. Arriba aparece «2 trabajos guardados en el teléfono» con el botón <span class="ui">Enviar ahora</span>.</p>
+        <p><b>Ya estaba hecho</b>, <b>No lo encontré</b> y <b>No se puede ejecutar</b> necesitan señal en el momento.</p>
+        <p>Si un trabajo guardado <b class="ui rojo largo">no fue aceptado por el sistema</b>, tocalo y leé el motivo. El tachito lo borra del teléfono y no llega a la Dirección: cargalo de nuevo corrigiendo eso.</p>
+      </div>
+
+      <div class="caja ojo">
+        <h3>Trabajo sin orden: solo para una urgencia</h3>
+        <p>En <span class="ui">Cargar un bache</span> está <span class="ui">No es de ninguna orden</span>: es para una urgencia o un pedido directo de un inspector. Si tienen órdenes abiertas, hay que escribir por qué. Queda marcado aparte y no entra en la certificación de ninguna orden.</p>
+        <p>Si el bache lo taparon trabajando una orden, se carga en esa orden.</p>
+      </div>
+
+      <div class="caja">
+        <h3>Un usuario por empresa</h3>
+        <p>El usuario es de la empresa, no de cada persona. Por eso cada carga lleva el nombre del <b>Capataz</b>: es lo que permite preguntarle a quien cargó.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="pie"><div>CIMBA · Manual de campo · Cuadrillas y capataces</div><div class="pag">2 / 6</div></footer>
+</section>
+
+<!-- ═══════════════════════════ 3 · LA ORDEN ══════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <h2><small>Paso 2</small>La orden: el mapa y la lista de baches</h2>
+    <div class="donde">El portal<br><b>Una orden abierta</b></div>
+  </header>
+
+  <div class="dos" style="--izq: 62mm">
+    <div class="col">
+      <figure class="tel" style="--w: 62mm">
+        <div class="pant"><img src="manual-campo/orden-mapa.png" alt="Cabecera de una orden con las indicaciones del Director y el mapa con los puntos rojos que faltan"></div>
+        <figcaption><b>Arriba, la orden.</b> Indicaciones del Director, cuánto va hecho, el vencimiento y el mapa.</figcaption>
+      </figure>
+      <figure class="tel" style="--w: 62mm">
+        <div class="pant"><img src="manual-campo/orden-lista.png" alt="La lista de baches pendientes de la orden, con el buscador por calle y los cuatro botones de cada bache"></div>
+        <figcaption><b>Abajo, la lista.</b> El buscador, el botón Ordenar por cercanía y cada bache pendiente con sus cuatro botones.</figcaption>
+      </figure>
+    </div>
+
+    <div class="col">
+      <ol class="pasos">
+        <li><b>Leé las Indicaciones del Director</b> y la fecha de vencimiento. Ahí está el cuadrante o el recorrido que les asignaron.</li>
+        <li><b>Armá el recorrido con el mapa.</b> Punto <b class="ui rojo">rojo</b>: falta. Punto <b class="ui verde">verde</b>: ya cerrado, sea tapado o cerrado con otro botón. Con <span class="ui">Ver el satélite</span> reconocés la cuadra y ves si es pavimento o ripio.</li>
+        <li><b>Tocá un punto rojo</b> y después <span class="ui">Cargar … →</span>: baja hasta la tarjeta de ese bache en la lista.</li>
+        <li><b>También podés buscarlo</b> escribiendo en <span class="ui">Buscar por calle…</span>, o tocar <span class="ui">Ordenar por cercanía</span> y aceptar el GPS. El más cercano queda primero, con la distancia.</li>
+        <li><b>Cada bache pendiente tiene cuatro botones.</b> Solo el primero suma m² y se certifica.</li>
+      </ol>
+
+      <div class="botones">
+        <div class="boton azul"><b>REPORTAR HECHO</b>Lo taparon. Medidas, foto del después y confirmar. Página 4.</div>
+        <div class="boton celeste"><b>Ya estaba hecho</b>Al llegar ya estaba reparado por otro. Foto de cómo está hoy. No suma m².</div>
+        <div class="boton gris"><b>No lo encontré</b>No hay bache en esa dirección, o la dirección no existe. Una frase de motivo, sin foto.</div>
+        <div class="boton ambar"><b>No se puede ejecutar</b>Hay algo, pero no es un bache para tapar: agua, tapa rota, paño de hormigón. Foto obligatoria.</div>
+      </div>
+
+      <p>Arriba de la lista hay dos botones más: <span class="ui largo">Encontramos un bache que no está en la orden</span> y <span class="ui largo">Reportar un problema (no es un bache)</span>. Están en la página 5.</p>
+
+      <div class="caja">
+        <h3>La orden se completa sola</h3>
+        <p>Cuando no queda ningún bache pendiente ni ningún propuesto sin validar, la orden pasa a <b>Completada</b>, se va a TERMINADAS y ya no se carga en ella. Si encontraron un bache de más, propónganlo antes de cerrar el último pendiente.</p>
+        <p>Las órdenes de zona, que no traen lista de baches, las cierra la Dirección.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="pie"><div>CIMBA · Manual de campo · Cuadrillas y capataces</div><div class="pag">3 / 6</div></footer>
+</section>
+
+<!-- ═══════════════════════════ 4 · REPORTAR HECHO ════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <h2><small>Paso 3</small>Reportar hecho: la carga de un bache</h2>
+    <div class="donde">El portal<br><b>Un bache de la lista</b></div>
+  </header>
+
+  <div class="dos" style="--izq: 60mm">
+    <div class="col">
+      <figure class="tel" style="--w: 60mm">
+        <div class="pant"><img src="manual-campo/form-medidas.png" alt="El formulario de reportar hecho: medidas reales con las tres formas de medir y la modalidad"></div>
+        <figcaption><b>Medidas y modalidad.</b> Tres formas de medir. Ancho y largo en metros; espesor en centímetros.</figcaption>
+      </figure>
+      <figure class="tel" style="--w: 60mm">
+        <div class="pant"><img src="manual-campo/form-fotos.png" alt="El formulario de reportar hecho: fotos del antes y del después, ubicación, capataz, fecha y el botón de confirmar"></div>
+        <figcaption><b>Fotos, ubicación y confirmar.</b> La foto del después es obligatoria.</figcaption>
+      </figure>
+    </div>
+
+    <div class="col">
+      <ol class="pasos">
+        <li><b>Abrí el bache al llegar.</b> Tocá <span class="ui">REPORTAR HECHO</span> y sacá la <b>Foto del ANTES</b>, a la izquierda, antes de tapar: el cuadro abre la cámara. No cierres la página hasta confirmar.</li>
+        <li><b>Medidas reales.</b> Elegí cómo mediste: <span class="ui">Ancho × largo</span> con la cinta, <span class="ui">Superficie</span> si sabés los m² y no es un rectángulo, o <span class="ui">Volumen de mezcla</span> si solo sabés los m³. <b>Ancho y largo van en metros</b>, con coma: 1,20 es un metro veinte. <b>El espesor va en centímetros</b>: un bacheo tiene entre 4 y 8 cm. Con <span class="ui">Dictar medidas</span> podés decir «ancho 2, largo 3, espesor 5».</li>
+        <li><b>Mirá el renglón celeste</b> <span class="mono">= … m² · … m³ · … t</span>: superficie, mezcla y toneladas. Es lo que se certifica. Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero.</li>
+        <li><b>Modalidad.</b> Planificado ya viene marcado. Provisorio (urgencia) es el arreglo de urgencia que después hay que rehacer. Sobre adoquín, cuando el bache está en una calle de adoquín.</li>
+        <li><b>Foto del DESPUÉS</b>, a la derecha, cuando terminaron: es obligatoria. Si esa foto ya se usó en otro bache, aparece un aviso amarillo. Te deja confirmar igual, pero el inspector la ve marcada.</li>
+        <li><b>Ubicación.</b> Viene la de la orden. Si el bache está en otro lugar, tocá <span class="ui">Corregir ubicación</span>: escribí o dictá calle y altura y tocá <span class="ui">Ubicar</span>, o tocá <span class="ui">Usar mi GPS</span>. Arrastrá el pin hasta el bache y tocá <span class="ui">Usar esta ✓</span>.</li>
+        <li><b>Capataz:</b> tu nombre, queda recordado para toda la orden. <b>Fecha del trabajo:</b> si lo taparon otro día, cambiala. No puede ser futura ni anterior al día en que les emitieron la orden. <b>Observaciones:</b> lo que el inspector tiene que saber.</li>
+        <li>Tocá <span class="ui verde">CONFIRMAR TRABAJO HECHO</span>. El bache pasa a <b>HECHOS</b>, más abajo en la orden.</li>
+      </ol>
+
+      <div class="caja ojo">
+        <h3>Errores que se ven seguido</h3>
+        <ul>
+          <li><b>Espesor en metros.</b> Si escribís 0,05 estás poniendo metros: el espesor es 5. Con menos de 1 cm el sistema no deja confirmar.</li>
+          <li><b>Fotos cruzadas.</b> El antes va a la izquierda y el después a la derecha.</li>
+          <li><b>20 × 30 en vez de 2 × 3.</b> El renglón «= 600 m²» lo delata. Mirá el «= … m²» antes de confirmar.</li>
+        </ul>
+      </div>
+
+      <div class="caja">
+        <h3>Si te equivocaste</h3>
+        <p><b>Medidas:</b> abrí el bache en HECHOS y tocá <span class="ui">Corregir medidas</span>, mientras no esté en un acta. <b>Ubicación:</b> <span class="ui">Corregir la ubicación</span>, mientras la orden siga abierta. <b>Foto o bache equivocado:</b> avisá a la Dirección. El inspector da de baja esa carga y el bache vuelve a pendiente para cargarlo bien. Desde el teléfono no se borra nada.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="pie"><div>CIMBA · Manual de campo · Cuadrillas y capataces</div><div class="pag">4 / 6</div></footer>
+</section>
+
+<!-- ═══════════════════════════ 5 · LOS OTROS BOTONES ═════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <h2><small>Paso 4</small>Los otros botones y el bache que no está en la orden</h2>
+    <div class="donde">El portal<br><b>Un bache de la lista</b></div>
+  </header>
+
+  <div class="tres">
+    <div class="col">
+      <figure class="tel" style="--w: 46mm">
+        <div class="pant"><img src="manual-campo/ya-estaba.png" alt="El panel Ya estaba hecho: pide la foto de cómo está hoy"></div>
+        <figcaption><b>Ya estaba hecho.</b> Solo la foto de cómo está hoy.</figcaption>
+      </figure>
+      <p><span class="ui">Ya estaba hecho</span>. Si al llegar el bache ya estaba reparado por otro, sacá la foto de cómo está hoy y tocá <span class="ui largo">CONFIRMAR: YA ESTABA HECHO</span>. Cierra el punto con evidencia y no suma m² de la empresa.</p>
+      <p><span class="ui">No lo encontré</span>. Si no hay bache en esa dirección, o la dirección no existe, escribí el motivo en una frase y tocá <span class="ui largo">Confirmar: no se encontró</span>. No pide foto.</p>
+    </div>
+
+    <div class="col">
+      <figure class="tel" style="--w: 46mm">
+        <div class="pant"><img src="manual-campo/no-se-puede.png" alt="El panel No se puede ejecutar, con los siete motivos y la foto obligatoria"></div>
+        <figcaption><b>No se puede ejecutar.</b> Elegí qué encontraron y sacá la foto.</figcaption>
+      </figure>
+      <p><span class="ui">No se puede ejecutar</span>. El punto existe, pero no es un bache para tapar. Elegí qué encontraron:</p>
+      <p><b>No lo arregla Bacheo:</b> pérdida de agua, pérdida de líquidos cloacales, tapa de cloaca rota, imbornal obstruido.</p>
+      <p><b>Es de Bacheo, pero no es un bache:</b> hay que cambiar el paño de hormigón, necesita carpeta (repavimentación), es calle de ripio (enripiado).</p>
+      <p>La foto es obligatoria: con ella la Dirección decide a quién se lo deriva. El reclamo queda abierto con el motivo real.</p>
+    </div>
+
+    <div class="col">
+      <figure class="tel" style="--w: 46mm">
+        <div class="pant"><img src="manual-campo/proponer.png" alt="El panel Proponer un bache nuevo: dirección, GPS, foto y el casillero Ya lo tapamos"></div>
+        <figcaption><b>Un bache que no está en la orden.</b> Entra como propuesto.</figcaption>
+      </figure>
+      <p><span class="ui largo">Encontramos un bache que no está en la orden</span>. Escribí o dictá calle y altura y tocá <span class="ui">Ubicar</span>, o <span class="ui">Usar mi GPS</span>; ajustá el pin y tocá <span class="ui">Usar esta ✓</span>. Si ya lo taparon, marcá <span class="ui">Ya lo tapamos</span> y cargá las medidas y la foto del después.</p>
+      <p>Queda <b class="ui ambar">Esperando validación</b>. Si Bacheo lo valida y ya estaba tapado, cuenta como hecho; si no, aparece en la lista como pendiente. Si lo rechaza, te llega el aviso con el motivo.</p>
+    </div>
+  </div>
+
+  <div class="caja">
+    <h3>¿No se puede ejecutar o Reportar un problema?</h3>
+    <p>Si el punto está en la lista de la orden, usá <span class="ui">No se puede ejecutar</span> en ese bache. Si lo encontraron en otro lado, usá <span class="ui largo">Reportar un problema (no es un bache)</span>, arriba de la lista: entra como pedido nuevo con tu foto, no como trabajo de la empresa.</p>
+  </div>
+
+  <footer class="pie"><div>CIMBA · Manual de campo · Cuadrillas y capataces</div><div class="pag">5 / 6</div></footer>
+</section>
+
+<!-- ═══════════════════════════ 6 · QUÉ PASA DESPUÉS ══════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <h2><small>Después de cargar</small>Qué pasa con lo que cargan</h2>
+    <div class="donde">La Dirección<br><b>Control y certificación</b></div>
+  </header>
+
+  <div class="dos" style="--izq: 128mm; flex: none; align-items: end">
+    <figure class="pc">
+      <div class="marco"><img src="manual-campo/control.jpg" alt="Control de lo cargado: cada bache con su foto, las medidas, la alarma Sin foto del antes y los botones Está bien, Corregir medidas y Dar de baja"></div>
+    </figure>
+    <figcaption><b>Control de lo cargado.</b> El inspector ve cada bache con sus fotos, las medidas, las toneladas y las alarmas, como «Sin foto del antes».<br><br>Lo marca <b>Está bien</b>, corrige la medida o lo da de baja. Si estaba mal cargado, el bache vuelve a pendiente en la orden para cargarlo bien. Si era un duplicado, queda hecho por la otra carga. Nada se borra.</figcaption>
+  </div>
+
+  <div class="dos" style="--izq: 1fr; grid-template-columns: 1fr 46mm; flex: none">
+    <figure class="pc">
+      <div class="marco"><img src="manual-campo/muro.jpg" alt="El muro de fotos de antes y después de los trabajos cargados"></div>
+      <figcaption><b>El muro de antes y después.</b> Cada trabajo con sus dos fotos queda a la vista, con la calle, la empresa y la fecha. Sin foto del antes, el bache no entra al muro.</figcaption>
+    </figure>
+    <figure class="tel" style="--w: 46mm">
+      <div class="pant"><img src="manual-campo/certificacion.png" alt="Mi certificación: metros cuadrados sin certificar, ya en acta, en 30 días y sin orden"></div>
+      <figcaption><b>Mi certificación.</b> Lo cargado se paga cuando entra en un acta de medición. Acá ven cuánto ya entró y cuánto falta.</figcaption>
+    </figure>
+  </div>
+
+  <div class="caja" style="flex: none">
+    <h3>Las reglas de oro</h3>
+    <div class="reglas">
+      <div class="regla"><div class="m"></div><div><b>La foto del después es obligatoria.</b> La del antes se saca al llegar, antes de tapar.</div></div>
+      <div class="regla"><div class="m"></div><div><b>Se mide lo que se pavimentó.</b> Ancho y largo en metros, espesor en centímetros. El «= … m²» es lo que se certifica.</div></div>
+      <div class="regla"><div class="m"></div><div><b>Cada bache se carga en su orden.</b> Lo que no está en la lista se propone desde la orden. Sin orden, solo las urgencias.</div></div>
+      <div class="regla"><div class="m"></div><div><b>Una foto, un bache.</b> La misma foto en dos baches se detecta sola y el inspector la ve marcada.</div></div>
+      <div class="regla"><div class="m"></div><div><b>El pin va donde está el bache.</b> Si la ubicación de la orden no es exacta, corregila al cargar.</div></div>
+      <div class="regla"><div class="m"></div><div><b>La fecha es la del día del trabajo.</b> Si cargás otro día, cambiá la fecha.</div></div>
+    </div>
+  </div>
+
+  <div class="contacto"><span>Consultas a la Dirección:</span><span class="linea"></span></div>
+
+  <footer class="pie"><div>CIMBA · Manual de campo · Cuadrillas y capataces · <b>cimba.smt.gob.ar/empresa</b></div><div class="pag">6 / 6</div></footer>
+</section>
+
+</body>
+</html>
