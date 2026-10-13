@@ -515,10 +515,20 @@ async function consultarLento(t: TerritorioRef | null, publico: boolean, conFeed
              -- vence_en es DATE: sin "at time zone", que lo corría un día. Vencida = anterior al día de hoy en Tucumán.
              to_char(ot.vence_en, 'YYYY-MM-DD') as vence,
              (ot.vence_en is not null and ot.vence_en < (now() at time zone ${TZ})::date) as vencida,
-             case when count(oi.geom) > 0 then
-               st_asgeojson(st_simplify(
-                 st_buffer(st_concavehull(st_collect(oi.geom), 0.5, false)::geography, 50)::geometry,
-                 0.00005))::json
+             /* EL ÁREA DE LA ORDEN. Una orden por zona del contrato o por un
+                polígono dibujado tiene su región: es esa, la que se le indicó a
+                la empresa (Leo, 13/10: las de Ingeco "se cruzan raro" porque se
+                dibujaban alrededor de lo cargado, incluidos pines mal ubicados
+                y baches fuera de la zona). El resto se dibuja como siempre,
+                alrededor de sus baches. */
+             case
+               when ot.ambito = 'zona' and ot.zona_id is not null then
+                 (select st_asgeojson(st_simplify(z.geom, 0.00005))::json from zonas_bacheo z where z.id = ot.zona_id)
+               when ot.ambito = 'poligono' and ot.poligono is not null then st_asgeojson(ot.poligono)::json
+               when count(oi.geom) > 0 then
+                 st_asgeojson(st_simplify(
+                   st_buffer(st_concavehull(st_collect(oi.geom), 0.5, false)::geography, 50)::geometry,
+                   0.00005))::json
              end as area
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
