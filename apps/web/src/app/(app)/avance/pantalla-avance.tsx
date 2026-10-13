@@ -1114,6 +1114,10 @@ export function PantallaAvance({
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-celeste" aria-hidden="true" />
               48 h
             </span>
+            <span className="flex items-center gap-1.5" title="Cargado por la empresa y todavía sin validar por Bacheo">
+              <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-celeste/80 bg-panel" aria-hidden="true" />
+              Sin validar
+            </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-texto-2" aria-hidden="true" />
               En curso

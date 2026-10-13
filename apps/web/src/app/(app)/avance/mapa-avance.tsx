@@ -97,6 +97,8 @@ const RADIO: ExpressionSpecification = [
   16, ["*", 1.3, RADIO_BASE],
 ];
 const ES_RECIENTE: ExpressionSpecification = ["==", ["get", "reciente"], true];
+/** Cargado por la empresa y todavía sin validar: el punto va hueco, con el color de la empresa en el borde. */
+const SIN_VALIDAR: ExpressionSpecification = ["==", ["get", "sinValidar"], true];
 
 /** Lo que se ve de cerca aparece entre los dos zooms; lo de lejos, al revés. */
 const deCerca = (valor: ExpressionSpecification | number): ExpressionSpecification => [
@@ -760,11 +762,11 @@ export function MapaAvance({
           filter={filtroHechos}
           minzoom={ZOOM_LEJOS - 0.01}
           paint={{
-            "circle-color": ["get", "color"],
+            "circle-color": ["case", SIN_VALIDAR, oscuro ? "#0b0f16" : "#ffffff", ["get", "color"]],
             "circle-radius": RADIO,
             "circle-opacity": deCerca(hayResalte || modoFalta ? 0.12 : ["case", ES_RECIENTE, 0.95, 0.78]),
-            "circle-stroke-width": ["case", ES_RECIENTE, 2.2, oscuro ? 0.6 : 0.9],
-            "circle-stroke-color": ["case", ES_RECIENTE, "#2eb1ff", trazo],
+            "circle-stroke-width": ["case", ES_RECIENTE, 2.2, SIN_VALIDAR, 2, oscuro ? 0.6 : 0.9],
+            "circle-stroke-color": ["case", ES_RECIENTE, "#2eb1ff", SIN_VALIDAR, ["get", "color"], trazo],
             "circle-stroke-opacity": deCerca(hayResalte || modoFalta ? 0.1 : ["case", ES_RECIENTE, 1, 0.6]),
           }}
         />
@@ -1119,12 +1121,18 @@ function FichaHecho({
         {p.toneladas ? ` · ${numero(p.toneladas)} t de mezcla` : ""}
         {p.tipo ? ` · ${ETIQUETA_TIPO[p.tipo] ?? p.tipo.replaceAll("_", " ")}` : ""}
       </p>
-      <p className="mt-1 text-xs text-texto-3">
-        {p.fuente === "orden"
-          ? `Mandado por la orden ${p.orden ?? ""}`
-          : "Informado por planilla, por el SIGOV o por la app de la empresa"}
-        {p.reciente ? " · cargado en las últimas 48 h" : ""}
-      </p>
+      {p.sinValidar ? (
+        <p className="mt-1 text-xs font-semibold text-amarillo">
+          Cargado por la empresa en la orden {p.orden ?? ""}: espera la validación de Bacheo.
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-texto-3">
+          {p.fuente === "orden"
+            ? `Mandado por la orden ${p.orden ?? ""}`
+            : "Informado por planilla, por el SIGOV o por la app de la empresa"}
+          {p.reciente ? " · cargado en las últimas 48 h" : ""}
+        </p>
+      )}
       {p.foto && p.fotoAntes ? (
         <AntesDespues antes={p.fotoAntes} despues={p.foto} alt="El bache antes y después" className="mt-2 aspect-[4/3] w-full" />
       ) : p.foto ? (

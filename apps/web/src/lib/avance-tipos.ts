@@ -100,6 +100,8 @@ export interface HechoProps {
   tipo: string | null;
   /** Cargado en las últimas 48 horas: late en el mapa. */
   reciente: boolean;
+  /** Lo cargó la empresa como "ya tapado" y todavía espera la validación de Bacheo. */
+  sinValidar: boolean;
 }
 
 export interface PendienteProps {

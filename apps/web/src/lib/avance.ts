@@ -103,7 +103,7 @@ const enTerr = (t: TerritorioRef | null, col: SQL): SQL => (t ? sql`and st_inter
  * La fecha es la del TRABAJO (finalizada_en), no la de la carga: un bache
  * tapado el lunes que se cargó el jueves cuenta para el lunes.
  */
-const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null) => sql`
+const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null, conSinValidar = false) => sql`
   select iv.id,
          coalesce(iv.finalizada_en, iv.iniciada_en, iv.creado_en) as fecha,
          iv.iniciada_en,
@@ -111,7 +111,8 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null) => s
          iv.geom_ejecucion, iv.incidente_id,
          it.orden_id, it.numero,
          coalesce(e_ot.nombre, e_md.nombre) as empresa_nombre,
-         coalesce(e_ot.slug, e_md.slug, 'otros') as slug
+         coalesce(e_ot.slug, e_md.slug, 'otros') as slug,
+         false as sin_validar
   from intervenciones iv
   left join lateral (
     select oi.orden_id, ot.numero, ot.empresa_id
@@ -128,6 +129,39 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null) => s
   where iv.estado = ${estado}
     and iv.geom_ejecucion is not null
     ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
+  ${
+    /**
+     * LO CARGADO QUE ESPERA VALIDACIÓN (Leo, 13/10): el bache que la cuadrilla
+     * tapó y cargó desde su orden con "Ya lo tapamos" queda propuesto hasta que
+     * Bacheo lo valida, y recién ahí nace su intervención. Para mostrar "qué se
+     * está haciendo hoy" no se puede esperar al inspector: entra acá con id
+     * negativo (el del item) y marcado sin_validar. Si lo validan, pasa a ser
+     * una intervención y deja de salir por este lado; si lo rechazan, desaparece.
+     */
+    estado === "finalizada" && conSinValidar
+      ? sql`
+  union all
+  select -oi.id,
+         coalesce(
+           case when oi.metadata->'fecha_manual'->>'fecha' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                then ((oi.metadata->'fecha_manual'->>'fecha')::date + time '12:00') at time zone ${TZ} end,
+           (oi.metadata->'ya_ejecutado'->>'en')::timestamptz,
+           (oi.metadata->'propuesto'->>'en')::timestamptz
+         ) as fecha,
+         null::timestamptz,
+         oi.superficie_m2, oi.volumen_m3, 'bacheo'::text,
+         st_centroid(oi.geom), null::bigint,
+         oi.orden_id, ot.numero,
+         e.nombre, e.slug,
+         true
+  from orden_items oi
+  join ordenes_trabajo ot on ot.id = oi.orden_id
+  join empresas e on e.id = ot.empresa_id
+  where oi.estado = 'propuesto' and oi.metadata ? 'ya_ejecutado' and oi.geom is not null
+    and ot.estado <> 'anulada'
+    ${enTerr(t, sql`st_centroid(oi.geom)`)}`
+      : sql``
+  }
 `;
 
 /** El nombre corto con el que se muestra la empresa: la primera palabra del canónico. */
@@ -843,7 +877,8 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
   const desde = desdeDe(dias);
   const enVentana = desde ? sql`b.fecha >= ${desde}` : sql`true`;
   const diaLocal = sql`(b.fecha at time zone ${TZ})::date`;
-  const BASE = baseDe("finalizada", t);
+  // Lo que espera validación se muestra adentro; en la versión pública, solo lo validado.
+  const BASE = baseDe("finalizada", t, !publico);
   // El feed nombra a quien hizo cada cosa: misma regla que /actividad, y nunca en público.
   const conFeed = !publico && sesion != null && ["admin", "planificacion"].includes(sesion.rol_cimba);
 
@@ -872,14 +907,17 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
              b.superficie_m2::float as m2,
              round(b.volumen_m3 * 2.4, 2)::float as toneladas,
              case when b.orden_id is null then 'archivo' else 'orden' end as fuente,
-             b.numero as orden, b.orden_id, i.direccion, b.tipo,
+             b.numero as orden, b.orden_id, coalesce(i.direccion, op.direccion) as direccion, b.tipo,
              (b.fecha >= now() - interval '48 hours') as reciente,
-             fo.storage_path, fo.url_externa,
-             fa.storage_path as antes_storage_path, fa.url_externa as antes_url_externa,
+             b.sin_validar,
+             coalesce(fo.storage_path, op.metadata->'ya_ejecutado'->>'foto_despues') as storage_path, fo.url_externa,
+             coalesce(fa.storage_path, op.metadata->>'foto_propuesta') as antes_storage_path,
+             fa.url_externa as antes_url_externa,
              st_x(st_centroid(b.geom_ejecucion))::float as lon,
              st_y(st_centroid(b.geom_ejecucion))::float as lat
       from (${BASE}) b
       left join incidentes i on i.id = b.incidente_id
+      left join orden_items op on b.sin_validar and op.id = -b.id
       left join lateral (
         select f.storage_path, f.url_externa
         from fotografias f
@@ -1080,6 +1118,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
           fotoAntes: urlFoto({ storagePath: texto(f.antes_storage_path), urlExterna: texto(f.antes_url_externa) }),
           tipo: texto(f.tipo),
           reciente: Boolean(f.reciente),
+          sinValidar: Boolean(f.sin_validar),
         } satisfies HechoProps,
       })),
     },
