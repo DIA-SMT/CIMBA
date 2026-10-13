@@ -2724,6 +2724,253 @@ export async function corregirUbicacionItem(entrada: {
   return { ok: true };
 }
 
+/**
+ * COMPLETAR UN TRABAJO YA HECHO: la foto que faltó y, si no tenía, el lugar.
+ *
+ * Nace con la planilla de Ingeco de septiembre de 2026: baches que entran
+ * hechos —con su fecha, su volumen y su remito— pero sin foto y, muchos, sin
+ * ubicar. Lo decidido con Leo el 13/10: entran como hechos, la empresa después
+ * corrige o marca la ubicación y sube las fotos, y para el acta cuentan recién
+ * con la foto del después (CERTIFICABLE, en lib/certificacion.ts). Sirve igual
+ * para cualquier hecho al que le falte la evidencia.
+ *
+ * - La FECHA DEL TRABAJO no cambia: es la que ya tiene el item (la de la
+ *   planilla). Lo que se sube hoy es evidencia de un trabajo de entonces.
+ * - Ubicar un hecho que no tenía lugar crea el problema (reparado) y el
+ *   trabajo (finalizado) con esa fecha: desde ahí aparece en el mapa, en
+ *   Avance y en la brecha, como si lo hubiera cargado la cuadrilla.
+ * - Quién: la empresa (y su cuadrilla) sobre lo suyo, por empresaDelEjecutor;
+ *   el municipio sobre cualquiera. Nunca lo que ya está en un acta firmada.
+ * - Las fotos pasan por la misma lista cerrada de tipos y el mismo tope de
+ *   8 MB que la carga de un bache, y guardan su huella para la alarma de foto
+ *   repetida del inspector.
+ */
+export async function completarItemHecho(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion", "supervision"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para completar trabajos`);
+  }
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      lat: z.coerce.number().min(-27.2).max(-26.5).optional(),
+      lon: z.coerce.number().min(-65.6).max(-64.9).optional(),
+      direccion: z.string().trim().max(300).optional(),
+    })
+    .parse({
+      itemId: formData.get("itemId"),
+      lat: formData.get("lat") || undefined,
+      lon: formData.get("lon") || undefined,
+      direccion: formData.get("direccion") || undefined,
+    });
+
+  // Misma lista cerrada que reportarItemHecho: el bucket es público y el tipo
+  // lo decide el servidor, no lo que declare el navegador.
+  const TIPOS_FOTO: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  };
+  const validarFoto = (v: unknown, cual: string): File | null => {
+    if (!(v instanceof File) || v.size === 0) return null;
+    if (v.size > 8 * 1024 * 1024) throw new ErrorVisible(`La foto ${cual} supera 8 MB`);
+    if (!TIPOS_FOTO[v.type]) throw new ErrorVisible(`La foto ${cual} tiene que ser una imagen (JPG, PNG o WEBP)`);
+    return v;
+  };
+  const fotoDespues = validarFoto(formData.get("foto"), "del después");
+  const fotoAntes = validarFoto(formData.get("fotoAntes"), "del antes");
+  const hayPunto = datos.lat != null && datos.lon != null;
+  if (!fotoDespues && !fotoAntes && !hayPunto) {
+    throw new ErrorVisible("Elegí una foto o marcá el bache en el mapa: no hay nada para guardar.");
+  }
+  if (hayPunto) {
+    const { dentroDeSMT } = await import("@cimba/domain");
+    if (!dentroDeSMT({ lat: datos.lat!, lon: datos.lon! })) {
+      throw new ErrorVisible("Ese punto cae fuera de San Miguel de Tucumán: revisá el pin");
+    }
+  }
+
+  // Pre-chequeo antes de subir nada a Storage (mismo criterio que reportarItemHecho).
+  const previa = (await conRls(claims(sesion), async (tx) =>
+    (await tx.execute(sql`
+      select oi.estado, oi.acta_id, oi.intervencion_id, ot.estado as orden_estado, ot.empresa_id
+      from orden_items oi join ordenes_trabajo ot on ot.id = oi.orden_id
+      where oi.id = ${datos.itemId}
+    `)) as unknown as Array<{
+      estado: string;
+      acta_id: number | null;
+      intervencion_id: number | null;
+      orden_estado: string;
+      empresa_id: number;
+    }>,
+  ))[0];
+  if (!previa) throw new ErrorVisible("El item no existe");
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("Este trabajo no es de tu empresa");
+    }
+  }
+  if (previa.estado !== "hecho") throw new ErrorVisible("Este bache no tiene un trabajo hecho para completar");
+  if (previa.acta_id != null) throw new ErrorVisible("Este trabajo ya está en un acta firmada: no se modifica.");
+  if (previa.orden_estado === "anulada") throw new ErrorVisible("La orden está anulada");
+  if (previa.intervencion_id == null && !hayPunto) {
+    throw new ErrorVisible("Falta ubicar el bache: marcalo en el mapa antes de guardar.");
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  );
+  const subirArchivo = async (archivo: File, momento: "antes" | "despues") => {
+    const ruta = `ordenes/${datos.itemId}/${momento}-${Date.now()}.${TIPOS_FOTO[archivo.type]}`;
+    const bytes = Buffer.from(await archivo.arrayBuffer());
+    const subida = await supabase.storage
+      .from("fotografias")
+      .upload(ruta, bytes, { contentType: archivo.type, upsert: false });
+    if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+    const { huellaDeImagen } = await import("./huella-foto");
+    return { momento, ruta, huella: await huellaDeImagen(bytes) };
+  };
+  const fotos: Array<{ momento: "antes" | "despues"; ruta: string; huella: string | null }> = [];
+
+  try {
+    if (fotoAntes) fotos.push(await subirArchivo(fotoAntes, "antes"));
+    if (fotoDespues) fotos.push(await subirArchivo(fotoDespues, "despues"));
+
+    await conRls(claims(sesion), async (tx) => {
+      const filas = (await tx.execute(sql`
+        select oi.estado, oi.acta_id, oi.incidente_id, oi.intervencion_id, oi.direccion, oi.tipo_trabajo,
+               oi.superficie_m2, oi.espesor_cm, oi.volumen_m3, oi.tipo_obra::text as tipo_obra,
+               oi.reportado_en, oi.metadata,
+               st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+               ot.numero, e.nombre as empresa_nombre
+        from orden_items oi
+        join ordenes_trabajo ot on ot.id = oi.orden_id
+        join empresas e on e.id = ot.empresa_id
+        where oi.id = ${datos.itemId}
+        for update of oi
+      `)) as unknown as Array<Record<string, unknown>>;
+      const item = filas[0];
+      if (!item || item.estado !== "hecho") throw new ErrorVisible("Este bache no tiene un trabajo hecho para completar");
+      if (item.acta_id != null) throw new ErrorVisible("Este trabajo ya está en un acta firmada: no se modifica.");
+
+      let intervencionId = item.intervencion_id != null ? Number(item.intervencion_id) : null;
+      let lat = item.lat != null ? Number(item.lat) : null;
+      let lon = item.lon != null ? Number(item.lon) : null;
+
+      if (intervencionId == null) {
+        if (!hayPunto) throw new ErrorVisible("Falta ubicar el bache: marcalo en el mapa antes de guardar.");
+        lat = datos.lat!;
+        lon = datos.lon!;
+        const punto = sql`st_setsrid(st_makepoint(${lon}, ${lat}), 4326)`;
+        // La fecha del trabajo es la que ya tenía el item: la de la planilla.
+        const cuando = item.reportado_en
+          ? sql`${new Date(item.reportado_en as string | Date).toISOString()}::timestamptz`
+          : sql`now()`;
+        const direccion = datos.direccion || (item.direccion as string | null) || null;
+        const superficie = item.superficie_m2 != null ? Number(item.superficie_m2) : null;
+        const espesor = item.espesor_cm != null ? Number(item.espesor_cm) : null;
+        const volumen = item.volumen_m3 != null ? Number(item.volumen_m3) : null;
+        const metadataItem = (item.metadata ?? {}) as Record<string, unknown>;
+        const origen = metadataItem.importado_de ? "planilla" : "orden_trabajo";
+        const esCarpeta = String(item.tipo_trabajo) === "carpeta";
+        const esObra = esCarpeta || (superficie != null && superficie >= 50);
+        /* El problema se inserta DENTRO de la transacción: conRls no cambia de
+           rol (la app conecta como dueña de las tablas), así que no hace falta
+           la conexión de servicio de reportarItemHecho, y si algo falla
+           después no queda un problema huérfano marcado como reparado. */
+        const inc = (await tx.execute(sql`
+          insert into incidentes (tipo, estado, geom, direccion, superficie_m2, detectado_en, cerrado_en,
+                                  circuito_id, barrio_id, metadata)
+          values (
+            ${esCarpeta ? "pavimento_deteriorado" : "bache"}, 'reparado', ${punto}, ${direccion}, ${superficie},
+            ${cuando}, ${cuando}, circuito_de(${punto}), barrio_de(${punto}),
+            ${JSON.stringify({ origen, orden: item.numero, empresa: item.empresa_nombre })}::jsonb
+          ) returning id
+        `)) as unknown as Array<{ id: number }>;
+        const incidenteId = inc[0]?.id;
+        if (!incidenteId) throw new ErrorVisible("No se pudo registrar el bache en el mapa");
+        const iv = (await tx.execute(sql`
+          insert into intervenciones (
+            incidente_id, estado, geom_ejecucion, iniciada_en, finalizada_en,
+            superficie_m2, volumen_m3, tipo_obra, tipo_intervencion, materiales, metadata
+          ) values (
+            ${incidenteId}, 'finalizada', ${punto}, ${cuando}, ${cuando},
+            ${superficie}, ${volumen}, ${(item.tipo_obra as string | null) ?? null}::tipo_obra_bacheo,
+            ${esCarpeta ? "carpeta" : "bacheo"},
+            ${JSON.stringify({
+              ...(espesor != null ? { espesor_cm: espesor } : {}),
+              ...(typeof metadataItem.medicion === "string" ? { medicion: metadataItem.medicion } : {}),
+            })}::jsonb,
+            ${JSON.stringify({
+              origen,
+              orden: item.numero,
+              contratista: item.empresa_nombre,
+              empresa: item.empresa_nombre,
+              escala: esObra ? "obra" : "bache",
+              ubicado_despues: { por: sesion.nombre, en: new Date().toISOString() },
+            })}::jsonb
+          ) returning id
+        `)) as unknown as Array<{ id: number }>;
+        intervencionId = iv[0]?.id ?? null;
+        if (!intervencionId) throw new ErrorVisible("No se pudo registrar el trabajo");
+        await tx.execute(sql`
+          update orden_items set
+            incidente_id = ${incidenteId},
+            intervencion_id = ${intervencionId},
+            geom = ${punto},
+            direccion = coalesce(${datos.direccion || null}, direccion),
+            metadata = (coalesce(metadata, '{}'::jsonb) - 'falta_ubicar') || ${JSON.stringify({
+              ubicacion_corregida: { por: sesion.nombre, en: new Date().toISOString() },
+            })}::jsonb
+          where id = ${datos.itemId}
+        `);
+      }
+
+      const puntoFoto =
+        lat != null && lon != null ? sql`st_setsrid(st_makepoint(${lon}, ${lat}), 4326)` : sql`null`;
+      for (const f of fotos) {
+        await tx.execute(sql`
+          insert into fotografias (intervencion_id, momento, storage_path, geom, tomada_en, huella)
+          values (${intervencionId}, ${f.momento}, ${f.ruta}, ${puntoFoto}, now(), ${f.huella}::bit(64))
+        `);
+      }
+      if (fotos.length > 0) {
+        /* Rastro en el item: el inspector tiene que poder ver que la foto llegó
+           después del trabajo, y quién la subió. */
+        await tx.execute(sql`
+          update orden_items set
+            metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+              'fotos_agregadas',
+              coalesce(metadata->'fotos_agregadas', '[]'::jsonb) || ${JSON.stringify([
+                { momentos: fotos.map((f) => f.momento), por: sesion.nombre, en: new Date().toISOString() },
+              ])}::jsonb
+            )
+          where id = ${datos.itemId}
+        `);
+      }
+    });
+  } catch (e) {
+    // Nada de la transacción quedó: las fotos ya subidas son huérfanas.
+    if (fotos.length > 0) {
+      await supabase.storage
+        .from("fotografias")
+        .remove(fotos.map((f) => f.ruta))
+        .catch(() => undefined);
+    }
+    throw e;
+  }
+
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  revalidatePath("/ordenes/control");
+  revalidatePath("/mapa");
+  revalidatePath("/brecha");
+  return { ok: true };
+}
+
 export async function corregirMedidasItem(formData: FormData) {
   /**
    * También la EMPRESA, sobre lo suyo. Corregir una medida era solo del

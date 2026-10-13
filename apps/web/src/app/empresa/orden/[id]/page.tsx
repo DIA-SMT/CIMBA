@@ -15,6 +15,8 @@ import { CorregirMedidas } from "@/app/(app)/ordenes/[id]/corregir-medidas";
 import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
 import { ListaPendientes } from "./lista-pendientes";
+import { ListaPorTandas } from "./lista-por-tandas";
+import { CompletarHecho } from "./completar-hecho";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +87,18 @@ export default async function PaginaOrdenEmpresa({
   const activa = orden.estado === "emitida" || orden.estado === "en_ejecucion";
   const pendientes = orden.itemsDetalle.filter((i) => i.estado === "pendiente");
   const hechos = orden.itemsDetalle.filter((i) => i.estado === "hecho");
+  /**
+   * HECHOS QUE FALTA COMPLETAR: sin la foto del después o sin lugar en el
+   * mapa. Son, sobre todo, los baches que entraron desde una planilla (Ingeco,
+   * septiembre): hechos con su fecha y su volumen, que la empresa completa
+   * después. Sin la foto no entran en un acta (CERTIFICABLE). Lo que ya está
+   * en un acta no se toca, así que no se ofrece.
+   */
+  const faltaCompletar = hechos.filter(
+    (i) => i.actaId == null && (i.intervencionId == null || !i.fotos.some((f) => f.momento === "despues")),
+  );
+  const idsFalta = new Set(faltaCompletar.map((i) => i.id));
+  const hechosCompletos = hechos.filter((i) => !idsFalta.has(i.id));
   const noEncontrados = orden.itemsDetalle.filter((i) => i.estado === "no_encontrado");
   const yaResueltos = orden.itemsDetalle.filter((i) => i.estado === "ya_resuelto");
   const propuestos = orden.itemsDetalle.filter((i) => i.estado === "propuesto");
@@ -167,6 +181,9 @@ export default async function PaginaOrdenEmpresa({
                 {" "}
                 · {numero(orden.cerrados - orden.hechos)} sin trabajo
               </span>
+            )}
+            {faltaCompletar.length > 0 && (
+              <span className="font-semibold text-amarillo"> · {numero(faltaCompletar.length)} por completar</span>
             )}
           </span>
           {/* Los m² porque son lo tangible, las toneladas porque son la unidad
@@ -340,17 +357,40 @@ export default async function PaginaOrdenEmpresa({
         </>
       )}
 
+      {/* Hechos que falta completar: arriba, porque es lo que hay que hacer. */}
+      {faltaCompletar.length > 0 && (
+        <>
+          <h2 className="mt-8 mb-1 text-xs font-bold tracking-wider text-amarillo uppercase">
+            Falta completar ({numero(faltaCompletar.length)})
+          </h2>
+          <p className="mb-2 text-xs leading-relaxed text-texto-3">
+            Baches hechos a los que les falta la foto del después o el lugar en el mapa. Entran en un acta recién
+            cuando tienen la foto.
+          </p>
+          <ListaPorTandas
+            filas={faltaCompletar.map((item) => ({
+              id: item.id,
+              texto: item.direccion ?? "",
+              nodo: <ItemACompletar item={item} />,
+            }))}
+          />
+        </>
+      )}
+
       {/* Lo hecho, colapsado: sirve de confirmación de lo que ya se cargó */}
-      {hechos.length > 0 && (
+      {hechosCompletos.length > 0 && (
         <>
           <h2 className="mt-8 mb-2 text-xs font-bold tracking-wider text-texto-3 uppercase">
-            Hechos ({numero(hechos.length)})
+            Hechos ({numero(hechosCompletos.length)})
           </h2>
-          <div className="space-y-2">
-            {hechos.map((item) => (
-              <ItemHecho key={item.id} item={item} />
-            ))}
-          </div>
+          <ListaPorTandas
+            tanda={30}
+            filas={hechosCompletos.map((item) => ({
+              id: item.id,
+              texto: item.direccion ?? "",
+              nodo: <ItemHecho item={item} />,
+            }))}
+          />
         </>
       )}
 
@@ -409,6 +449,58 @@ export default async function PaginaOrdenEmpresa({
 const ETIQUETA_MOMENTO: Record<string, string> = { antes: "Antes", durante: "Durante", despues: "Después" };
 // La misma paleta funcional del relato (incidentes): pedido / en curso / hecho.
 const COLOR_MOMENTO: Record<string, string> = { antes: "#3987e5", durante: "#d95926", despues: "#199e70" };
+
+/** Lo que se lee de la planilla en el item, si vino de una. */
+function datosDePlanilla(metadata: Record<string, unknown>) {
+  const remito = metadata.remito as { numero?: unknown } | null | undefined;
+  const sugerida = metadata.falta_ubicar as { lat?: unknown; lon?: unknown } | null | undefined;
+  return {
+    remito: typeof remito?.numero === "string" ? remito.numero : null,
+    puntoSugerido:
+      typeof sugerida?.lat === "number" && typeof sugerida?.lon === "number"
+        ? { lat: sugerida.lat, lon: sugerida.lon }
+        : null,
+  };
+}
+
+function ItemACompletar({ item }: { item: ItemOrden }) {
+  const faltaUbicar = item.intervencionId == null;
+  const tieneAntes = item.fotos.some((f) => f.momento === "antes");
+  const tieneDespues = item.fotos.some((f) => f.momento === "despues");
+  const { remito, puntoSugerido } = datosDePlanilla(item.metadata);
+  return (
+    <Panel className="px-4 py-3 text-sm">
+      <div className="flex items-start gap-3">
+        <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+        <span className="num shrink-0 font-bold text-resuelto">{m2(item.superficieM2)} m²</span>
+      </div>
+      <p className="mt-0.5 text-xs text-texto-3">
+        {item.reportadoEn ? `Hecho el ${fechaCorta(item.reportadoEn)}` : "Hecho"}
+        {remito && <> · remito {remito}</>}
+      </p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {faltaUbicar && (
+          <span className="rounded bg-amarillo/15 px-2 py-0.5 text-[11px] font-bold text-amarillo">Falta ubicar</span>
+        )}
+        {!tieneDespues && (
+          <span className="rounded bg-amarillo/15 px-2 py-0.5 text-[11px] font-bold text-amarillo">
+            Falta la foto del después
+          </span>
+        )}
+      </div>
+      <div className="mt-2">
+        <CompletarHecho
+          itemId={item.id}
+          direccion={item.direccion}
+          faltaUbicar={faltaUbicar}
+          puntoSugerido={puntoSugerido}
+          tieneAntes={tieneAntes}
+          tieneDespues={tieneDespues}
+        />
+      </div>
+    </Panel>
+  );
+}
 
 function ItemHecho({ item }: { item: ItemOrden }) {
   // Serializado para el visor (isla cliente): URL resuelta + etiqueta legible.
