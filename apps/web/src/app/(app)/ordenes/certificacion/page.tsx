@@ -97,6 +97,7 @@ export default async function PaginaCertificacion() {
                 <th className="px-3 py-2 text-right">m²</th>
                 <th className="px-3 py-2 text-right">Toneladas</th>
                 <th className="px-5 py-2">Última acta</th>
+                <th className="px-5 py-2" />
               </tr>
             </thead>
             <tbody>
@@ -129,6 +130,18 @@ export default async function PaginaCertificacion() {
                       >
                         desvío {r.ultimaDesviacion.toFixed(1)}%
                       </span>
+                    )}
+                  </td>
+                  {/* El acta se arma acá: hasta el 13/10 la acción existía y
+                      no había pantalla, así que nadie podía firmar una. */}
+                  <td className="px-5 py-2.5 text-right">
+                    {puedeInspeccionar && (
+                      <Link
+                        href={`/ordenes/certificacion/acta?empresa=${r.empresaId}`}
+                        className="rounded-lg bg-azul px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-white transition hover:brightness-110"
+                      >
+                        Armar acta
+                      </Link>
                     )}
                   </td>
                 </tr>
@@ -235,7 +248,11 @@ export default async function PaginaCertificacion() {
             <tbody>
               {actas.map((a) => (
                 <tr key={a.id} className="border-b border-borde/60">
-                  <td className="px-5 py-2.5 font-semibold">{a.numero}</td>
+                  <td className="px-5 py-2.5 font-semibold">
+                    <Link href={`/ordenes/certificacion/acta/${a.id}`} className="num text-celeste hover:underline">
+                      {a.numero}
+                    </Link>
+                  </td>
                   <td className="px-3 py-2.5">{a.empresa}</td>
                   <td className="px-3 py-2.5 text-texto-2">{fechaCorta(a.fecha)}</td>
                   <td className="px-3 py-2.5 text-[11px] tracking-wide text-texto-3 uppercase">{a.modalidad}</td>

@@ -1,4 +1,5 @@
 import { conRls, sql } from "@cimba/db";
+import { MUESTREO_MINIMO_PCT } from "@cimba/domain";
 import type { Sesion } from "./auth";
 
 /**
@@ -24,7 +25,7 @@ const claims = (s: Sesion) => ({ sub: s.sub, rol_cimba: s.rol_cimba, id_persona:
 
 export const REGIMEN = {
   semanasMedicionTotal: 4,
-  muestreoMinimoPct: 20,
+  muestreoMinimoPct: MUESTREO_MINIMO_PCT,
   desviacionQueObligaTotal: 5,
   muestreoDiferidoPct: 10,
 } as const;
@@ -264,5 +265,138 @@ export async function listarActas(sesion: Sesion, limite = 40): Promise<ActaResu
       m2Medidos: Number(f.m2_medidos ?? 0),
       desviacionPct: f.desviacion_pct != null ? Number(f.desviacion_pct) : null,
     }));
+  });
+}
+
+// ── El acta de medición: lo que entra y cómo quedó ───────────────────────────
+
+/** Un punto que cargó la empresa y todavía no pasó por acta. */
+export interface PuntoParaActa {
+  itemId: number;
+  ordenId: number;
+  ordenNumero: string;
+  direccion: string | null;
+  reportadoEn: string | null;
+  anchoM: number | null;
+  largoM: number | null;
+  espesorCm: number | null;
+  /** Lo que informó la empresa: es lo que se contrasta con lo medido. */
+  m2Informado: number;
+  /** Ya lo revisó un inspector en «Control de lo cargado». */
+  revisado: boolean;
+  fotos: Array<{ momento: string; storagePath: string | null; urlExterna: string | null }>;
+  lat: number | null;
+  lon: number | null;
+}
+
+/**
+ * Los puntos de una empresa en condiciones de entrar en un acta: hechos,
+ * sin acta y vigentes (lo dado de baja ya no está "hecho"). Del más viejo al
+ * más nuevo, orden por orden: es como se recorre en la calle.
+ */
+export async function puntosParaActa(sesion: Sesion, empresaId: number): Promise<PuntoParaActa[]> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.id, oi.orden_id, ot.numero, oi.direccion, oi.reportado_en,
+             oi.ancho_m, oi.largo_m, oi.espesor_cm, coalesce(oi.superficie_m2, 0) as m2,
+             (oi.metadata ? 'control') as revisado,
+             st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
+             coalesce((
+               select json_agg(json_build_object(
+                        'momento', f.momento, 'storagePath', f.storage_path, 'urlExterna', f.url_externa)
+                      order by f.momento)
+               from fotografias f where f.intervencion_id = oi.intervencion_id
+             ), '[]'::json) as fotos
+      from orden_items oi
+      join ordenes_trabajo ot on ot.id = oi.orden_id
+      where ot.empresa_id = ${empresaId}
+        and oi.estado = 'hecho' and oi.acta_id is null
+      order by ot.numero, oi.reportado_en nulls last, oi.id
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      itemId: Number(f.id),
+      ordenId: Number(f.orden_id),
+      ordenNumero: String(f.numero),
+      direccion: (f.direccion as string) ?? null,
+      reportadoEn: f.reportado_en != null ? new Date(String(f.reportado_en)).toISOString() : null,
+      anchoM: f.ancho_m != null ? Number(f.ancho_m) : null,
+      largoM: f.largo_m != null ? Number(f.largo_m) : null,
+      espesorCm: f.espesor_cm != null ? Number(f.espesor_cm) : null,
+      m2Informado: Number(f.m2 ?? 0),
+      revisado: Boolean(f.revisado),
+      fotos: (f.fotos as PuntoParaActa["fotos"]) ?? [],
+      lat: f.lat != null ? Number(f.lat) : null,
+      lon: f.lon != null ? Number(f.lon) : null,
+    }));
+  });
+}
+
+export interface ActaDetalle extends ActaResumen {
+  empresaId: number;
+  observaciones: string | null;
+  firmaInspector: string | null;
+  firmaContratista: string | null;
+  firmadaEn: string | null;
+  creadaPor: string | null;
+  items: Array<{
+    itemId: number | null;
+    ordenNumero: string | null;
+    direccion: string | null;
+    reportadoEn: string | null;
+    m2Informado: number | null;
+    /** Null: no salió sorteado y se certifica lo informado. */
+    m2Medido: number | null;
+  }>;
+}
+
+/** El acta firmada, con su detalle congelado: es lo que se imprime. */
+export async function obtenerActa(sesion: Sesion, id: number): Promise<ActaDetalle | null> {
+  return conRls(claims(sesion), async (tx) => {
+    const cab = ((await tx.execute(sql`
+      select a.id, a.numero, a.empresa_id, e.nombre as empresa, a.fecha::text as fecha, a.estado::text,
+             a.modalidad, a.puntos_informados, a.puntos_medidos, a.m2_informados, a.m2_medidos,
+             a.desviacion_pct, a.observaciones, a.firma_inspector, a.firma_contratista, a.firmada_en,
+             p.nombre as creada_por
+      from actas_medicion a
+      join empresas e on e.id = a.empresa_id
+      left join perfiles p on p.id = a.creada_por
+      where a.id = ${id}
+    `)) as unknown as Array<Record<string, unknown>>)[0];
+    if (!cab) return null;
+    const items = (await tx.execute(sql`
+      select ai.orden_item_id, ot.numero, ai.direccion, oi.reportado_en, ai.m2_informado, ai.m2_medido
+      from acta_items ai
+      left join orden_items oi on oi.id = ai.orden_item_id
+      left join ordenes_trabajo ot on ot.id = oi.orden_id
+      where ai.acta_id = ${id}
+      order by ot.numero nulls last, oi.reportado_en nulls last, ai.id
+    `)) as unknown as Array<Record<string, unknown>>;
+    return {
+      id: Number(cab.id),
+      numero: String(cab.numero),
+      empresaId: Number(cab.empresa_id),
+      empresa: String(cab.empresa),
+      fecha: String(cab.fecha),
+      estado: String(cab.estado),
+      modalidad: String(cab.modalidad),
+      puntosInformados: Number(cab.puntos_informados ?? 0),
+      puntosMedidos: Number(cab.puntos_medidos ?? 0),
+      m2Informados: Number(cab.m2_informados ?? 0),
+      m2Medidos: Number(cab.m2_medidos ?? 0),
+      desviacionPct: cab.desviacion_pct != null ? Number(cab.desviacion_pct) : null,
+      observaciones: (cab.observaciones as string) ?? null,
+      firmaInspector: (cab.firma_inspector as string) ?? null,
+      firmaContratista: (cab.firma_contratista as string) ?? null,
+      firmadaEn: cab.firmada_en != null ? new Date(String(cab.firmada_en)).toISOString() : null,
+      creadaPor: (cab.creada_por as string) ?? null,
+      items: items.map((i) => ({
+        itemId: i.orden_item_id != null ? Number(i.orden_item_id) : null,
+        ordenNumero: (i.numero as string) ?? null,
+        direccion: (i.direccion as string) ?? null,
+        reportadoEn: i.reportado_en != null ? new Date(String(i.reportado_en)).toISOString() : null,
+        m2Informado: i.m2_informado != null ? Number(i.m2_informado) : null,
+        m2Medido: i.m2_medido != null ? Number(i.m2_medido) : null,
+      })),
+    };
   });
 }
