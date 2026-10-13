@@ -2,6 +2,7 @@ import { getDb, sql } from "@cimba/db";
 import type { Geocoder, OpcionesGeocod, PrecisionGeocod, Punto, ResultadoGeocod } from "@cimba/domain";
 import { CONFIANZA_POR_PRECISION } from "@cimba/domain";
 import { crearGeocoderNominatim } from "./nominatim";
+import { ubicarCruceOsm } from "./cruce-osm";
 
 /**
  * EL GEOCODIFICADOR DE CIMBA: primero lo que el municipio sabe, después OSM.
@@ -108,6 +109,24 @@ export function crearGeocoder(): Geocoder {
       } catch {
         /* El callejero es una mejora, no una dependencia: si la vista no está
            o la consulta falla, la geocodificación tiene que seguir andando. */
+      }
+
+      /**
+       * UN CRUCE SE PREGUNTA COMO CRUCE. "Piedras y San Luis" no tiene altura
+       * que interpolar, y Nominatim con dos nombres de calle devuelve un tramo
+       * cualquiera de una de las dos. OSM sí sabe dónde se tocan dos calles:
+       * el nodo que comparten (cruce-osm.ts). Va antes que el callejero
+       * porque el callejero estima el cruce con los puntos que conoce de cada
+       * calle, y con calles de pocos puntos o cargadas con otro nombre
+       * ("Piedras" / "Las Piedras" / "Combate de Las Piedras") no lo encuentra
+       * o lo deja a cien metros.
+       */
+      const esquina = partirAltura(direccion) ? null : partirEsquina(direccion);
+      if (esquina) {
+        const referencia = opciones?.cerca ?? (municipal ? { lat: municipal.lat, lon: municipal.lon } : undefined);
+        const cruce = await ubicarCruceOsm(esquina.a, esquina.b, referencia).catch(() => null);
+        if (cruce && cruce.precision === "exacta") return cruce;
+        if (cruce && !municipal) return cruce;
       }
 
       // Dato propio y preciso: no hace falta molestar a OSM (ni esperar su
