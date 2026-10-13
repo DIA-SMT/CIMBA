@@ -45,14 +45,33 @@ if (fs.existsSync(envPath)) {
  * "nombre" son los más débiles — ahí no hubo email que confirmara.
  */
 const PARES = [
+  // Confirmados por email cargado en el padrón.
   { cimba: 920004, cidituc: 14771,  perfil: "Alejandro Vera Antonelli", padron: "VERA ANTONELLI, DARIO ALEJANDRO", evidencia: "email" },
   { cimba: 920006, cidituc: 100673, perfil: "Rafael Carrizo Mure",      padron: "CARRIZO MURE, RAFAEL",            evidencia: "email" },
   { cimba: 920007, cidituc: 106027, perfil: "Elias Gustavo Maza",       padron: "MAZA, ELIAS",                     evidencia: "email" },
   { cimba: 920008, cidituc: 44264,  perfil: "Edgardo Reverso",          padron: "REVERSO, EDGARDO HECTOR",         evidencia: "email" },
   { cimba: 920009, cidituc: 157201, perfil: "Bruno Rossi Kaese",        padron: "ROSSI, BRUNO",                    evidencia: "email" },
   { cimba: 920010, cidituc: 4015,   perfil: "Humberto Ponce de Leon",   padron: "PONCE DE LEÓN, HUMBERTO",         evidencia: "email" },
-  { cimba: 920005, cidituc: 72995,  perfil: "Leonardo Míguez",          padron: "MIGUEZ, LEONARDO",                evidencia: "nombre — CONFIRMAR" },
-  { cimba: 920011, cidituc: 70167,  perfil: "Marco Rossi",              padron: "ROSSI, MARCO",                    evidencia: "nombre — CONFIRMAR" },
+  { cimba: 920014, cidituc: 13988,  perfil: "Lara Company",             padron: "COMPANY, LARA",                   evidencia: "email" },
+  { cimba: 920015, cidituc: 946,    perfil: "Constanza Fanjul Torti",   padron: "FANJUL TORTI, CONSTANZA",         evidencia: "email" },
+  { cimba: 920016, cidituc: 14043,  perfil: "Marcelo Carrasco",         padron: "CARRASCO, MARCELO",               evidencia: "email" },
+  { cimba: 920017, cidituc: 79547,  perfil: "Cristian Ramirez",         padron: "RAMIREZ, CRISTIAN ROBERTO",       evidencia: "email" },
+
+  /**
+   * Los tres sin email en el padrón, confirmados por otra vía antes de tocarlos
+   * — un emparejamiento por nombre a secas no alcanza cuando lo que se escribe
+   * es la identidad de una persona.
+   *
+   * Leonardo Míguez es el cruce más firme de todos: el id_persona 72995 es
+   * exactamente el usuario 207 de Atención Ciudadana, el mismo con el que CIMBA
+   * firma los cierres. Lo dice una tercera tabla, no el parecido del nombre.
+   *
+   * Marco Rossi y Darío Mansilla son ÚNICOS en un padrón de 161.956 personas:
+   * no hay otro con ese nombre y apellido con quien confundirlos.
+   */
+  { cimba: 920005, cidituc: 72995,  perfil: "Leonardo Míguez",          padron: "MIGUEZ, LEONARDO",                evidencia: "usuario 207 de AC" },
+  { cimba: 920011, cidituc: 70167,  perfil: "Marco Rossi",              padron: "ROSSI, MARCO",                    evidencia: "único en el padrón" },
+  { cimba: 920012, cidituc: 166746, perfil: "Dario Mansilla",           padron: "MANSILLA, DARIO DANIEL",          evidencia: "único en el padrón" },
 ];
 
 const EJECUTAR = process.argv.includes("--ejecutar");
