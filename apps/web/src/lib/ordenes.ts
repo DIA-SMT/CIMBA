@@ -595,6 +595,8 @@ export interface OrdenResumen {
   emitidaEn: string | null;
   venceEn: string | null;
   creadoEn: string;
+  /** Cuándo se cargó el último bache: la orden "en la que se está trabajando". */
+  ultimoReporte?: string | null;
   /**
    * ORDEN ABIERTA: se emitió sin lista de puntos. La empresa barre la zona y
    * carga los baches que encuentra. No se cierra sola —si no, el primer bache
@@ -658,7 +660,8 @@ export async function listarOrdenes(
              -- Toneladas: volumen × densidad de la mezcla (2,4 t/m³). El
              -- volumen ya es columna generada, así que esto no duplica dato.
              (select round(coalesce(sum(oi.volumen_m3), 0) * 2.4, 2) from orden_items oi
-                where oi.orden_id = ot.id and oi.estado = 'hecho') as tn
+                where oi.orden_id = ot.id and oi.estado = 'hecho') as tn,
+             (select max(oi.reportado_en) from orden_items oi where oi.orden_id = ot.id) as ultimo_reporte
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
@@ -691,6 +694,7 @@ export async function listarOrdenes(
       emitidaEn: f.emitida_en != null ? String(f.emitida_en) : null,
       venceEn: f.vence_en != null ? String(f.vence_en) : null,
       creadoEn: String(f.creado_en),
+      ultimoReporte: f.ultimo_reporte != null ? new Date(String(f.ultimo_reporte)).toISOString() : null,
       abierta: esAbierta(f.metadata),
     }));
   });

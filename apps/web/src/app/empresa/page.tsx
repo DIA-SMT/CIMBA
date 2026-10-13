@@ -77,7 +77,20 @@ export default async function PaginaEmpresa({
       (await listarEmpresas(sesion)).find((e) => e.id === vista.empresaId)?.nombre ??
       `empresa #${vista.empresaId}`)
     : null;
-  const activas = ordenes.filter((o) => ["emitida", "en_ejecucion"].includes(o.estado));
+  /**
+   * LA ORDEN EN LA QUE SE ESTÁ TRABAJANDO, PRIMERO. "Los operadores seguro
+   * solicitarán un acceso más rápido a la OT activa" (Leo, 13/10): la que
+   * tuvo la última carga va arriba de todo y marcada, así el capataz entra y
+   * toca; después las demás, de la más nueva a la más vieja.
+   */
+  const activas = ordenes
+    .filter((o) => ["emitida", "en_ejecucion"].includes(o.estado))
+    .sort(
+      (a, b) =>
+        (b.ultimoReporte ?? "").localeCompare(a.ultimoReporte ?? "") ||
+        (b.emitidaEn ?? b.creadoEn).localeCompare(a.emitidaEn ?? a.creadoEn),
+    );
+  const enCurso = activas.length > 1 && activas[0]?.ultimoReporte ? activas[0].id : null;
   const cerradas = ordenes.filter((o) => !["emitida", "en_ejecucion"].includes(o.estado));
   // En vista espejo los links internos arrastran ?empresa=N para no perderse.
   const sufijoEspejo = vista.esVistaEspejo ? `?empresa=${vista.empresaId}` : "";
@@ -109,7 +122,7 @@ export default async function PaginaEmpresa({
       {activas.length > 0 && (
         <div className="space-y-4">
           {activas.map((o) => (
-            <TarjetaOrden key={o.id} orden={o} sufijoEspejo={sufijoEspejo} />
+            <TarjetaOrden key={o.id} orden={o} sufijoEspejo={sufijoEspejo} enCurso={o.id === enCurso} />
           ))}
         </div>
       )}
@@ -186,7 +199,16 @@ function BannerEspejo({ nombreEmpresa }: { nombreEmpresa: string }) {
   );
 }
 
-function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspejo: string }) {
+function TarjetaOrden({
+  orden,
+  sufijoEspejo,
+  enCurso = false,
+}: {
+  orden: OrdenResumen;
+  sufijoEspejo: string;
+  /** La de la última carga: va primera y se marca, para entrar y tocar. */
+  enCurso?: boolean;
+}) {
   const prioridad = PRIORIDAD[orden.prioridad] ?? TERCIARIA;
   const vencida = estaVencida(orden);
   const hoy = venceHoy(orden);
@@ -199,7 +221,12 @@ function TarjetaOrden({ orden, sufijoEspejo }: { orden: OrdenResumen; sufijoEspe
 
   return (
     <Link href={`/empresa/orden/${orden.id}${sufijoEspejo}`} className="block">
-      <Panel className="p-4 transition active:scale-[0.99]">
+      <Panel className={`p-4 transition active:scale-[0.99] ${enCurso ? "ring-2 ring-resuelto/60" : ""}`}>
+        {enCurso && (
+          <p className="mb-2 text-[11px] font-bold tracking-wide text-resuelto uppercase">
+            ▶ La que estás trabajando — tocá para seguir cargando
+          </p>
+        )}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="num text-lg font-extrabold">{orden.numero}</span>
           <span className={`rounded px-2 py-1 text-[11px] font-bold ${prioridad.clase}`}>
