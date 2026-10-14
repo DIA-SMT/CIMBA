@@ -103,6 +103,24 @@ const enTerr = (t: TerritorioRef | null, col: SQL): SQL => (t ? sql`and st_inter
  * La fecha es la del TRABAJO (finalizada_en), no la de la carga: un bache
  * tapado el lunes que se cargó el jueves cuenta para el lunes.
  */
+/**
+ * NOMBRES QUE NO SON UNA EMPRESA PERO SE SABE DE CUÁL SON. En la planilla de
+ * las empresas, a veces en la columna empresa figura quien cargó: el inspector
+ * asignado a esa empresa. Confirmado por el usuario el 13/10/2026: Elías Maza es
+ * el inspector de la UOCRA. La clave va sin tildes y en minúsculas; el valor es
+ * el slug de la empresa. Solo cambia a quién se atribuye en Avance: el dato
+ * guardado queda como vino.
+ */
+const ALIAS_EMPRESA: Record<string, string> = {
+  "elias maza": "uocra",
+  "elias gustavo maza": "uocra",
+};
+const NOMBRE_CARGADO = sql`lower(public.unaccent(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', ''))))`;
+const SLUG_POR_ALIAS = sql`(case ${NOMBRE_CARGADO} ${sql.join(
+  Object.entries(ALIAS_EMPRESA).map(([nombre, slug]) => sql`when ${nombre} then ${slug}`),
+  sql` `,
+)} end)`;
+
 const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null, conSinValidar = false) => sql`
   select iv.id,
          coalesce(iv.finalizada_en, iv.iniciada_en, iv.creado_en) as fecha,
@@ -125,7 +143,9 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null, conS
   left join empresas e_ot on e_ot.id = it.empresa_id
   left join empresas e_md
     on it.empresa_id is null
-   and e_md.slug = lower(public.unaccent(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1)))
+   and e_md.slug = coalesce(
+         ${SLUG_POR_ALIAS},
+         lower(public.unaccent(split_part(trim(coalesce(iv.metadata->>'contratista', iv.metadata->>'empresa', '')), ' ', 1))))
   where iv.estado = ${estado}
     and iv.geom_ejecucion is not null
     ${enTerr(t, sql`st_centroid(iv.geom_ejecucion)`)}
