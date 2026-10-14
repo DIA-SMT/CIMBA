@@ -200,6 +200,37 @@ export async function obtenerDemanda(sesion: Sesion, id: number): Promise<Demand
   });
 }
 
+export interface FotoDemanda {
+  storagePath: string | null;
+  urlExterna: string | null;
+  momento: string;
+  tomadaEn: string | null;
+}
+
+/**
+ * Las fotos que llegaron con el pedido: las del 147 (url externa) y las que
+ * sube el personal en Carga rápida (Storage). La ficha no consultaba ninguna:
+ * se guardaban y nadie las veía — "no me muestra la foto que subieron", Av.
+ * Alem 1758, 14/10.
+ */
+export async function fotosDeDemanda(sesion: Sesion, demandaId: number): Promise<FotoDemanda[]> {
+  return conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select storage_path, url_externa, momento::text as momento,
+             coalesce(tomada_en, subida_en) as tomada_en
+      from fotografias
+      where demanda_id = ${demandaId}
+      order by coalesce(tomada_en, subida_en), id
+    `)) as unknown as Array<Record<string, unknown>>;
+    return filas.map((f) => ({
+      storagePath: (f.storage_path as string) ?? null,
+      urlExterna: (f.url_externa as string) ?? null,
+      momento: String(f.momento),
+      tomadaEn: f.tomada_en != null ? String(f.tomada_en) : null,
+    }));
+  });
+}
+
 export interface SugerenciaIncidente {
   incidenteId: number;
   distanciaM: number;

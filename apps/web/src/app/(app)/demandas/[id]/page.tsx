@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { leerSesion, puedeVerContacto } from "@/lib/auth";
-import { obtenerDemanda, sugerenciasParaDemanda } from "@/lib/consultas";
+import { fotosDeDemanda, obtenerDemanda, sugerenciasParaDemanda } from "@/lib/consultas";
+import { urlFoto } from "@/lib/fotos";
 import { analisisDemandaSchema, iaDisponible, type AnalisisDemanda } from "@/lib/ia";
 import { fechaCorta } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { AccionesDemanda } from "./acciones-demanda";
 import { CorregirUbicacion } from "./corregir-ubicacion";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
+import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,19 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
   if (!demanda) notFound();
 
   const sugerencias = demanda.lat != null ? await sugerenciasParaDemanda(sesion, demanda.id) : [];
+  // Después de la otra consulta, no en paralelo: cada una abre su transacción.
+  const fotos: FotoVisor[] = (await fotosDeDemanda(sesion, demanda.id)).flatMap((f) => {
+    const url = urlFoto(f);
+    if (!url) return [];
+    const fecha = f.tomadaEn ? fechaCorta(f.tomadaEn) : null;
+    return [
+      {
+        url,
+        alt: `Foto del pedido ${demanda.direccion ?? `#${demanda.id}`}`,
+        etiqueta: ["FOTO DEL PEDIDO", demanda.direccion, fecha].filter(Boolean).join(" · "),
+      },
+    ];
+  });
   const puedeGestionar = sesion.rol_cimba === "admin" || sesion.rol_cimba === "atencion_ciudadana";
   const puedeCorregir = ["admin", "atencion_ciudadana", "planificacion", "informacion_estrategica"].includes(
     sesion.rol_cimba,
@@ -42,6 +57,14 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
             <BadgeEstadoDemanda estado={demanda.estado} />
           </div>
           {demanda.descripcion && <p className="text-texto-2">{demanda.descripcion}</p>}
+          {fotos.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-bold tracking-wider text-texto-3 uppercase">
+                {fotos.length === 1 ? "La foto del pedido" : `Las ${fotos.length} fotos del pedido`}
+              </p>
+              <GaleriaFotos fotos={fotos} miniAlto={120} miniAncho={160} className="flex flex-wrap gap-2" />
+            </div>
+          )}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
             <dt className="text-texto-3">Ingresó</dt>
             <dd className="num">{fechaCorta(demanda.creadoEn)}</dd>
