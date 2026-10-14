@@ -12,6 +12,17 @@ export const ETIQUETA_FUENTE: Record<FuenteDemanda, string> = {
   obras_publicas: "Obras Públicas",
 };
 
+/**
+ * demandas.destino: a quién le toca resolver el pedido. Lo usa el control
+ * "Cambiar destino" de la ficha; la bandeja y Cierres tienen todavía su copia
+ * local con "Ingeniería (ripio)".
+ */
+export const DESTINOS: Array<{ valor: "bacheo" | "sat" | "ingenieria"; etiqueta: string; detalle: string }> = [
+  { valor: "bacheo", etiqueta: "Bacheo", detalle: "Calle pavimentada: lo tapan las cuadrillas y empresas de bacheo." },
+  { valor: "sat", etiqueta: "S.A.T. (Aguas)", detalle: "Pérdidas, tapas y roturas de Aguas: entra en la próxima nota a la S.A.T." },
+  { valor: "ingenieria", etiqueta: "Ingeniería", detalle: "Calle sin pavimento (ripio o tierra) u obra nueva." },
+];
+
 export const ETIQUETA_TIPO: Record<TipoProblema, string> = {
   bache: "Bache",
   pavimento_deteriorado: "Pavimento deteriorado",

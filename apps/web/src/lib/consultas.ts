@@ -177,7 +177,7 @@ export async function obtenerDemanda(sesion: Sesion, id: number): Promise<Demand
   const verContacto = puedeVerContacto(sesion.rol_cimba);
   return conRls(claims(sesion), async (tx) => {
     const filas = (await tx.execute(sql`
-      select d.id, d.fuente, d.estado, d.tipo, d.descripcion,
+      select d.id, d.fuente, d.estado, d.tipo, d.destino, d.descripcion,
              coalesce(d.direccion_normalizada, d.direccion_texto) as direccion,
              d.geocod_confianza, st_y(d.geom) as lat, st_x(d.geom) as lon,
              d.distrito_id, d.creado_en, d.metadata,
@@ -193,6 +193,7 @@ export async function obtenerDemanda(sesion: Sesion, id: number): Promise<Demand
       fuente: f.fuente as FuenteDemanda,
       estado: String(f.estado),
       tipo: (f.tipo as TipoProblema) ?? null,
+      destino: (f.destino as string) ?? null,
       descripcion: (f.descripcion as string) ?? null,
       direccion: (f.direccion as string) ?? null,
       geocodConfianza: f.geocod_confianza != null ? Number(f.geocod_confianza) : null,

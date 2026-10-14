@@ -5,7 +5,7 @@ import { demandasPorSenal, diagnosticoDemandas, type SenalTratamiento } from "@/
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, fechaCorta, numero } from "@/lib/formato";
 import { Panel, TituloPagina } from "@/components/ui";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
-import { AccionSenal } from "./accion-senal";
+import { AccionSenal, HayPavimento } from "./accion-senal";
 import { MoverAlDomicilio } from "./mover-al-domicilio";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ const SENALES: Record<
     titulo: "No es bache: calle de ripio",
     sub: "Reclamos tipificados como bache o pavimento que caen donde NO hay pavimento (ripio o cordón cuneta a metros, según la red vial real).",
     regla:
-      "Ahí no se bachea: es pasado de máquina. Confirmá cada caso para derivarlo a Ingeniería — o abrí el mini-mapa si el punto parece mal geocodificado.",
+      "Ahí no se bachea: es pasado de máquina. Confirmá cada caso para derivarlo a Ingeniería. Pero la red vial tiene cuadras ya pavimentadas marcadas como cordón cuneta: si la foto o quien conoce la cuadra dicen que hay pavimento, tocá «Hay pavimento → Bacheo». Si el punto parece mal ubicado, abrí el mini-mapa.",
   },
   duplicada: {
     titulo: "Posibles duplicadas",
@@ -153,6 +153,7 @@ export default async function PaginaSenal({ params }: { params: Promise<{ senal:
                       lon={d.sugerencia.lon}
                     />
                   )}
+                  {puedeActuar && s === "no_es_bache" && <HayPavimento demandaId={d.id} />}
                   {puedeActuar && s !== "derivar_sat" && s !== "punto_dudoso" && (
                     <AccionSenal senal={s} demandaId={d.id} referenciaId={d.referenciaId} />
                   )}

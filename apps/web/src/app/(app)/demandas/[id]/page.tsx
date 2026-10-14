@@ -7,6 +7,7 @@ import { analisisDemandaSchema, iaDisponible, type AnalisisDemanda } from "@/lib
 import { fechaCorta } from "@/lib/formato";
 import { BadgeEstadoDemanda, BadgeFuente, BadgeTipo, BarraConfianza, Panel, TituloPagina } from "@/components/ui";
 import { AccionesDemanda } from "./acciones-demanda";
+import { CambiarDestino } from "./cambiar-destino";
 import { CorregirUbicacion } from "./corregir-ubicacion";
 import { VerEnMapa } from "@/components/mapa/ver-en-mapa";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -43,6 +44,13 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
     sesion.rol_cimba,
   );
   const contacto = demanda.contacto && Object.keys(demanda.contacto).length > 0 ? demanda.contacto : null;
+  // Mismos roles que Tratamiento (admin entra siempre) y solo con el pedido abierto.
+  const puedeCambiarDestino =
+    ["admin", "planificacion", "atencion_ciudadana"].includes(sesion.rol_cimba) &&
+    (demanda.estado === "recibida" || demanda.estado === "en_validacion");
+  const correccionDestino = (demanda.metadata as Record<string, unknown>).destino_corregido as
+    | { por?: string; en?: string }
+    | undefined;
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -96,6 +104,12 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
               </>
             )}
           </div>
+          <CambiarDestino
+            demandaId={demanda.id}
+            destino={demanda.destino ?? null}
+            correccion={correccionDestino ?? null}
+            puedeCambiar={puedeCambiarDestino}
+          />
           {puedeCorregir && <CorregirUbicacion demandaId={demanda.id} lat={demanda.lat} lon={demanda.lon} />}
         </Panel>
 

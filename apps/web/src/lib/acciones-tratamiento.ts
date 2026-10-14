@@ -264,6 +264,65 @@ export async function derivarAIngenieria(entrada: { demandaId: number; motivo?: 
   return { ok: true };
 }
 
+// Sin export: un archivo "use server" solo puede exportar acciones.
+const DESTINOS_PEDIDO = ["bacheo", "sat", "ingenieria"] as const;
+
+/**
+ * CAMBIAR A QUIÉN LE TOCA UN PEDIDO. El destino lo calcula la base con la red
+ * vial (ripio o cordón cuneta → Ingeniería), y esa capa está desactualizada:
+ * hay cuadras de hormigón que figuran como cordón cuneta (Estados Unidos 1288,
+ * 14/10: 145 pedidos estaban en Ingeniería solo por eso). Una persona lo
+ * corrige acá, con su nombre. La marca destino_corregido hace que el trigger
+ * no lo recalcule y que la sincronización del 147 no la pise (MARCAS_HUMANAS
+ * en pipeline.ts).
+ *
+ * Solo cambia la cola, no el estado: pasarlo a la S.A.T. no es derivarlo —eso
+ * sigue siendo la nota (generarNotaSat)—, lo pone en la lista de la próxima.
+ * Solo pedidos abiertos. Mismos roles que el resto de Tratamiento (y admin).
+ */
+export async function cambiarDestinoDemanda(entrada: { demandaId: number; destino: string; motivo?: string }) {
+  const sesion = await requerirRol("planificacion", "atencion_ciudadana");
+  const { demandaId, destino, motivo } = z
+    .object({
+      demandaId: z.number().int().positive(),
+      destino: z.enum(DESTINOS_PEDIDO),
+      motivo: z.string().trim().max(300).optional(),
+    })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select destino::text as destino, estado::text as estado
+      from demandas where id = ${demandaId}
+      for update
+    `)) as unknown as Array<{ destino: string | null; estado: string }>;
+    const actual = filas[0];
+    if (!actual) throw new ErrorVisible("El pedido no existe");
+    if (actual.estado !== "recibida" && actual.estado !== "en_validacion") {
+      throw new ErrorVisible("Solo se cambia el destino de un pedido abierto");
+    }
+    if (actual.destino === destino) throw new ErrorVisible("El pedido ya está en ese destino");
+    const correccion = {
+      de: actual.destino,
+      a: destino,
+      por: sesion.nombre,
+      en: new Date().toISOString(),
+      motivo: motivo || null,
+    };
+    await tx.execute(sql`
+      update demandas set
+        destino = ${destino}::destino_resolucion,
+        metadata = metadata || jsonb_build_object('destino_corregido', ${JSON.stringify(correccion)}::jsonb),
+        actualizado_en = now()
+      where id = ${demandaId}
+    `);
+  });
+  revalidatePath(`/demandas/${demandaId}`);
+  revalidatePath("/demandas");
+  revalidatePath("/calidad");
+  return { ok: true };
+}
+
 /**
  * Confirmar la señal "ya resuelta": hay una reparación posterior al pedido a
  * metros del punto. El reclamo se VINCULA a ese incidente (no se descarta:
