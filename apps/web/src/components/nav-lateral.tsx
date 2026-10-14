@@ -16,7 +16,6 @@ import {
   ShieldCheck,
   Smartphone,
   TrendingUp,
-  Upload,
   UserRound,
 } from "lucide-react";
 
@@ -76,13 +75,15 @@ const NAV_GRUPOS: Array<{ etiqueta: string | null; items: ItemNav[] }> = [
       { href: "/demandas", etiqueta: "Demandas", icono: Inbox },
       { href: "/calidad", etiqueta: "Tratamiento", icono: ShieldCheck },
       { href: "/cierres", etiqueta: "Cierres", icono: CheckCheck },
-      { href: "/ciudadano", etiqueta: "Ciudadano", icono: UserRound },
+      /* "Carga rápida" (antes "Ciudadano", pedido del usuario el 14/10): el
+         pedido que un vecino hace en persona o por teléfono. La ruta sigue
+         siendo /ciudadano para no romper accesos guardados. */
+      { href: "/ciudadano", etiqueta: "Carga rápida", icono: UserRound },
     ],
   },
   {
     etiqueta: "Sistema",
     items: [
-      { href: "/cargar", etiqueta: "Cargar", icono: Upload },
       // Trazabilidad de uso: solo la conducción (admin y el Director).
       { href: "/actividad", etiqueta: "Actividad", icono: ActivityIcon, roles: ["admin", "planificacion"] },
       /* Usuarios y avisos. Solo admin: quien entra acá puede crear otro

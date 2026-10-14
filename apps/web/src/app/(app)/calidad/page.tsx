@@ -142,10 +142,7 @@ export default async function PaginaCalidad() {
 
       <p className="mt-6 text-xs leading-relaxed text-texto-3">
         Regla de oro: las demandas <b>nunca se borran ni se fusionan destructivamente</b> — cada pedido conserva su
-        origen y trazabilidad. Vincular y descartar siempre dejan rastro en la auditoría.{" "}
-        <Link href="/cargar" className="text-celeste hover:underline">
-          ¿Datos nuevos? Cargalos acá →
-        </Link>
+        origen y trazabilidad. Vincular y descartar siempre dejan rastro en la auditoría.
       </p>
     </div>
   );

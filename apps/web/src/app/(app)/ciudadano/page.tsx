@@ -11,8 +11,8 @@ export default async function PaginaCiudadano() {
   return (
     <div className="mx-auto max-w-3xl p-6">
       <TituloPagina
-        titulo="Pedido de un ciudadano"
-        sub="Para cuando un vecino reclama en persona o por teléfono y el personal lo carga acá. Podés dictar la dirección y la descripción con el micrófono. Entra como demanda de carga manual."
+        titulo="Carga rápida"
+        sub="El pedido de un vecino que reclama en persona o por teléfono, cargado por el personal. Podés dictar la dirección y la descripción con el micrófono. Entra como demanda de carga manual."
       />
       {puede ? (
         <FormularioCiudadano />

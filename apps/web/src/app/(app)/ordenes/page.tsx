@@ -409,8 +409,7 @@ export default async function PaginaOrdenes({
                   <FilaVacia
                     columnas={8}
                     titulo="Todavía no hay circuitos cargados"
-                    detalle="Los circuitos son la división operativa del bacheo: entran por Cargar datos, con la capa que provee la Dirección de Obras Viales."
-                    accion={{ texto: "Ir a Cargar datos", href: "/cargar" }}
+                    detalle="Los circuitos son la división operativa del bacheo: entran con la capa que provee la Dirección de Obras Viales."
                   />
                 )}
               </tbody>

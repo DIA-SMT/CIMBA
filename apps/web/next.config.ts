@@ -23,6 +23,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb", // fotos antes/después desde /campo
     },
   },
+  // La pantalla Cargar (archivos) se sacó el 14/10/2026: quien la tenga
+  // guardada cae en la portada y no en un "page not found" en inglés.
+  async redirects() {
+    return [{ source: "/cargar", destination: "/avance", permanent: false }];
+  },
 };
 
 export default nextConfig;

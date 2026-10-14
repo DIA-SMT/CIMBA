@@ -108,7 +108,7 @@ export const EVENTOS: Array<{ evento: EventoAviso; titulo: string; dispara: stri
     evento: "pedido_cargado",
     titulo: "Pedido cargado a mano",
     dispara:
-      "Se dispara cada vez que alguien registra un pedido en la pantalla Ciudadano: qué es, dónde, en qué distrito y quién lo cargó.",
+      "Se dispara cada vez que alguien registra un pedido en la pantalla Carga rápida: qué es, dónde, en qué distrito y quién lo cargó.",
   },
   {
     evento: "aviso_general",
