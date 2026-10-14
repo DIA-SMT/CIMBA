@@ -1,291 +1,941 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-AR">
 <head>
 <meta charset="utf-8">
 <title>CIMBA · Información base</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@500;700&display=swap">
 <style>
-  /* ── Misma hoja de estilo que manual-cimba.html: los dos documentos se
-       entregan juntos y tienen que parecer de la misma casa. ── */
-  @page { size: A4; margin: 15mm 14mm 17mm 14mm; }
+  /* Información base de CIMBA, versión de octubre de 2026. Páginas A4 fijas,
+     misma casa que manual-campo.html y cimba-que-es.html. Marca SMT: azul,
+     celeste, amarillo, neutro, en ese orden. Datos al 14/10/2026.
+     Se imprime con Chrome headless: .tmpfix/render-info-base.mjs */
+  @page { size: A4; margin: 0; }
+  :root {
+    --azul: #0066ff; --celeste: #2eb1ff; --amarillo: #f4dc00; --neutro: #333333;
+    --cel-txt: #0a6fb8; --ambar: #b8960a; --ambar-txt: #7a6200;
+    --tinta: #16202e; --tinta-2: #465163; --tinta-3: #6b7584;
+    --linea: #dbe3ef; --papel-2: #f3f6fb; --azul-tenue: #eaf2ff; --gris-dato: #c9d0db;
+    --verde: #15803d; --verde-tenue: #e3f5ec; --naranja: #c2410c; --naranja-tenue: #fdece4;
+    --amarillo-tenue: #fff8d1;
+  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: Georgia, "Times New Roman", serif;
-    font-size: 10pt; line-height: 1.5; color: #1a1d23;
-  }
-  h1, h2, h3, .sans { font-family: "Segoe UI", Arial, sans-serif; }
-  h1 { font-size: 21pt; margin: 0 0 2mm; letter-spacing: -0.3px; }
-  h2 {
-    font-size: 13pt; margin: 7mm 0 2.5mm; padding-bottom: 1.2mm;
-    border-bottom: 2px solid #0066FF; color: #0b2c66; break-after: avoid;
-  }
-  h3 { font-size: 10.5pt; margin: 4mm 0 1.5mm; color: #16325c; break-after: avoid; }
-  p { margin: 0 0 2mm; text-align: justify; }
-  ul, ol { margin: 0 0 2.5mm; padding-left: 5.5mm; }
-  li { margin-bottom: 1mm; }
-  b { color: #10131a; }
-  .no-cortar { break-inside: avoid; }
+  html, body { margin: 0; background: #cfd6e0; color: var(--tinta); font-family: "Poppins", system-ui, sans-serif; font-size: 9.2pt; line-height: 1.42; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  p { margin: 0; }
+  b, strong { font-weight: 600; color: #0d1420; }
 
-  .portada {
-    height: 250mm; display: flex; flex-direction: column;
-    justify-content: center; align-items: center; text-align: center; break-after: page;
+  .pagina {
+    width: 210mm; height: 297mm; background: #fff; position: relative; overflow: hidden;
+    padding: 12mm 15mm 11mm; margin: 0 auto; break-after: page;
+    display: flex; flex-direction: column; gap: 4.2mm;
   }
-  .portada img { height: 32mm; margin-bottom: 8mm; }
-  .portada .titulo { font-family: "Segoe UI", Arial, sans-serif; font-size: 30pt; font-weight: 800; }
-  .portada .titulo b { color: #0066FF; }
-  .portada .sub { font-family: "Segoe UI", Arial, sans-serif; font-size: 11.5pt; color: #444; margin-top: 2mm; }
-  .portada .baja { margin-top: 12mm; max-width: 122mm; font-size: 11pt; color: #333; }
-  .portada .pie { margin-top: 16mm; font-family: "Segoe UI", Arial, sans-serif; font-size: 9pt; color: #777; }
+  .pagina:last-child { break-after: auto; }
+  @media screen { .pagina { margin: 8mm auto; box-shadow: 0 2mm 8mm rgba(0,0,0,.22); } }
 
-  .caja {
-    border: 1px solid #d8dde6; border-left: 4px solid #0066FF; border-radius: 2mm;
-    padding: 2.6mm 3.6mm; margin: 2.6mm 0; background: #f6f9ff; break-inside: avoid;
-  }
-  .caja.regla { border-left-color: #b45309; background: #fdf6ec; }
-  .caja.paso { border-left-color: #15803d; background: #f2f9f4; }
+  /* ── Cabecera y pie de las páginas interiores ── */
+  .cab { display: flex; align-items: center; justify-content: space-between; border-bottom: 0.35mm solid var(--linea); padding-bottom: 2.4mm; flex: none; }
+  .lockup { display: flex; align-items: center; gap: 2.6mm; }
+  .lockup img { height: 6.2mm; }
+  .lockup .sep { width: 0.3mm; height: 6.5mm; background: var(--linea); }
+  .lockup svg { width: 7mm; height: 7mm; }
+  .lockup .marca { font-size: 10.5pt; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+  .lockup .marca b { color: #c9b400; font-weight: 800; }
+  .lockup .marca small { display: block; font-size: 5.6pt; font-weight: 600; letter-spacing: .14em; color: var(--tinta-2); margin-top: .8mm; }
+  .cab .doc { font-size: 7.4pt; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--tinta-3); text-align: right; line-height: 1.35; }
+  .cab .doc b { color: var(--azul); font-weight: 700; }
+  .pie { margin-top: auto; flex: none; border-top: 0.35mm solid var(--linea); padding-top: 2.2mm; display: flex; justify-content: space-between; align-items: center; font-size: 7.4pt; color: var(--tinta-3); }
+  .pie b { color: var(--tinta-2); }
+  .pie .pag { font-family: "JetBrains Mono", monospace; font-weight: 700; color: var(--tinta-2); }
 
-  /* Lo que se copia y se pega en la nota: se marca para que se vea de un
-     vistazo dónde empieza y dónde termina el texto citable. */
-  .pegar {
-    border: 1px solid #c9d4e6; border-left: 4px solid #0b2c66; border-radius: 2mm;
-    padding: 3mm 4mm; margin: 2.6mm 0; background: #fbfcfe; break-inside: avoid;
-  }
-  .pegar .rotulo {
-    font-family: "Segoe UI", Arial, sans-serif; font-size: 7.5pt; text-transform: uppercase;
-    letter-spacing: 0.6px; color: #0b2c66; font-weight: 700; display: block; margin-bottom: 1.4mm;
-  }
-  .pegar p { text-align: justify; margin: 0 0 1.5mm; }
-  .pegar p:last-child { margin-bottom: 0; }
-  .sustento {
-    font-size: 8.5pt; color: #57606e; font-style: italic; margin: 1.4mm 0 0; text-align: left;
-  }
+  /* ── Títulos ── */
+  .sec { display: grid; grid-template-columns: 13mm 1fr; gap: 3mm; align-items: start; flex: none; }
+  .sec .num { font-size: 30pt; font-weight: 800; line-height: .9; color: var(--azul); letter-spacing: -.04em; }
+  .sec h2 { margin: 0; font-size: 17pt; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; text-wrap: balance; }
+  .sec p { font-size: 9.6pt; color: var(--tinta-2); margin-top: 1.2mm; max-width: 150mm; }
+  h3 { margin: 0; font-size: 7.6pt; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--cel-txt); }
+  h4 { margin: 0; font-size: 10pt; font-weight: 700; letter-spacing: -.01em; }
+  .intro { display: flex; flex-direction: column; gap: 1.2mm; }
+  .intro p { font-size: 9.2pt; color: var(--tinta-2); max-width: 165mm; }
+  .nota { font-size: 7.8pt; color: var(--tinta-3); line-height: 1.42; }
+  .nota b { color: var(--tinta-2); }
+  .subtitulo { display: flex; align-items: center; gap: 3mm; }
+  .subtitulo h3 { white-space: nowrap; }
+  .subtitulo::after { content: ""; flex: 1; height: 0.3mm; background: var(--linea); }
 
-  table { width: 100%; border-collapse: collapse; margin: 2.2mm 0 3.2mm; font-size: 9pt; break-inside: avoid; }
-  th {
-    font-family: "Segoe UI", Arial, sans-serif; font-size: 8pt; text-transform: uppercase;
-    letter-spacing: 0.5px; text-align: left; color: #57606e;
-    border-bottom: 1.5px solid #b9c2cf; padding: 1.4mm 1.8mm;
-  }
-  td { border-bottom: 0.5px solid #dde2ea; padding: 1.6mm 1.8mm; vertical-align: top; color: #23262e; }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* ── Texto para pegar ── */
+  .pegar { background: #fff; border: 0.3mm solid var(--linea); border-left: 1.5mm solid var(--azul); border-radius: 2.4mm; padding: 3mm 4.6mm 3.4mm; break-inside: avoid; }
+  .pegar .rot { display: flex; justify-content: space-between; align-items: baseline; gap: 4mm; margin-bottom: 1.4mm; }
+  .pegar .rot span { font-size: 7pt; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--azul); }
+  .pegar .rot i { font-style: normal; font-size: 7pt; color: var(--tinta-3); white-space: nowrap; }
+  .pegar p { font-family: "Source Serif 4", Georgia, serif; font-size: 10.4pt; line-height: 1.52; text-align: justify; hyphens: auto; color: #121a26; }
+  .pegar.chico p { font-size: 11.5pt; text-align: left; }
+  .campo { font-family: "Poppins", sans-serif; font-size: 7.9pt; font-weight: 600; background: var(--amarillo-tenue); color: #4d4000; border-radius: 0.8mm; padding: 0.1mm 0.9mm; box-shadow: inset 0 -0.35mm 0 #e5cf4f; white-space: nowrap; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .campo.largo { white-space: normal; }
 
-  .cadena {
-    font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; line-height: 1.65;
-    background: #f6f9ff; border: 1px solid #d8dde6; border-radius: 2mm;
-    padding: 3mm 4mm; margin: 2.6mm 0; break-inside: avoid; white-space: pre;
-  }
-  .cifras { display: flex; gap: 3mm; margin: 2.6mm 0; break-inside: avoid; }
-  .cifra {
-    flex: 1; border: 1px solid #d8dde6; border-radius: 2mm; padding: 2.6mm 3mm; text-align: center;
-  }
-  .cifra .n {
-    font-family: "Segoe UI", Arial, sans-serif; font-size: 15pt; font-weight: 800; color: #0b2c66;
-    display: block; font-variant-numeric: tabular-nums;
-  }
-  .cifra .et { font-family: "Segoe UI", Arial, sans-serif; font-size: 7.5pt; color: #57606e; text-transform: uppercase; letter-spacing: 0.4px; }
-  .corte { font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; color: #57606e; }
+  /* Párrafos armados: riel a la izquierda (qué es, a quién, sustento) y el texto a la derecha */
+  .bloque { display: grid; grid-template-columns: 47mm 1fr; gap: 5mm; align-items: start; break-inside: avoid; }
+  .pegar.izq p { text-align: left; hyphens: manual; }
+  .pegar .opcion { margin-top: 2.2mm; padding-left: 3.2mm; border-left: 0.7mm solid var(--amarillo); }
+  .pegar .opcion .op { display: block; font-family: "Poppins", sans-serif; font-size: 6.6pt; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ambar-txt); margin-bottom: 0.4mm; }
+  .chequeo { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4mm 6mm; }
+  .chequeo div { display: grid; grid-template-columns: 5mm 1fr; gap: 2mm; font-size: 8.3pt; color: var(--tinta-2); line-height: 1.4; }
+  .chequeo .c { width: 4.4mm; height: 4.4mm; border: 0.4mm solid var(--azul); border-radius: 1mm; margin-top: 0.4mm; background: #fff; }
+  .ficha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.6mm; }
+  .ficha div { border-top: 0.35mm solid var(--linea); padding-top: 1.6mm; font-size: 8pt; color: var(--tinta-2); line-height: 1.38; }
+  .ficha b { display: block; font-size: 6.4pt; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--tinta-3); margin-bottom: 0.4mm; }
+  .riel { display: flex; flex-direction: column; gap: 1.6mm; padding-top: 0.6mm; }
+  .riel .id { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 13pt; color: var(--azul); line-height: 1; }
+  .riel h4 { font-size: 10.2pt; line-height: 1.25; text-wrap: balance; }
+  .riel .para { font-size: 7.8pt; color: var(--tinta-3); }
+  .riel .para b { color: var(--tinta-2); font-weight: 600; }
+  .sustento { margin-top: 1mm; background: var(--azul-tenue); border-radius: 1.8mm; padding: 2mm 2.6mm; font-size: 7.8pt; line-height: 1.42; color: var(--tinta-2); }
+  .sustento::before { content: "Sustento"; display: block; font-size: 6.4pt; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--cel-txt); margin-bottom: 0.6mm; }
+  .sustento.guia::before { content: "Dónde está el dato"; }
+
+  /* ── Cajas ── */
+  .caja { background: var(--papel-2); border-radius: 2.6mm; padding: 3.2mm 4mm; }
+  .caja.azul { background: var(--azul-tenue); }
+  .uso { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+  .uso > div { display: flex; flex-direction: column; gap: 1.4mm; }
+  .uso p { font-size: 8.3pt; color: var(--tinta-2); line-height: 1.4; }
+  .uso .muestra { height: 6mm; border-radius: 1.2mm; display: flex; align-items: center; padding: 0 2mm; font-size: 7.4pt; font-weight: 600; }
+  .muestra.m1 { background: #fff; border: 0.3mm solid var(--linea); border-left: 1.5mm solid var(--azul); color: var(--azul); letter-spacing: .1em; text-transform: uppercase; font-size: 6.6pt; }
+  .muestra.m2 { padding: 0; }
+  .muestra.m3 { background: #fff; border: 0.3mm solid var(--linea); color: var(--tinta); font-family: "JetBrains Mono", monospace; }
+
+  .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+  .col-flex { display: flex; flex-direction: column; gap: 2.2mm; min-width: 0; }
+  .lista { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1.6mm; }
+  .lista li { position: relative; padding-left: 4.4mm; font-size: 8.7pt; line-height: 1.4; }
+  .lista li::before { content: ""; position: absolute; left: 0; top: 1.6mm; width: 1.8mm; height: 1.8mm; border-radius: 50%; background: var(--tinta-3); }
+  .antes { border: 0.3mm solid var(--linea); border-radius: 2.6mm; padding: 3.2mm 4mm; }
+  .antes h3 { color: var(--naranja); margin-bottom: 2mm; }
+  .antes .lista li::before { background: var(--naranja); opacity: .7; }
+  .ahora { background: var(--azul-tenue); border: 0.3mm solid #c2d8ff; border-radius: 2.6mm; padding: 3.2mm 4mm; }
+  .ahora h3 { color: var(--azul); margin-bottom: 2mm; }
+  .ahora .lista li::before { background: var(--azul); }
+
+  /* ── La cadena ── */
+  .cadena { display: grid; grid-template-columns: repeat(5, 1fr); }
+  .eslabon { position: relative; padding-right: 3.4mm; }
+  .eslabon .punto { position: relative; z-index: 1; width: 10mm; height: 10mm; border-radius: 50%; background: var(--azul); color: #fff; display: flex; align-items: center; justify-content: center; font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 10pt; box-shadow: 0 0 0 1.2mm #fff; }
+  .eslabon:not(:last-child)::after { content: ""; position: absolute; top: 5mm; left: 10mm; right: 0; height: 0.5mm; background: linear-gradient(90deg, var(--azul), var(--celeste)); opacity: .45; }
+  .eslabon.fin .punto { background: var(--verde); }
+  .eslabon h4 { margin: 2.4mm 0 0.8mm; font-size: 10.4pt; }
+  .eslabon p { font-size: 7.9pt; line-height: 1.4; color: var(--tinta-2); }
+  .preguntas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3.6mm; }
+  .pregunta { border-top: 0.8mm solid var(--azul); padding-top: 2mm; }
+  .pregunta:nth-child(2) { border-top-color: var(--celeste); }
+  .pregunta:nth-child(3) { border-top-color: var(--amarillo); }
+  .pregunta h4 { font-size: 10.6pt; margin-bottom: 0.8mm; }
+  .pregunta p { font-size: 8.2pt; color: var(--tinta-2); line-height: 1.4; }
+
+  /* ── Tablas ── */
+  table { width: 100%; border-collapse: collapse; font-size: 8.4pt; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 6.6pt; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--tinta-3); padding: 1.5mm 2mm; border-bottom: 0.45mm solid var(--tinta); }
+  td { padding: 1.8mm 2mm; border-bottom: 0.25mm solid var(--linea); vertical-align: top; }
+  table.apretada td { padding: 1.25mm 2mm; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  td.n { font-weight: 600; }
+  td small { display: block; color: var(--tinta-3); font-size: 7.4pt; line-height: 1.32; margin-top: .2mm; }
+  tr.total td { border-bottom: none; border-top: 0.45mm solid var(--tinta); font-weight: 700; }
+  .chip { display: inline-block; font-size: 6.3pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 1mm; padding: 0.3mm 1.6mm; white-space: nowrap; }
+  .chip.auto { color: var(--verde); background: var(--verde-tenue); }
+  .chip.vivo { color: var(--azul); background: var(--azul-tenue); }
+  .chip.archivo { color: var(--ambar-txt); background: var(--amarillo-tenue); }
+  .chip.parado { color: var(--naranja); background: var(--naranja-tenue); }
+
+  .salidas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2.4mm; }
+  .salida { border: 0.3mm solid var(--linea); border-radius: 2.2mm; padding: 2mm 2.6mm; font-size: 7.7pt; color: var(--tinta-2); line-height: 1.34; }
+  .salida b { display: block; font-size: 8.3pt; color: var(--tinta); margin-bottom: 0.4mm; }
+
+  /* ── Cifras ── */
+  .cifras { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; }
+  .cifra { border: 0.3mm solid var(--linea); border-radius: 2.6mm; padding: 2.6mm 3.4mm 2.8mm; display: flex; flex-direction: column; gap: 0.5mm; }
+  .cifra .n { font-size: 19pt; font-weight: 700; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .cifra .et { font-size: 8pt; font-weight: 600; color: var(--tinta); line-height: 1.25; }
+  .cifra .det { font-size: 7.3pt; color: var(--tinta-3); line-height: 1.32; }
+  .cifra.destacada { background: var(--azul); border-color: var(--azul); }
+  .cifra.destacada .n, .cifra.destacada .et { color: #fff; }
+  .cifra.destacada .det { color: #d6e6ff; }
+
+  /* Barras horizontales */
+  .barras { display: flex; flex-direction: column; gap: 1.7mm; }
+  .barra { display: grid; grid-template-columns: var(--et, 34mm) 1fr 11mm; gap: 2mm; align-items: center; font-size: 8.1pt; line-height: 1.25; }
+  .barra .pista { height: 3.2mm; }
+  .barra .pista i { display: block; height: 100%; min-width: 0.6mm; background: var(--azul); border-radius: 0 1mm 1mm 0; }
+  .barra .v { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .barra.con-extra { grid-template-columns: var(--et, 26mm) 1fr 10mm 18mm; }
+  .barra .extra { text-align: right; color: var(--tinta-3); font-size: 7.6pt; font-variant-numeric: tabular-nums; }
+  .cabeza-barras { display: grid; grid-template-columns: var(--et, 26mm) 1fr 10mm 18mm; white-space: nowrap; gap: 2mm; font-size: 6.4pt; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-3); }
+  .cabeza-barras span:nth-child(n+3) { text-align: right; }
+
+  /* Barra apilada (parte de un todo) */
+  .apilada { display: flex; height: 7mm; gap: 0.5mm; }
+  .apilada i { display: flex; align-items: center; justify-content: center; color: #fff; font-style: normal; font-size: 7.6pt; font-weight: 700; white-space: nowrap; overflow: hidden; }
+  .apilada i:first-child { border-radius: 1mm 0 0 1mm; }
+  .apilada i:last-child { border-radius: 0 1mm 1mm 0; }
+  .apilada i.vacio { background: var(--gris-dato); color: var(--tinta); }
+  .leyenda { display: flex; flex-direction: column; gap: 1.2mm; font-size: 8.1pt; }
+  .leyenda > div { display: grid; grid-template-columns: 3mm 1fr auto; gap: 2mm; align-items: center; }
+  .leyenda .sw { width: 3mm; height: 3mm; border-radius: 0.8mm; }
+  .leyenda .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .leyenda small { color: var(--tinta-3); font-size: 7.3pt; }
+  .leyenda.fila { flex-direction: row; flex-wrap: wrap; gap: 1.2mm 6mm; font-size: 7.7pt; color: var(--tinta-2); }
+  .leyenda.fila > div { grid-template-columns: 3mm auto; }
+
+  /* Columnas por mes: escala 0–1.100, guías en 500 y 1.000 */
+  .grafico { display: grid; grid-template-columns: 12mm 1fr; column-gap: 2.6mm; height: 50mm; }
+  .grafico .eje { position: relative; }
+  .grafico .eje span { position: absolute; right: 0; transform: translateY(50%); font-size: 7pt; color: var(--tinta-3); font-variant-numeric: tabular-nums; }
+  .plot { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); column-gap: 2.6mm; border-bottom: 0.35mm solid var(--tinta-2); }
+  .plot .guia { position: absolute; left: 0; right: 0; border-top: 0.25mm dashed var(--linea); }
+  .col { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+  .col .seg { flex: none; background: var(--azul); }
+  .col .seg.arriba { border-radius: 1mm 1mm 0 0; }
+  .col .seg.planilla { background: var(--celeste); border-radius: 1mm 1mm 0 0; margin-bottom: 0.5mm; }
+  .col .seg.parcial { background: repeating-linear-gradient(135deg, var(--azul) 0 1.1mm, #5c9dff 1.1mm 2.2mm); }
+  .col .v { position: absolute; left: 0; right: 0; bottom: calc(var(--h) + 0.9mm); text-align: center; font-size: 7.8pt; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .fila-mes { display: grid; grid-template-columns: 12mm repeat(8, 1fr); column-gap: 2.6mm; font-size: 7.6pt; text-align: center; font-variant-numeric: tabular-nums; }
+  .fila-mes span:first-child { text-align: right; color: var(--tinta-3); font-size: 7pt; }
+  .fila-mes.mes span { font-weight: 600; }
+  .fila-mes.obras span { color: var(--tinta-2); }
+
+  .territorio { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2.4mm; }
+  .terr { background: var(--papel-2); border-radius: 2.2mm; padding: 2.2mm 2.6mm; }
+  .terr .n { display: block; font-size: 13pt; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+  .terr span { font-size: 7.3pt; color: var(--tinta-2); line-height: 1.25; display: block; }
+
+  /* ── Lo que conviene no afirmar ── */
+  .reglas { display: grid; grid-template-columns: 1fr 1fr; gap: 3.4mm 6mm; }
+  .regla { display: grid; grid-template-columns: 7mm 1fr; gap: 2.4mm; break-inside: avoid; }
+  .regla .x { width: 6.4mm; height: 6.4mm; border-radius: 50%; background: var(--naranja-tenue); display: flex; align-items: center; justify-content: center; }
+  .regla .x svg { width: 3mm; height: 3mm; }
+  .regla b { display: block; font-size: 8.8pt; line-height: 1.32; margin-bottom: 0.6mm; }
+  .regla p { font-size: 8pt; color: var(--tinta-2); line-height: 1.4; }
+  .regla.ahora-si .x { background: var(--verde-tenue); }
+
+  /* ── Portada ── */
+  .portada { padding: 16mm 18mm 0; gap: 0; }
+  .portada .arriba { display: flex; align-items: center; gap: 4mm; position: relative; z-index: 1; }
+  .portada .arriba img { height: 13mm; }
+  .portada .arriba .ciudad { font-size: 7pt; letter-spacing: .18em; color: var(--tinta-2); line-height: 1.2; }
+  .portada .arriba .ciudad b { display: block; font-size: 13pt; letter-spacing: .02em; color: var(--tinta); font-weight: 700; }
+  .portada .arriba .sep { width: 0.3mm; height: 11mm; background: var(--linea); }
+  .portada .arriba .area { font-size: 8.2pt; color: var(--tinta-2); line-height: 1.38; }
+  .portada .radar { position: absolute; right: -62mm; top: 14mm; width: 168mm; height: 168mm; }
+  .portada .centro { margin-top: 40mm; position: relative; z-index: 1; }
+  .portada .eyebrow { font-size: 8pt; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--azul); }
+  .portada .sigla { font-size: 80pt; font-weight: 800; letter-spacing: -.045em; line-height: .9; margin: 3mm 0 0; }
+  .portada .sigla span { color: var(--amarillo); }
+  .portada .nombre { font-size: 14pt; font-weight: 500; color: var(--azul); margin-top: 3.5mm; }
+  .portada h1 { margin: 14mm 0 0; font-size: 25pt; font-weight: 800; letter-spacing: -.025em; line-height: 1.05; }
+  .portada .tesis { font-family: "Source Serif 4", Georgia, serif; font-size: 13pt; line-height: 1.45; color: var(--tinta-2); margin-top: 3mm; max-width: 128mm; }
+  .portada .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5mm; margin-top: 13mm; background: #fff; }
+  .portada .kpis div { border-top: 0.8mm solid var(--azul); padding-top: 2.4mm; }
+  .portada .kpis div:nth-child(2) { border-top-color: var(--celeste); }
+  .portada .kpis div:nth-child(3) { border-top-color: var(--amarillo); }
+  .portada .kpis div:nth-child(4) { border-top-color: var(--neutro); }
+  .portada .kpis strong { display: block; font-size: 22pt; font-weight: 700; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .portada .kpis span { font-size: 8pt; color: var(--tinta-2); line-height: 1.3; display: block; margin-top: 0.6mm; }
+  .portada .indice { margin-top: 12mm; display: grid; grid-template-columns: 1fr 1fr; gap: 1.6mm 9mm; }
+  .portada .indice h3 { grid-column: 1 / -1; margin-bottom: 0.6mm; color: var(--tinta-3); }
+  .portada .indice div { display: flex; align-items: baseline; gap: 2mm; font-size: 9pt; border-bottom: 0.25mm solid var(--linea); padding-bottom: 1.2mm; }
+  .portada .indice .i { font-family: "JetBrains Mono", monospace; font-weight: 700; color: var(--azul); width: 4mm; }
+  .portada .indice .p { margin-left: auto; font-family: "JetBrains Mono", monospace; color: var(--tinta-3); font-size: 8pt; }
+  .portada .base { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; font-size: 7.8pt; color: var(--tinta-2); line-height: 1.45; padding-bottom: 7mm; }
+  .portada .base b { color: var(--tinta); }
+  .portada .base .der { text-align: right; }
+  .portada .franja { height: 8mm; margin: 0 -18mm; background: linear-gradient(90deg, var(--azul) 0 50%, var(--celeste) 50% 82%, var(--amarillo) 82% 100%); flex: none; }
+
+  .cierre { display: flex; gap: 4mm; align-items: center; border-top: 0.8mm solid var(--tinta); padding-top: 4mm; }
+  .cierre svg { width: 13mm; height: 13mm; flex: none; }
+  .cierre p { font-size: 8.4pt; color: var(--tinta-2); line-height: 1.5; }
 </style>
 </head>
 <body>
 
-<!-- ══ PORTADA ══ -->
-<div class="portada">
-  <img src="../apps/web/public/marca/isotipo-smt.png" alt="Municipalidad de San Miguel de Tucumán">
-  <div class="titulo">CIMBA<b>.</b></div>
-  <div class="sub">Centro Inteligente de Monitoreo de Baches y Asfalto</div>
-  <div class="baja">
-    <b>Información base.</b> Qué es el sistema, qué problema resuelve y qué contiene hoy
-    —con los números medidos—, más los <b>párrafos ya redactados</b> para citar en notas,
-    expedientes y pedidos formales.
+<!-- ═════════════════════════════ 1 · PORTADA ═════════════════════════════ -->
+<section class="pagina portada">
+  <svg class="radar" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+    <circle cx="20" cy="20" r="19" stroke="#2EB1FF" stroke-opacity=".14" stroke-width=".22"/>
+    <circle cx="20" cy="20" r="14" stroke="#2EB1FF" stroke-opacity=".2" stroke-width=".22"/>
+    <circle cx="20" cy="20" r="9" stroke="#2EB1FF" stroke-opacity=".28" stroke-width=".22"/>
+    <circle cx="20" cy="20" r="4" stroke="#0066FF" stroke-opacity=".32" stroke-width=".28"/>
+    <circle cx="20" cy="20" r="1.1" fill="#F4DC00"/>
+    <path d="M20 20 L20 1 A19 19 0 0 1 34.6 7.8 Z" fill="#2EB1FF" fill-opacity=".09"/>
+    <circle cx="27.5" cy="9.4" r=".55" fill="#0066FF" fill-opacity=".5"/>
+    <circle cx="14.2" cy="12.6" r=".42" fill="#2EB1FF" fill-opacity=".5"/>
+    <circle cx="29.6" cy="27.2" r=".4" fill="#2EB1FF" fill-opacity=".45"/>
+  </svg>
+
+  <div class="arriba">
+    <img src="manual-campo/isotipo-smt.png" alt="Isotipo de la Municipalidad de San Miguel de Tucumán">
+    <div class="ciudad">CIUDAD<b>SMT</b></div>
+    <div class="sep"></div>
+    <div class="area">Municipalidad de San Miguel de Tucumán<br>Secretaría de Obras Públicas · Dirección de Obras Viales</div>
   </div>
-  <div class="pie">
-    Municipalidad de San Miguel de Tucumán · Secretaría de Obras Públicas — Dirección de Bacheo<br>
-    Septiembre de 2026 · datos al 18/09/2026 · Dirección de Inteligencia Artificial
+
+  <div class="centro">
+    <div class="eyebrow">Documento institucional · Versión de octubre de 2026</div>
+    <p class="sigla">CIMBA<span>.</span></p>
+    <p class="nombre">Centro Inteligente de Monitoreo de Baches y Asfalto</p>
+    <h1>Información base</h1>
+    <p class="tesis">Qué es el sistema, qué problema resuelve y qué contiene hoy —con los números medidos—, más los párrafos ya redactados para citar en notas, expedientes y pedidos formales.</p>
+
+    <div class="kpis">
+      <div><strong>3.402</strong><span>pedidos registrados, de seis canales</span></div>
+      <div><strong>3.999</strong><span>trabajos terminados: 3.642 baches y 357 obras</span></div>
+      <div><strong>5.238</strong><span>fotografías de respaldo</span></div>
+      <div><strong>181</strong><span>barrios con trabajo, de los 327 de la ciudad</span></div>
+    </div>
+
+    <div class="indice">
+      <h3>En este documento</h3>
+      <div><span class="i">1</span>Qué es<span class="p">2</span></div>
+      <div><span class="i">4</span>Quiénes lo usan<span class="p">6</span></div>
+      <div><span class="i">2</span>Qué problema resuelve<span class="p">2</span></div>
+      <div><span class="i">5</span>Párrafos armados para notas<span class="p">6</span></div>
+      <div><span class="i">3</span>Qué contiene hoy<span class="p">4</span></div>
+      <div><span class="i">6</span>Lo que conviene no afirmar<span class="p">9</span></div>
+    </div>
   </div>
-</div>
 
-<h1>Información base de CIMBA</h1>
-<p class="corte">
-  Este documento da <b>texto institucional listo para citar</b>. No es el manual de uso:
-  ese es <i>Manual CIMBA</i>, que explica cómo se opera cada pantalla. Todos los números
-  están medidos sobre la base en producción, con <b>fecha de corte 18 de septiembre de 2026</b>.
-  Si la nota sale más de un mes después, conviene pedirlos actualizados antes de firmar.
-</p>
+  <div class="base">
+    <div><b>Datos al 14 de octubre de 2026</b>, medidos sobre la base de CIMBA.<br>Reemplaza a la versión del 18 de septiembre de 2026.</div>
+    <div class="der">Elaborado por la <b>Dirección de Inteligencia Artificial</b><br><span class="mono">cimba.smt.gob.ar</span></div>
+  </div>
+  <div class="franja"></div>
+</section>
 
-<h2>1 · Qué es</h2>
+<!-- ═════════════════════════════ 2 · QUÉ ES ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">Octubre 2026<br><b>Datos al 14/10/2026</b></div>
+  </header>
 
-<div class="pegar">
-  <span class="rotulo">Párrafo largo — para la primera nota o una presentación</span>
-  <p>CIMBA (Centro Inteligente de Monitoreo de Baches y Asfalto) es el sistema de gestión de
-  bacheo y reparación de pavimento de la Municipalidad de San Miguel de Tucumán, desarrollado
-  por la Dirección de Inteligencia Artificial para la Dirección de Bacheo. Reúne en un solo
-  lugar los reclamos de la ciudadanía y de las instituciones, el relevamiento del estado de la
-  calzada, la planificación y emisión de las órdenes de trabajo, la carga de lo ejecutado por
-  las empresas contratistas y por las cuadrillas municipales, y la certificación de lo
-  realizado.</p>
-</div>
+  <div class="caja azul">
+    <h3 style="color:var(--azul);margin-bottom:2mm">Cómo usar este documento</h3>
+    <div class="uso">
+      <div><span class="muestra m1">Para pegar</span><p>Los recuadros con borde azul son <b>texto listo para copiar</b> en una nota, tal cual.</p></div>
+      <div><span class="muestra m2"><span class="campo">[DIRECCIÓN]</span></span><p>Lo que va entre corchetes, en amarillo, <b>se completa</b> en cada caso.</p></div>
+      <div><span class="muestra m3">14/10/2026</span><p>Es la <b>fecha de corte</b>. Si la nota sale después del 14/11, pedir los números actualizados.</p></div>
+    </div>
+    <p class="nota" style="margin-top:2.2mm">No es un manual de uso: cómo se opera cada pantalla está en el <i>Manual CIMBA</i> (oficina) y en el <i>Manual de campo</i> (cuadrillas y capataces).</p>
+  </div>
 
-<div class="pegar">
-  <span class="rotulo">Párrafo corto — para cuando la nota ya viene larga</span>
-  <p>CIMBA es el sistema municipal de gestión de bacheo: registra los reclamos, los convierte
-  en problemas de calzada priorizados, emite las órdenes de trabajo a las empresas y certifica
-  lo ejecutado con evidencia fotográfica y medidas.</p>
-</div>
+  <div class="sec">
+    <div class="num">1</div>
+    <div><h2>Qué es</h2><p>Tres versiones del mismo párrafo, según cuánto lugar haya en la nota.</p></div>
+  </div>
 
-<h2>2 · Qué problema resuelve</h2>
-<p>
-  Antes de CIMBA, el mismo bache podía llegar por cinco canales distintos —el vecino al 147, el
-  concejal por nota, la red social, la Secretaría, la S.A.T.— y cada canal se trabajaba por
-  separado. No había forma de saber si un pedido ya estaba resuelto, ni de responderle a quien
-  lo pidió, ni de medir cuánto se reparó realmente.
-</p>
-<p>CIMBA ordena eso en una sola cadena:</p>
+  <div class="pegar">
+    <div class="rot"><span>Para pegar · Párrafo largo</span><i>Primera nota o presentación</i></div>
+    <p>CIMBA (Centro Inteligente de Monitoreo de Baches y Asfalto) es el sistema de gestión de bacheo y reparación de pavimento de la Municipalidad de San Miguel de Tucumán, desarrollado por la Dirección de Inteligencia Artificial para la Dirección de Obras Viales. Reúne en un solo lugar los reclamos de la ciudadanía y de las instituciones, el relevamiento del estado de la calzada, la planificación y emisión de las órdenes de trabajo, la carga de lo ejecutado por las empresas contratistas y por las cuadrillas municipales —desde el celular, en la calle, con fotografía y posición GPS— y la certificación de lo realizado.</p>
+  </div>
 
-<div class="cadena">PEDIDO         lo que alguien reclama (vecino, Concejo, S.A.T., Secretaría, red)
-   ↓           varios pedidos del mismo lugar se agrupan en un solo problema
-PROBLEMA       el bache real en la calle, priorizado con un puntaje explicable
-   ↓           el problema entra en una orden de trabajo, con empresa y plazo
-TRABAJO        lo ejecutado: medidas, fotos antes y después, GPS y fecha
-   ↓
-CERTIFICACIÓN  superficie y toneladas, que es lo que se paga</div>
+  <div class="pegar">
+    <div class="rot"><span>Para pegar · Párrafo corto</span><i>Cuando la nota ya viene larga</i></div>
+    <p>CIMBA es el sistema municipal de gestión de bacheo: registra los reclamos de todos los canales, los convierte en problemas de calzada ubicados y priorizados, emite las órdenes de trabajo a empresas y cuadrillas, y registra lo ejecutado con fotografía, medidas y ubicación, que es la base de su certificación.</p>
+  </div>
 
-<p>
-  La consecuencia práctica: se puede contestar <b>quién pidió qué, cuándo se reparó y con qué
-  evidencia</b>, que es exactamente lo que hace falta para responder una nota del Concejo
-  Deliberante o una intimación de la S.A.T.
-</p>
+  <div class="pegar chico">
+    <div class="rot"><span>Para pegar · Una línea</span><i>Pie de firma, epígrafe, presentación oral</i></div>
+    <p>CIMBA es el sistema municipal que une el reclamo del vecino con el bache arreglado, su foto y su medida.</p>
+  </div>
 
-<h2>3 · Qué contiene hoy</h2>
+  <div class="sec">
+    <div class="num">2</div>
+    <div><h2>Qué problema resuelve</h2><p>El mismo bache puede llegar por seis puertas: el 147, el Concejo, la S.A.T., una Secretaría, las redes o la propia cuadrilla.</p></div>
+  </div>
 
-<div class="cifras">
-  <div class="cifra"><span class="n">3.275</span><span class="et">Pedidos registrados</span></div>
-  <div class="cifra"><span class="n">3.480</span><span class="et">Problemas de calzada</span></div>
-  <div class="cifra"><span class="n">3.393</span><span class="et">Trabajos ejecutados</span></div>
-  <div class="cifra"><span class="n">99.858</span><span class="et">m² intervenidos</span></div>
-</div>
+  <div class="dos">
+    <div class="antes">
+      <h3>Antes de CIMBA</h3>
+      <ul class="lista">
+        <li>Cada canal se trabajaba por separado: cinco pedidos del mismo bache eran cinco trámites.</li>
+        <li>No se sabía si un reclamo ya estaba resuelto, ni se le podía responder a quien lo pidió.</li>
+        <li>Lo hecho por cada empresa vivía en su propia planilla, y medirlo llevaba días.</li>
+      </ul>
+    </div>
+    <div class="ahora">
+      <h3>Con CIMBA</h3>
+      <ul class="lista">
+        <li>Los pedidos del mismo lugar se agrupan en un solo problema, sin borrar ninguno.</li>
+        <li>Cada pedido muestra si ya tiene orden, si se arregló y con qué foto.</li>
+        <li>Empresas y cuadrillas cargan por el mismo circuito, y lo hecho se ve al instante en el mapa.</li>
+      </ul>
+    </div>
+  </div>
 
-<h3>Los pedidos, por canal</h3>
-<table>
-  <thead><tr><th>Canal</th><th class="num">Pedidos</th></tr></thead>
-  <tbody>
-    <tr><td>S.A.T. (Aguas)</td><td class="num">794</td></tr>
-    <tr><td>Concejo Deliberante</td><td class="num">758</td></tr>
-    <tr><td>Atención Ciudadana (147)</td><td class="num">745</td></tr>
-    <tr><td>Secretarías</td><td class="num">603</td></tr>
-    <tr><td>Redes sociales / D.I.E.</td><td class="num">274</td></tr>
-    <tr><td>Cuadrillas municipales</td><td class="num">101</td></tr>
-  </tbody>
-</table>
-<p>3.184 de esos pedidos —el 97%— tienen ubicación geográfica.</p>
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">2 / 10</div></footer>
+</section>
 
-<h3>El trabajo</h3>
-<p>
-  De los 3.480 problemas de calzada identificados, <b>3.264 figuran reparados o verificados</b>
-  y 216 están abiertos en alguna etapa. Los 3.393 trabajos ejecutados y registrados suman
-  <b>99.858 m² de calzada intervenida</b>, con <b>4.869 fotografías</b> de respaldo. Los
-  ejecutores son 15 entre empresas contratistas y cuadrillas propias; hay 13 empresas dadas de
-  alta en el sistema. Se emitieron 21 órdenes de trabajo, de las cuales 12 están activas.
-</p>
-<p>
-  La certificación usa la densidad de asfalto de <b>2,4 t/m³</b> para convertir la superficie y
-  el espesor declarados en toneladas.
-</p>
+<!-- ═════════════════════════════ 3 · LA CADENA Y LAS CONEXIONES ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">2 · Qué problema resuelve<br><b>Una sola cadena</b></div>
+  </header>
 
-<h3>Cobertura territorial</h3>
-<p>
-  Los <b>20 distritos</b>, <b>327 barrios</b>, <b>47 circuitos</b>, <b>149 corredores viales</b>
-  y las <b>4 zonas</b> del contrato de bacheo integral.
-</p>
+  <div class="intro">
+    <h3>Una sola cadena, del pedido a la respuesta</h3>
+    <p>Todo lo que entra a CIMBA recorre el mismo camino, y cada paso deja registro de quién lo hizo y cuándo.</p>
+  </div>
 
-<h2>4 · Quiénes lo usan</h2>
-<table>
-  <thead><tr><th style="width:38%">Quién</th><th>Para qué</th></tr></thead>
-  <tbody>
-    <tr><td>Dirección de Bacheo</td><td>Planifica, emite las órdenes y valida lo cargado.</td></tr>
-    <tr><td>Inspectores (supervisión)</td><td>Verifican en calle y validan lo que las empresas declaran.</td></tr>
-    <tr><td>Empresas contratistas</td><td>Acceso propio: ven solo sus órdenes y cargan cada bache con medidas y fotos desde el celular, en la calle.</td></tr>
-    <tr><td>Cuadrillas municipales</td><td>Cargan por el mismo circuito que las empresas.</td></tr>
-    <tr><td>Atención Ciudadana</td><td>Consulta el estado de un reclamo para responderle al vecino.</td></tr>
-    <tr><td>Conducción</td><td>Tablero de brecha, productividad por empresa y reportes por canal.</td></tr>
-  </tbody>
-</table>
+  <div class="cadena">
+    <div class="eslabon"><div class="punto">1</div><h4>Pedido</h4><p>Lo que alguien reclama. Queda con su canal, su fecha y su ubicación.</p></div>
+    <div class="eslabon"><div class="punto">2</div><h4>Problema</h4><p>El bache real. Los pedidos del mismo lugar se agrupan en uno, priorizado con un puntaje explicable.</p></div>
+    <div class="eslabon"><div class="punto">3</div><h4>Orden</h4><p>Con empresa o cuadrilla, zona y plazo. Llega al celular de quien la ejecuta.</p></div>
+    <div class="eslabon"><div class="punto">4</div><h4>Trabajo</h4><p>Medidas, foto del antes y del después, GPS y fecha. El inspector lo valida.</p></div>
+    <div class="eslabon fin"><div class="punto">5</div><h4>Cierre</h4><p>Acta de medición, toneladas a 2,4 t/m³ y respuesta al vecino con la foto.</p></div>
+  </div>
 
-<h2>5 · Párrafos armados para notas de pedido</h2>
+  <p style="font-size:9.2pt;color:var(--tinta-2)">Por eso una nota del Concejo Deliberante o una intimación de la S.A.T. se responden con tres datos:</p>
+  <div class="preguntas">
+    <div class="pregunta"><h4>¿Quién lo pidió?</h4><p>El canal, la fecha y el lugar de cada pedido, aunque el mismo bache haya llegado cinco veces.</p></div>
+    <div class="pregunta"><h4>¿Cuándo se reparó?</h4><p>La fecha del trabajo, no la de la carga. Un arreglo anterior al pedido no lo responde: es el bache que volvió.</p></div>
+    <div class="pregunta"><h4>¿Con qué prueba?</h4><p>Foto del antes y del después, medida y punto georreferenciado: lo que pide el Protocolo de Obras Viales.</p></div>
+  </div>
 
-<h3>5.1 · Pedido de conexión con Atención Ciudadana</h3>
-<div class="pegar">
-  <span class="rotulo">Texto de la nota</span>
-  <p>A los fines de completar la trazabilidad entre el reclamo del vecino y su resolución
-  efectiva, se solicita se disponga la provisión del servicio de consulta (API) del sistema de
-  Atención Ciudadana, que permita a CIMBA la lectura periódica y automática de los reclamos
-  vinculados a calzada. En la actualidad los reclamos se incorporan mediante carga manual de
-  archivos, lo que impide informar al vecino el estado de su pedido en tiempo real.</p>
-</div>
-<p class="sustento">Sustento: de los 3.275 pedidos registrados, 2.750 todavía no están
-vinculados a un problema concreto de calzada, en buena medida porque la incorporación es manual
-y por lotes.</p>
+  <div class="intro" style="margin-top:1mm">
+    <h3>A qué está conectado</h3>
+    <p>CIMBA lee de los sistemas de otras áreas, pero no les escribe: un error en el origen se corrige en el origen.</p>
+  </div>
 
-<h3>5.2 · Pedido de datos de ejecución a las empresas o a Administración</h3>
-<div class="pegar">
-  <span class="rotulo">Texto de la nota</span>
-  <p>Se solicita que las planillas de obra ejecutada incorporen, para cada intervención, la
-  <b>superficie efectivamente reparada</b> (o el ancho y el largo) y el <b>espesor colocado</b>.
-  Ambos datos son indispensables para la conversión a toneladas y, por lo tanto, para la
-  certificación de lo ejecutado. Las planillas actuales informan la ubicación y la fecha, pero
-  no la magnitud del trabajo.</p>
-</div>
-<p class="sustento">Sustento: las cuadrillas de Administración registran 1.779 trabajos y solo
-38 tienen superficie cargada. Sin ese dato, esos trabajos certifican cero toneladas.</p>
+  <table class="apretada">
+    <thead><tr><th style="width:38%">Lo que entra</th><th style="width:24%">Cómo entra</th><th>Último dato</th></tr></thead>
+    <tbody>
+      <tr><td><b>Atención Ciudadana · 147</b><small>Reclamos de la categoría Calles (CIDITUC)</small></td><td><span class="chip auto">Automático</span><small>Todos los días a las 6</small></td><td>14/10/2026<small>870 reclamos incorporados</small></td></tr>
+      <tr><td><b>Portal de empresas y cuadrillas</b><small>Lo ejecutado contra cada orden, desde el celular</small></td><td><span class="chip vivo">En vivo</span><small>Al momento de cargar</small></td><td>14/10/2026<small>860 trabajos cargados desde órdenes</small></td></tr>
+      <tr><td><b>Planillas sueltas</b><small>Cuadrillas de Administración y planilla de Ingeco</small></td><td><span class="chip archivo">Por archivo</span><small>Cuando llega</small></td><td>13/10/2026<small>Planilla de Ingeco: 1.323 baches</small></td></tr>
+      <tr><td><b>Concejo, Secretarías, redes y S.A.T.</b><small>El consolidado de pedidos y las intimaciones</small></td><td><span class="chip archivo">Por archivo</span><small>Cuando llega</small></td><td>Agosto de 2026</td></tr>
+      <tr><td><b>Planilla de carga de las empresas</b><small>La app de Google donde cargaban las contratistas</small></td><td><span class="chip parado">Proceso local</span><small>Desde una PC municipal</small></td><td>04/09/2026<small>Detenido desde entonces</small></td></tr>
+      <tr><td><b>SIGOV · Obras Públicas</b><small>Obras de pavimento contratadas</small></td><td><span class="chip parado">Proceso local</span><small>Desde una PC municipal</small></td><td>02/09/2026<small>Detenido desde entonces</small></td></tr>
+      <tr><td><b>GIS de Obras Viales</b><small>Red vial, barrios, circuitos, corredores, imbornales, zonas</small></td><td><span class="chip archivo">Por archivo</span><small>Capas cargadas</small></td><td>Vigente<small>Cambia cuando cambia una capa</small></td></tr>
+    </tbody>
+  </table>
 
-<h3>5.3 · Pedido de acceso o de alta de usuarios</h3>
-<div class="pegar">
-  <span class="rotulo">Texto de la nota</span>
-  <p>Se solicita se otorgue acceso al sistema CIMBA al agente [NOMBRE], D.N.I. [NÚMERO], en
-  carácter de [inspector de obra / planificación / consulta], a los efectos de [verificar y
-  validar los trabajos ejecutados / planificar y emitir órdenes de trabajo / consultar el estado
-  de los reclamos].</p>
-</div>
+  <div class="col-flex">
+    <h3>Lo que sale</h3>
+    <div class="salidas">
+      <div class="salida"><b>Portal de empresas</b>Sus órdenes, la carga con foto y medidas, y su certificación. Funciona sin señal.</div>
+      <div class="salida"><b>Respuesta al vecino</b>WhatsApp o mail con el texto y la foto del arreglo ya escritos. Lo envía una persona.</div>
+      <div class="salida"><b>Nota a la S.A.T.</b>Expediente numerado, con ubicación y foto de cada reclamo, firmado por la Dirección.</div>
+      <div class="salida"><b>Avisos</b>Al celular y por mail: orden nueva, orden vencida y el parte diario de las 7.</div>
+    </div>
+  </div>
 
-<h3>5.4 · Respuesta a una nota del Concejo o a una intimación</h3>
-<div class="pegar">
-  <span class="rotulo">Texto de la nota</span>
-  <p>En relación con lo solicitado, se informa que el problema de calzada sito en [DIRECCIÓN] se
-  encuentra registrado en el sistema CIMBA bajo el identificador [N.º], habiendo sido [reparado
-  el DD/MM/AAAA por la empresa X, con una superficie de N m² y evidencia fotográfica de antes y
-  después / incorporado a la orden de trabajo N.º X con fecha prevista de ejecución].</p>
-</div>
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">3 / 10</div></footer>
+</section>
 
-<h3>5.5 · Presentación del sistema ante otra área u organismo</h3>
-<div class="pegar">
-  <span class="rotulo">Texto de la nota</span>
-  <p>La Municipalidad de San Miguel de Tucumán cuenta con CIMBA, sistema propio de gestión de
-  bacheo desarrollado por su Dirección de Inteligencia Artificial, que integra los reclamos de
-  los distintos canales de atención, la planificación de las cuadrillas y contratistas, y la
-  certificación de lo ejecutado con evidencia georreferenciada. A la fecha registra 3.275
-  pedidos ciudadanos e institucionales y 3.393 trabajos ejecutados sobre 99.858 m² de calzada.</p>
-</div>
+<!-- ═════════════════════════════ 4 · LOS NÚMEROS ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">Octubre 2026<br><b>Datos al 14/10/2026</b></div>
+  </header>
 
-<h2>6 · Lo que conviene no afirmar</h2>
-<p>Para que las notas no queden expuestas:</p>
-<div class="caja regla">
-  <ul>
-    <li><b>No afirmar que CIMBA recibe los reclamos automáticamente.</b> Hoy la incorporación
-    desde Atención Ciudadana es manual, por archivo.</li>
-    <li><b>No informar toneladas de las cuadrillas de Administración.</b> No tienen superficie
-    cargada: darían cero.</li>
-    <li><b>No presentar los m² como «reparados este año».</b> Los 99.858 m² incluyen obras de
-    pavimento de distinta escala y de todo el período cargado.</li>
-    <li><b>No citar el detalle diario de abril y mayo de 2026.</b> Esas planillas traían solo el
-    mes, y todos los trabajos quedaron fechados el día 15. Los totales mensuales sí son
-    correctos.</li>
-  </ul>
-</div>
+  <div class="sec">
+    <div class="num">3</div>
+    <div><h2>Qué contiene hoy</h2><p>Medido directamente sobre la base de CIMBA el 14 de octubre de 2026. Los trabajos se cuentan desde el 15 de marzo de 2026, la primera fecha cargada.</p></div>
+  </div>
 
-<div class="caja">
-  <p style="margin:0"><b>Mantenimiento.</b> Los números de la sección 3 salen de una consulta
-  directa a la base de producción. Pedirlos actualizados a la Dirección de Inteligencia
-  Artificial antes de usar este texto en una presentación formal.</p>
-</div>
+  <div class="cifras">
+    <div class="cifra destacada"><span class="n">3.402</span><span class="et">Pedidos registrados</span><span class="det">de seis canales; el 97% con ubicación</span></div>
+    <div class="cifra"><span class="n">4.212</span><span class="et">Problemas de calzada</span><span class="det">3.999 reparados o verificados; 197 abiertos</span></div>
+    <div class="cifra"><span class="n">3.642</span><span class="et">Baches terminados</span><span class="det">9.834 m² informados, en los 1.893 que tienen medida</span></div>
+    <div class="cifra"><span class="n">357</span><span class="et">Obras de pavimento</span><span class="det">paños de hormigón y carpetas: 53.390 m²</span></div>
+    <div class="cifra"><span class="n">5.238</span><span class="et">Fotografías</span><span class="det">1.383 trabajos con antes y después</span></div>
+    <div class="cifra"><span class="n">1.589</span><span class="et">Cuadras con un arreglo</span><span class="det">de las 10.392 de la red vial</span></div>
+    <div class="cifra"><span class="n">16</span><span class="et">Órdenes de trabajo</span><span class="det">9 completadas y 7 en curso</span></div>
+    <div class="cifra"><span class="n">13</span><span class="et">Ejecutores</span><span class="det">12 empresas y las cuadrillas de Administración</span></div>
+  </div>
+
+  <div class="dos" style="gap:8mm">
+    <div class="col-flex">
+      <h3>Los pedidos, por canal</h3>
+      <div class="barras" style="--et:41mm">
+        <div class="barra"><span>Atención Ciudadana (147)</span><span class="pista"><i style="width:100%"></i></span><span class="v">870</span></div>
+        <div class="barra"><span>S.A.T. (Aguas del Tucumán)</span><span class="pista"><i style="width:91.3%"></i></span><span class="v">794</span></div>
+        <div class="barra"><span>Concejo Deliberante</span><span class="pista"><i style="width:87.1%"></i></span><span class="v">758</span></div>
+        <div class="barra"><span>Secretarías</span><span class="pista"><i style="width:69.3%"></i></span><span class="v">603</span></div>
+        <div class="barra"><span>Redes sociales / D.I.E.</span><span class="pista"><i style="width:31.5%"></i></span><span class="v">274</span></div>
+        <div class="barra"><span>Cuadrillas municipales</span><span class="pista"><i style="width:11.6%"></i></span><span class="v">101</span></div>
+        <div class="barra"><span>Carga manual</span><span class="pista"><i style="width:0.3%"></i></span><span class="v">2</span></div>
+      </div>
+      <p class="nota">El 147 es el único canal que entra solo y el que más crece: 166 reclamos en agosto, 183 en septiembre y 63 en lo que va de octubre.</p>
+    </div>
+
+    <div class="col-flex">
+      <h3>Adónde va cada pedido</h3>
+      <div class="apilada" aria-hidden="true">
+        <i style="width:58.7%;background:var(--azul)">59%</i>
+        <i style="width:28.9%;background:var(--celeste)">29%</i>
+        <i style="width:12.4%;background:var(--ambar)">12%</i>
+      </div>
+      <div class="leyenda">
+        <div><span class="sw" style="background:var(--azul)"></span><span>Bacheo <small>· lo resuelve Obras Viales</small></span><span class="v">1.998</span></div>
+        <div><span class="sw" style="background:var(--celeste)"></span><span>S.A.T. <small>· tapas, pérdidas y roturas de Aguas</small></span><span class="v">982</span></div>
+        <div><span class="sw" style="background:var(--ambar)"></span><span>Ingeniería <small>· calles de ripio y obra mayor</small></span><span class="v">422</span></div>
+      </div>
+      <h3 style="margin-top:1.6mm">Los 1.998 de bacheo, hoy</h3>
+      <table class="apretada">
+        <tbody>
+          <tr><td>Esperan un arreglo, o que se confirme el que ya se hizo</td><td class="n">1.506</td></tr>
+          <tr><td>Vinculados a un problema de calzada</td><td class="n">341</td></tr>
+          <tr><td>Cerrados, con el arreglo confirmado</td><td class="n">146</td></tr>
+          <tr><td>Descartados con motivo, por una persona</td><td class="n">5</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="dos" style="gap:8mm">
+    <div class="col-flex">
+      <h3>Quién hizo los baches</h3>
+      <div class="cabeza-barras" style="--et:24mm"><span></span><span></span><span>Baches</span><span>Con medida</span></div>
+      <div class="barras">
+        <div class="barra con-extra" style="--et:24mm"><span>Administración</span><span class="pista"><i style="width:100%"></i></span><span class="v">1.804</span><span class="extra">63</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Ingeco</span><span class="pista"><i style="width:83.8%"></i></span><span class="v">1.511</span><span class="extra">1.505</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Calleri</span><span class="pista"><i style="width:17.6%"></i></span><span class="v">318</span><span class="extra">316</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>UOCRA</span><span class="pista"><i style="width:0.5%"></i></span><span class="v">9</span><span class="extra">9</span></div>
+      </div>
+      <p class="nota">Ingeco incluye los 430 baches ubicados de su planilla de septiembre. Se atribuye como en Avance: por la orden, o por el nombre cargado en la planilla.</p>
+    </div>
+    <div class="col-flex">
+      <h3>Quién hizo las obras de pavimento</h3>
+      <div class="cabeza-barras" style="--et:24mm"><span></span><span></span><span>Obras</span><span>m²</span></div>
+      <div class="barras" style="gap:1.1mm">
+        <div class="barra con-extra" style="--et:24mm"><span>Galindo</span><span class="pista"><i style="width:100%"></i></span><span class="v">92</span><span class="extra">12.236</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Ingeco</span><span class="pista"><i style="width:57.6%"></i></span><span class="v">53</span><span class="extra">3.736</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Línea</span><span class="pista"><i style="width:47.8%"></i></span><span class="v">44</span><span class="extra">5.878</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Calleri</span><span class="pista"><i style="width:41.3%"></i></span><span class="v">38</span><span class="extra">5.609</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Proycon</span><span class="pista"><i style="width:35.9%"></i></span><span class="v">33</span><span class="extra">10.842</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Baronetto</span><span class="pista"><i style="width:28.3%"></i></span><span class="v">26</span><span class="extra">3.724</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Luxury</span><span class="pista"><i style="width:27.2%"></i></span><span class="v">25</span><span class="extra">1.699</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Antonelli</span><span class="pista"><i style="width:22.8%"></i></span><span class="v">21</span><span class="extra">4.654</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Sercovial</span><span class="pista"><i style="width:16.3%"></i></span><span class="v">15</span><span class="extra">2.628</span></div>
+        <div class="barra con-extra" style="--et:24mm"><span>Lechesi Areco</span><span class="pista"><i style="width:10.9%"></i></span><span class="v">10</span><span class="extra">2.385</span></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">4 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 5 · EL TRABAJO ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">3 · Qué contiene hoy<br><b>El trabajo</b></div>
+  </header>
+
+  <div class="intro">
+    <h3>Baches terminados, mes por mes</h3>
+    <p>Cada bache cuenta en el mes en que se hizo, no en el que se cargó. Las obras de pavimento van aparte, en la fila de abajo: son de otra escala.</p>
+  </div>
+
+  <div class="grafico" role="img" aria-label="Baches terminados por mes: marzo 214, abril 324, mayo 360, junio 357, julio 639, agosto 619, septiembre 1.006 (430 de la planilla de Ingeco), octubre hasta el 14: 123">
+    <div class="eje"><span style="bottom:90.9%">1.000</span><span style="bottom:45.5%">500</span><span style="bottom:0">0</span></div>
+    <div class="plot">
+      <i class="guia" style="bottom:90.9%"></i><i class="guia" style="bottom:45.5%"></i>
+      <div class="col" style="--h:19.5%"><span class="v">214</span><span class="seg arriba" style="height:19.5%"></span></div>
+      <div class="col" style="--h:29.5%"><span class="v">324</span><span class="seg arriba" style="height:29.5%"></span></div>
+      <div class="col" style="--h:32.7%"><span class="v">360</span><span class="seg arriba" style="height:32.7%"></span></div>
+      <div class="col" style="--h:32.5%"><span class="v">357</span><span class="seg arriba" style="height:32.5%"></span></div>
+      <div class="col" style="--h:58.1%"><span class="v">639</span><span class="seg arriba" style="height:58.1%"></span></div>
+      <div class="col" style="--h:56.3%"><span class="v">619</span><span class="seg arriba" style="height:56.3%"></span></div>
+      <div class="col" style="--h:92.5%"><span class="v">1.006</span><span class="seg planilla" style="height:39.1%"></span><span class="seg" style="height:52.4%"></span></div>
+      <div class="col" style="--h:11.2%"><span class="v">123</span><span class="seg arriba parcial" style="height:11.2%"></span></div>
+    </div>
+  </div>
+  <div class="col-flex" style="gap:1mm;margin-top:-2.4mm">
+    <div class="fila-mes mes"><span></span><span>Mar</span><span>Abr</span><span>May</span><span>Jun</span><span>Jul</span><span>Ago</span><span>Sep</span><span>Oct*</span></div>
+    <div class="fila-mes obras"><span>Obras</span><span>—</span><span>20</span><span>95</span><span>61</span><span>103</span><span>74</span><span>3</span><span>1</span></div>
+  </div>
+  <div class="leyenda fila">
+    <div><span class="sw" style="background:var(--azul)"></span><span>Baches de empresas, cuadrillas y planillas</span></div>
+    <div><span class="sw" style="background:var(--celeste)"></span><span>430 de la planilla de Ingeco de septiembre</span></div>
+    <div><span class="sw" style="background:repeating-linear-gradient(135deg, var(--azul) 0 1.1mm, #5c9dff 1.1mm 2.2mm)"></span><span>*Octubre, hasta el 14</span></div>
+  </div>
+
+  <div class="dos" style="gap:7mm">
+    <div class="col-flex">
+      <h3>La superficie, por escala</h3>
+      <table class="apretada">
+        <thead><tr><th>Tipo de trabajo</th><th class="n">Trabajos</th><th class="n">m² cargados</th></tr></thead>
+        <tbody>
+          <tr><td>Bacheo<small>1.893 de los 3.642 tienen medida</small></td><td class="n">3.642</td><td class="n">9.834</td></tr>
+          <tr><td>Paños de hormigón</td><td class="n">312</td><td class="n">47.159</td></tr>
+          <tr><td>Carpetas asfálticas</td><td class="n">45</td><td class="n">6.231</td></tr>
+        </tbody>
+      </table>
+      <p class="nota">Van por separado a propósito: un bache mide unos 4 m² y una obra más de 150, y sumarlos esconde el esfuerzo del bacheo. La certificación convierte superficie y espesor en toneladas a <b>2,4 t/m³</b>.</p>
+    </div>
+    <div class="col-flex">
+      <h3>Las órdenes de trabajo</h3>
+      <table class="apretada">
+        <tbody>
+          <tr><td>Órdenes emitidas<small>sin contar 14 anuladas y 2 borradores</small></td><td class="n">16</td></tr>
+          <tr><td>Baches hechos dentro de una orden</td><td class="n">1.750</td></tr>
+          <tr><td>Tapados por la empresa, esperan la validación de Obras Viales</td><td class="n">252</td></tr>
+          <tr><td>Encargados y todavía sin hacer</td><td class="n">22</td></tr>
+        </tbody>
+      </table>
+      <p class="nota">Los 1.750 incluyen los 1.323 de la planilla de Ingeco: 430 ya tienen lugar y 893 esperan que la empresa los ubique.</p>
+    </div>
+  </div>
+
+  <div class="col-flex">
+    <h3>La prueba fotográfica de cada trabajo terminado</h3>
+    <div style="display:grid;grid-template-columns:24mm 1fr;gap:1.6mm 3mm;align-items:center;font-size:8.1pt">
+      <span>Baches</span>
+      <div class="apilada" style="height:6mm">
+        <i style="width:28.6%;background:var(--azul)">1.041</i>
+        <i style="width:11.8%;background:var(--celeste)">430</i>
+        <i class="vacio" style="width:59.6%">2.171 sin foto</i>
+      </div>
+      <span>Obras</span>
+      <div class="apilada" style="height:6mm">
+        <i style="width:95.8%;background:var(--azul)">342</i>
+        <i style="width:4.2%;background:var(--celeste)">15</i>
+      </div>
+    </div>
+    <div class="leyenda fila">
+      <div><span class="sw" style="background:var(--azul)"></span><span>Con foto del antes y del después</span></div>
+      <div><span class="sw" style="background:var(--celeste)"></span><span>Con una sola foto</span></div>
+      <div><span class="sw" style="background:var(--gris-dato)"></span><span>Sin foto</span></div>
+    </div>
+    <p class="nota">Los baches sin foto vienen de planillas que no la traían, entre ellos los de Ingeco de septiembre, que la empresa tiene que completar. Las 357 obras de pavimento tienen foto todas.</p>
+  </div>
+
+  <div class="col-flex">
+    <h3>Cobertura territorial</h3>
+    <div class="territorio">
+      <div class="terr"><span class="n">20</span><span>distritos</span></div>
+      <div class="terr"><span class="n">327</span><span>barrios; 181 con trabajo</span></div>
+      <div class="terr"><span class="n">47</span><span>circuitos</span></div>
+      <div class="terr"><span class="n">149</span><span>corredores viales, con su IPI</span></div>
+      <div class="terr"><span class="n">4</span><span>zonas del contrato de bacheo integral</span></div>
+      <div class="terr"><span class="n">1.325</span><span>imbornales</span></div>
+    </div>
+    <p class="nota">La red vial suma 10.392 cuadras: 7.988 de pavimento, 1.568 con cordón cuneta y 836 de ripio, donde no hay bache sino pasado de máquina.</p>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">5 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 6 · QUIÉNES + 5.1 ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">Octubre 2026<br><b>Datos al 14/10/2026</b></div>
+  </header>
+
+  <div class="sec">
+    <div class="num">4</div>
+    <div><h2>Quiénes lo usan</h2><p>Cada persona ve lo que le corresponde según su rol. Una contratista solo ve sus órdenes y su trabajo.</p></div>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:27%">Quién</th><th>Qué hace en CIMBA</th><th class="n">Usuarios</th></tr></thead>
+    <tbody>
+      <tr><td><b>Empresas contratistas</b></td><td>Reciben sus órdenes en el celular y cargan cada bache con foto, medidas y GPS. Las cuadrillas de Administración cargan por el mismo circuito.</td><td class="n">14</td></tr>
+      <tr><td><b>Conducción</b></td><td>Dirección de Obras Viales y Dirección de IA: ven y gestionan todo, validan lo cargado y dan de alta usuarios.</td><td class="n">8</td></tr>
+      <tr><td><b>Supervisión</b></td><td>Inspectores: verifican en calle, validan lo que declaran las empresas y arman el acta de medición.</td><td class="n">5</td></tr>
+      <tr><td><b>Planificación</b></td><td>Relevan circuitos, arman las órdenes y las asignan con plazo.</td><td class="n">4</td></tr>
+      <tr><td><b>Información estratégica</b></td><td>Avance, brecha entre lo pedido y lo hecho, productividad y reportes.</td><td class="n">4</td></tr>
+      <tr><td><b>Atención Ciudadana</b></td><td>Consulta el estado de un reclamo y le responde al vecino con la foto del arreglo.</td><td class="n">2</td></tr>
+      <tr><td><b>Consulta y otros</b></td><td>Solo lectura, funcionarios, Concejo y cuadrilla municipal.</td><td class="n">6</td></tr>
+      <tr class="total"><td>Usuarios activos</td><td></td><td class="n">43</td></tr>
+    </tbody>
+  </table>
+
+  <div class="sec" style="margin-top:2mm">
+    <div class="num">5</div>
+    <div><h2>Párrafos armados para notas</h2><p>Primero, los que presentan a CIMBA o responden con sus datos. Después, los que piden lo que todavía falta, cada uno con su sustento medido.</p></div>
+  </div>
+
+  <div class="subtitulo"><h3>Para presentar y responder</h3></div>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.1</span>
+      <h4>Presentación del sistema ante otra área u organismo</h4>
+      <p class="para">Para: <b>cualquier área u organismo</b></p>
+      <p class="sustento">Números de la sección 3, al 14/10/2026. Si la nota sale después del 14/11, actualizarlos.</p>
+    </div>
+    <div class="pegar">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>La Municipalidad de San Miguel de Tucumán cuenta con CIMBA, sistema propio de gestión de bacheo desarrollado por su Dirección de Inteligencia Artificial, que integra los reclamos de los distintos canales de atención —entre ellos, en forma automática y diaria, los del sistema de Atención Ciudadana—, la planificación del trabajo de las empresas contratistas y de las cuadrillas municipales, y el registro de lo ejecutado con evidencia fotográfica y georreferenciada. Al 14 de octubre de 2026 registra 3.402 pedidos ciudadanos e institucionales y 3.999 trabajos terminados —3.642 intervenciones de bacheo y 357 obras de pavimento—, en 181 de los 327 barrios de la ciudad.</p>
+    </div>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">6 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 7 · 5.2 A 5.4 ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">5 · Párrafos armados<br><b>Para presentar y responder</b></div>
+  </header>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.2</span>
+      <h4>Respuesta a una nota del Concejo o a una intimación</h4>
+      <p class="para">Para: <b>el Concejo Deliberante, la S.A.T. o quien haya reclamado</b></p>
+      <p class="sustento guia">Los números de pedido y de problema están en la ficha de cada uno; la foto y la fecha del arreglo, en el trabajo vinculado.</p>
+    </div>
+    <div class="pegar izq">
+      <div class="rot"><span>Para pegar</span><i>El primer párrafo y una de las dos opciones</i></div>
+      <p>En relación con lo solicitado, se informa que el reclamo referido a <span class="campo">[DIRECCIÓN]</span> se encuentra registrado en el sistema CIMBA como pedido N.º <span class="campo">[N.º DE PEDIDO]</span>, vinculado al problema de calzada N.º <span class="campo">[N.º DE PROBLEMA]</span>.</p>
+      <p class="opcion"><span class="op">Si ya se reparó</span>Fue reparado el <span class="campo">[DD/MM/AAAA]</span> por <span class="campo">[EMPRESA]</span>, con una superficie de <span class="campo">[N]</span> m², según consta en las fotografías de antes y después y en la ubicación georreferenciada del trabajo.</p>
+      <p class="opcion"><span class="op">Si está en una orden</span>Se encuentra incluido en la orden de trabajo <span class="campo">[OT-AAAA-NNNN]</span>, asignada a <span class="campo">[EMPRESA]</span>, con vencimiento el <span class="campo">[DD/MM/AAAA]</span>.</p>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.3</span>
+      <h4>Pedido de acceso o de alta de usuarios</h4>
+      <p class="para">Para: <b>la Dirección de Obras Viales</b>, una nota por agente</p>
+      <p class="sustento guia">El alta se hace desde CIMBA, con una clave temporal que el agente cambia en su primer ingreso.</p>
+    </div>
+    <div class="pegar izq">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>Se solicita se otorgue acceso al sistema CIMBA al agente <span class="campo">[NOMBRE Y APELLIDO]</span>, D.N.I. <span class="campo">[NÚMERO]</span>, de <span class="campo">[ÁREA]</span>, en carácter de <span class="campo largo">[inspector de obra / planificación / consulta / atención ciudadana]</span>, a los efectos de <span class="campo largo">[verificar y validar los trabajos ejecutados / planificar y emitir órdenes de trabajo / consultar el estado de los reclamos y responder al vecino]</span>.</p>
+    </div>
+  </div>
+
+  <div class="subtitulo" style="margin-top:2mm"><h3>Para pedir lo que falta</h3></div>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.4</span>
+      <h4>Pedido de datos de ejecución a las empresas o a Administración</h4>
+      <p class="para">Para: <b>las empresas contratistas o Administración</b></p>
+      <p class="sustento">Las cuadrillas de Administración registran 1.804 trabajos terminados y solo 63 tienen superficie. En total, 1.749 de los 3.642 baches no tienen medida y certifican cero toneladas.</p>
+    </div>
+    <div class="pegar">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>Se solicita que las planillas de obra ejecutada incorporen, para cada intervención, la superficie efectivamente reparada (o el ancho y el largo) y el espesor colocado. Ambos datos son indispensables para la conversión a toneladas y, por lo tanto, para la certificación de lo ejecutado. Las planillas actuales informan la ubicación y la fecha, pero no la magnitud del trabajo.</p>
+    </div>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">7 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 8 · 5.5 A 5.7 ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">5 · Párrafos armados<br><b>Para pedir lo que falta</b></div>
+  </header>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.5</span>
+      <h4>Pedido del cierre del reclamo del 147 desde CIMBA</h4>
+      <p class="para">Para: <b>Atención Ciudadana</b></p>
+      <p class="sustento">870 reclamos del 147 entraron a CIMBA solos, y 848 traen el teléfono o el mail del vecino. Hoy la respuesta se envía a mano, por WhatsApp o mail, desde la pantalla Cierres.</p>
+    </div>
+    <div class="pegar">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>A los fines de completar la trazabilidad entre el reclamo del vecino y su resolución efectiva, se solicita se habilite en el sistema de Atención Ciudadana un servicio que permita a CIMBA registrar el cierre de los reclamos resueltos, con la fecha del trabajo y la fotografía del arreglo. CIMBA ya incorpora en forma automática y diaria los reclamos de la categoría Calles; lo que todavía no puede hacer es devolver el resultado al sistema de origen, por lo que el cierre debe registrarse a mano en cada sistema.</p>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.6</span>
+      <h4>Pedido de ingreso con Ciudad Digital</h4>
+      <p class="para">Para: <b>el área a cargo de Ciudad Digital</b></p>
+      <p class="sustento">CIMBA tiene 43 usuarios activos, cada uno con una clave propia que hoy se da de alta y se repone a mano.</p>
+    </div>
+    <div class="pegar">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>Se solicita se registre a CIMBA como aplicación habilitada en el ingreso único de Ciudad Digital, de modo que el personal municipal acceda con sus credenciales institucionales. En la actualidad el ingreso se realiza con usuario y clave propios del sistema, administrados por la Dirección de Obras Viales.</p>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="riel">
+      <span class="id">5.7</span>
+      <h4>Pedido de sincronización permanente con SIGOV y con la planilla de las empresas</h4>
+      <p class="para">Para: <b>el área de sistemas</b></p>
+      <p class="sustento">El último dato recibido del SIGOV es del 2 de septiembre de 2026, y el de la planilla de las empresas, del 4 de septiembre.</p>
+    </div>
+    <div class="pegar">
+      <div class="rot"><span>Para pegar</span></div>
+      <p>Se solicita se disponga un equipo de la red municipal en funcionamiento permanente —o el acceso equivalente desde el servidor del sistema— para la sincronización automática de CIMBA con el SIGOV y con la planilla de carga de las empresas contratistas. Esa sincronización corre hoy en una computadora de oficina: cuando el equipo se apaga, CIMBA deja de recibir esos datos sin que nada lo advierta.</p>
+    </div>
+  </div>
+
+  <div class="caja" style="margin-top:2mm">
+    <h3 style="margin-bottom:2.4mm">Antes de firmar cualquiera de estas notas</h3>
+    <div class="chequeo">
+      <div><span class="c"></span><span>Si pasó un mes del <b>14/10/2026</b>, pedir los números actualizados.</span></div>
+      <div><span class="c"></span><span>Copiar el número de pedido o de problema de <b>su ficha en CIMBA</b>, no de la planilla de origen.</span></div>
+      <div><span class="c"></span><span>La fecha de un arreglo es la <b>del trabajo</b>. Si es anterior al pedido, no lo responde: es el bache que volvió.</span></div>
+      <div><span class="c"></span><span>Repasar la lista de <b>lo que conviene no afirmar</b>, en la página siguiente.</span></div>
+    </div>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">8 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 9 · NO AFIRMAR ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">Octubre 2026<br><b>Datos al 14/10/2026</b></div>
+  </header>
+
+  <div class="sec">
+    <div class="num">6</div>
+    <div><h2>Lo que conviene no afirmar</h2><p>Para que ninguna nota quede expuesta. Cada punto dice lo que no conviene escribir y por qué, con el dato medido.</p></div>
+  </div>
+
+  <div class="reglas">
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que CIMBA cierra el reclamo del 147 o le avisa solo al vecino.</b><p>La respuesta al vecino la envía una persona, y el cierre en Atención Ciudadana se hace aparte (ver 5.5).</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que lo ejecutado ya está certificado con acta.</b><p>El acta de medición está lista en el sistema, pero al 14/10 no hay ninguna firmada en CIMBA.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que cada bache terminado tiene su foto.</b><p>2.171 de los 3.642 no tienen ninguna: vienen de planillas sin foto. Las obras de pavimento sí la tienen, todas.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Una suma de m² de baches y de obras.</b><p>Son escalas distintas y se informan aparte: 9.834 m² de bacheo y 53.390 m² de obras de pavimento.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que los 9.834 m² son todo lo que se bacheó.</b><p>1.749 de los 3.642 baches no tienen medida: la superficie real es mayor que la informada.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Toneladas de las cuadrillas de Administración.</b><p>Solo 63 de sus 1.804 trabajos tienen medida: darían casi cero.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que se derivaron reclamos a la S.A.T. por nota desde CIMBA.</b><p>Hay 982 pedidos que le corresponden a la S.A.T. y la nota numerada está lista, pero todavía no se emitió ninguna.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que los datos del SIGOV y de la planilla de las empresas están al día.</b><p>Su último dato es del 2 y del 4 de septiembre de 2026 (ver 5.7).</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Que los 1.323 baches de la planilla de Ingeco están en el mapa.</b><p>893 están cargados como hechos pero todavía sin lugar: no figuran en el mapa ni en los totales de la sección 3.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>La fecha de los pedidos del Concejo, las Secretarías y las redes.</b><p>Llegaron en planillas sin la fecha del reclamo: en CIMBA figuran con la de carga, agosto de 2026.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>El detalle diario de abril y mayo de 2026.</b><p>Esas planillas traían solo el mes, y todos los trabajos quedaron fechados el día 15. Los totales mensuales sí son correctos.</p></div></div>
+    <div class="regla"><span class="x"><svg viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="#c2410c" stroke-width="1.6" stroke-linecap="round"/></svg></span><div><b>Los 99.858 m² de la versión de septiembre.</b><p>Ese total sumaba obras y baches, e incluía trabajo planificado, en curso y anulado. Hoy solo se cuenta lo terminado.</p></div></div>
+  </div>
+
+  <div class="regla ahora-si caja" style="background:var(--verde-tenue);grid-template-columns:7mm 1fr">
+    <span class="x" style="background:#fff"><svg viewBox="0 0 10 10"><path d="M2 5.2 L4.2 7.4 L8 2.8" stroke="#15803d" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <div><b>Ahora sí se puede afirmar que los reclamos del 147 entran solos.</b><p>Todos los días a las 6, sin carga manual. En septiembre era el primer punto de esta lista.</p></div>
+  </div>
+
+  <div class="caja azul" style="display:grid;grid-template-columns:30mm 1fr;gap:4mm;align-items:start">
+    <h3 style="color:var(--azul);padding-top:0.4mm">Mantenimiento</h3>
+    <p style="font-size:8.6pt;color:var(--tinta-2);line-height:1.5">Los números salen de una consulta directa a la base de CIMBA, hecha el <b>14 de octubre de 2026 a las 10:35</b>, y cambian todos los días. Antes de una presentación formal, o si la nota sale <b>después del 14 de noviembre</b>, pedirlos actualizados a la Dirección de Inteligencia Artificial.</p>
+  </div>
+
+  <footer class="pie"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">9 / 10</div></footer>
+</section>
+
+<!-- ═════════════════════════════ 10 · QUÉ CAMBIÓ ═════════════════════════════ -->
+<section class="pagina">
+  <header class="cab">
+    <div class="lockup">
+      <img src="manual-campo/isotipo-smt.png" alt="">
+      <div class="sep"></div>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+      <div class="marca">CIMBA<b>.</b><small>INFORMACIÓN BASE</small></div>
+    </div>
+    <div class="doc">Anexo<br><b>Qué cambió</b></div>
+  </header>
+
+  <div class="intro">
+    <h3>Qué cambió desde la versión del 18 de septiembre</h3>
+    <p>Para quien ya citó la versión anterior: qué números se movieron y por qué, y qué párrafos se reescribieron.</p>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:24%">Dato</th><th class="n">18/09/2026</th><th class="n">14/10/2026</th><th style="width:42%">Por qué cambió</th></tr></thead>
+    <tbody>
+      <tr><td>Pedidos registrados</td><td class="n">3.275</td><td class="n">3.402</td><td>Los reclamos nuevos del 147, que ya entran solos.</td></tr>
+      <tr><td>Problemas de calzada</td><td class="n">3.480</td><td class="n">4.212</td><td>Los baches cargados desde entonces; 430 de ellos, de la planilla de Ingeco.</td></tr>
+      <tr><td>Trabajos</td><td class="n">3.393</td><td class="n">3.999</td><td>Se suman los cargados desde entonces, y ahora se cuentan solo los terminados.</td></tr>
+      <tr><td>Superficie</td><td class="n">99.858 m²</td><td class="n">por escala</td><td>Baches y obras van aparte, y solo lo terminado.</td></tr>
+      <tr><td>Fotografías</td><td class="n">4.869</td><td class="n">5.238</td><td>Las que suben empresas y cuadrillas al cargar.</td></tr>
+      <tr><td>Órdenes de trabajo</td><td class="n">21 · 12 activas</td><td class="n">16 · 7 en curso</td><td>Ya no se cuentan las anuladas ni los borradores.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="dos">
+    <div class="caja">
+      <h3 style="margin-bottom:2mm">Párrafos que cambiaron</h3>
+      <ul class="lista">
+        <li>El pedido de conexión con Atención Ciudadana se reemplazó por el <b>pedido del cierre del reclamo</b> (5.5): la conexión ya funciona.</li>
+        <li>El párrafo largo y la presentación (5.1) suman la carga desde el celular y la entrada automática del 147.</li>
+      </ul>
+    </div>
+    <div class="caja">
+      <h3 style="margin-bottom:2mm">Lo que se sumó</h3>
+      <ul class="lista">
+        <li>Dos pedidos nuevos: <b>ingreso con Ciudad Digital</b> (5.6) y <b>sincronización permanente</b> con SIGOV y la planilla de las empresas (5.7).</li>
+        <li>Quién hizo el trabajo, mes por mes y con su prueba fotográfica; y ocho puntos nuevos en lo que conviene no afirmar.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="col-flex" style="margin-top:3mm;gap:2.6mm">
+    <div class="subtitulo"><h3>Ficha técnica</h3></div>
+    <p class="nota" style="margin-top:-1mm">Para las notas al área de sistemas (5.6 y 5.7) o a quien pregunte cómo está hecho.</p>
+    <div class="ficha">
+      <div><b>Sitio</b><span class="mono">cimba.smt.gob.ar</span>. Se usa desde la computadora y desde el celular, donde se instala como aplicación.</div>
+      <div><b>Base de datos y fotos</b>PostgreSQL con PostGIS, en Supabase.</div>
+      <div><b>Alojamiento</b>Vercel.</div>
+      <div><b>Código</b>Repositorio DIA-SMT/CIMBA, en GitHub.</div>
+      <div><b>Ingreso</b>Usuario y clave propios de CIMBA. La sesión dura mientras se use; tras siete días sin abrirlo, pide la clave de nuevo.</div>
+      <div><b>Desarrollo y mantenimiento</b>Dirección de Inteligencia Artificial de la Municipalidad.</div>
+    </div>
+  </div>
+
+  <div class="cierre" style="margin-top:auto">
+    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="18" stroke="#2EB1FF" stroke-opacity=".35" stroke-width="1.5"/><circle cx="20" cy="20" r="11.5" stroke="#2EB1FF" stroke-opacity=".55" stroke-width="1.5"/><circle cx="20" cy="20" r="5" stroke="#0066FF" stroke-width="2"/><circle cx="20" cy="20" r="1.8" fill="#F4DC00"/><path d="M20 20 L20 2 A18 18 0 0 1 33.5 7.5 Z" fill="#2EB1FF" fill-opacity=".35"/></svg>
+    <p><b>CIMBA</b> · Centro Inteligente de Monitoreo de Baches y Asfalto · Municipalidad de San Miguel de Tucumán<br>Desarrollado por la Dirección de Inteligencia Artificial para la Dirección de Obras Viales · <span class="mono">cimba.smt.gob.ar</span></p>
+  </div>
+
+  <footer class="pie" style="margin-top:0"><div><b>CIMBA</b> · Información base · Dirección de Inteligencia Artificial</div><div class="pag">10 / 10</div></footer>
+</section>
 
 </body>
 </html>
