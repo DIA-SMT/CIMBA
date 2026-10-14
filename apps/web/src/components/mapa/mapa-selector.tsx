@@ -5,12 +5,8 @@ import { Map as MapIcon, MapPin, Satellite } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Layer, Map as MapaGL, Marker, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
 import { bboxDeCapa, type CapaPuntos } from "@/lib/capa-archivo";
-import { estiloMapa, usarTemaMapa } from "./tema-mapa";
-
-/** Imagen satelital de Esri (uso gratuito con atribución). */
-export const TILES_SATELITE =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-export const ATRIBUCION_SATELITE = "Esri, Maxar, Earthstar Geographics";
+import { CapaRedVial } from "./mini-mapa";
+import { ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /** Mini-mapa para elegir una ubicación con un clic. Realza nombres y trazas de
  *  calles (como el mapa principal), permite vista satelital para ubicar con
@@ -21,17 +17,25 @@ export function MapaSelector({
   alElegir,
   alto = 320,
   capa = null,
+  arrancaEnSatelite = true,
+  conRedVial = false,
 }: {
   punto: { lat: number; lon: number } | null;
   alElegir: (lat: number, lon: number) => void;
   alto?: number;
   capa?: CapaPuntos | null;
+  /**
+   * Por defecto arranca en satelital (el reemplazo de QGIS). Para CORREGIR un
+   * punto ya ubicado conviene el plano: hay que leer el nombre de la calle
+   * —"sería mejor el que se ve solo la red vial", el usuario, 14/10—.
+   */
+  arrancaEnSatelite?: boolean;
+  /** La red vial encima: qué calle es pavimento, cuál ripio, cuál cordón cuneta. */
+  conRedVial?: boolean;
 }) {
   const mapRef = useRef<MapRef>(null);
   const tema = usarTemaMapa();
-  // Arranca en satelital: es la vista que se necesita para ubicar puntos con
-  // precisión mirando la imagen real (el reemplazo de QGIS).
-  const [satelite, setSatelite] = useState(true);
+  const [satelite, setSatelite] = useState(arrancaEnSatelite);
   // Si el estilo no tiene la capa de nombres, el raster va arriba de todo
   // (sin beforeId) en vez de fallar silenciosamente.
   const [hayAncla, setHayAncla] = useState(true);
@@ -117,7 +121,14 @@ export function MapaSelector({
     <div className="relative overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
       <MapaGL
         ref={mapRef}
-        initialViewState={{ longitude: -65.2226, latitude: -26.8241, zoom: 12.5 }}
+        // Con un punto ya ubicado (corregir un pedido), abre encima de él y a
+        // escala de cuadra: antes abría la ciudad entera y el pin había que
+        // buscarlo. Sin punto (un pedido nuevo), la ciudad.
+        initialViewState={
+          punto
+            ? { longitude: punto.lon, latitude: punto.lat, zoom: 17 }
+            : { longitude: -65.2226, latitude: -26.8241, zoom: 12.5 }
+        }
         mapStyle={estiloMapa(tema)}
         onClick={(e) => alElegir(e.lngLat.lat, e.lngLat.lng)}
         attributionControl={{ compact: true }}
@@ -136,6 +147,9 @@ export function MapaSelector({
             <Layer id="selector-satelite-capa" type="raster" beforeId={hayAncla ? "roadname_minor" : undefined} />
           </Source>
         )}
+
+        {/* Encima de todo, también del satélite: la red vial es lo que se mira. */}
+        {conRedVial && <CapaRedVial prefijo="selector" />}
 
         {capa && capa.features.length > 0 && (
           <Source id="capa-archivo" type="geojson" data={capa}>

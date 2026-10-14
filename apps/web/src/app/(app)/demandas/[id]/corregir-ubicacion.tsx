@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { corregirUbicacionDemanda } from "@/lib/acciones";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
+import { ReferenciaTerreno } from "@/components/mapa/mini-mapa";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
  * Corregir (o asignar) la ubicación de una demanda arrastrando el punto en el
- * mapa — con vista satelital para clavarlo mirando la imagen real, como se
- * hacía en QGIS. La confianza pasa a 1.0: la puso una persona.
+ * mapa. Abre en el plano de calles con la red vial, como el corrector del
+ * bache (pedido del usuario, 14/10): el satélite tapaba los nombres de las
+ * calles. La foto queda a un botón, con los nombres encima. La confianza pasa
+ * a 1.0: la puso una persona.
  */
 export function CorregirUbicacion({
   demandaId,
@@ -66,7 +69,7 @@ export function CorregirUbicacion({
           setGuardado(false);
         }}
         className="inline-flex items-center gap-1.5 rounded-lg border border-borde-2 px-3 py-1.5 text-[13px] font-semibold text-texto-2 transition hover:border-amarillo/60 hover:text-amarillo"
-        title="Mover el punto en el mapa (con vista satelital) para corregir una geocodificación errada"
+        title="Mover el punto en el mapa para corregir una geocodificación errada"
       >
         <MapPinned size={14} />
         {guardado ? "Ubicación corregida ✓" : lat == null ? "Asignar ubicación" : "Corregir ubicación"}
@@ -93,7 +96,16 @@ export function CorregirUbicacion({
           <X size={15} />
         </button>
       </div>
-      <MapaSelector punto={punto} alElegir={(la, lo) => setPunto({ lat: la, lon: lo })} alto={300} />
+      <MapaSelector
+        punto={punto}
+        alElegir={(la, lo) => setPunto({ lat: la, lon: lo })}
+        alto={300}
+        arrancaEnSatelite={false}
+        conRedVial
+      />
+      <div className="mt-1.5">
+        <ReferenciaTerreno />
+      </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs text-texto-2">
           <input

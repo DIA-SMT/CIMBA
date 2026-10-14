@@ -1,12 +1,12 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MapPin, X } from "lucide-react";
+import { Map as MapIcon, MapPin, Satellite, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Layer, Map as MapaGL, Marker, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
-import { estiloMapa, usarTemaMapa } from "./tema-mapa";
+import { ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /**
  * Mini-mapa universal — el pedido literal del Director: "en todo lugar donde
@@ -186,6 +186,7 @@ export function MiniMapa({
   alMoverHasta,
   alto = 260,
   conTerreno = false,
+  conRedVial = false,
 }: {
   lat: number;
   lon: number;
@@ -214,9 +215,21 @@ export function MiniMapa({
    * puede decidir si el reclamo es de bacheo o de ingeniería.
    */
   conTerreno?: boolean;
+  /**
+   * PLANO DE CALLES CON LA RED VIAL ENCIMA, y un botón para pasar a satélite.
+   * Es el fondo para CORREGIR un pin: con conTerreno el satélite tapaba el
+   * plano entero y no se leía el nombre de ninguna calle — "aparece el mapa
+   * satelital sin calles, sería mejor el que se ve solo la red vial" (14/10).
+   * Si se pide el satélite, va DEBAJO de los nombres de las calles.
+   */
+  conRedVial?: boolean;
 }) {
   const tema = usarTemaMapa();
   const mapRef = useRef<MapRef>(null);
+  const [satelite, setSatelite] = useState(false);
+  // Un estilo base sin la capa de nombres (se puede cambiar por variable de
+  // entorno) haría fallar en silencio el satélite colgado debajo de ella.
+  const [hayNombres, setHayNombres] = useState(false);
   // El pin vive en estado local para seguir el arrastre sin depender de que
   // el padre devuelva las coordenadas; el ref espeja ese estado para que el
   // efecto distinga un punto NUEVO de afuera (re-geocodificación) del eco de
@@ -284,9 +297,10 @@ export function MiniMapa({
 
   return (
     <div className="w-full">
-      <div className="overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
+      <div className="relative overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
         <MapaGL
           ref={mapRef}
+          onLoad={(e) => setHayNombres(Boolean(e.target.getLayer("roadname_minor")))}
           initialViewState={
             hayTramo && latHasta != null && lonHasta != null
               ? {
@@ -304,6 +318,19 @@ export function MiniMapa({
         >
           <NavigationControl position="bottom-right" showCompass={false} />
           {conTerreno && <CapasTerreno />}
+          {conRedVial && satelite && (
+            <Source
+              id="mini-satelite"
+              type="raster"
+              tiles={[TILES_SATELITE]}
+              tileSize={256}
+              maxzoom={18}
+              attribution={ATRIBUCION_SATELITE}
+            >
+              <Layer id="mini-satelite-raster" type="raster" beforeId={hayNombres ? "roadname_minor" : undefined} />
+            </Source>
+          )}
+          {conRedVial && <CapaRedVial prefijo="mini" />}
           {/* La línea del tramo, debajo de los dos pines. */}
           {hayTramo && (
             <Source
@@ -379,8 +406,19 @@ export function MiniMapa({
             )}
           </Marker>
         </MapaGL>
+        {conRedVial && (
+          <button
+            type="button"
+            onClick={() => setSatelite((s) => !s)}
+            title={satelite ? "Volver al plano de calles" : "Ver la imagen satelital, con los nombres de las calles encima"}
+            className={`panel-vidrio absolute top-2 right-2 flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold transition ${satelite ? "text-amarillo ring-1 ring-amarillo/50" : "text-texto-2 hover:text-texto"}`}
+          >
+            {satelite ? <MapIcon size={12} /> : <Satellite size={12} />}
+            {satelite ? "Plano" : "Satélite"}
+          </button>
+        )}
       </div>
-      {conTerreno && <div className="mt-1.5"><ReferenciaTerreno /></div>}
+      {(conTerreno || conRedVial) && <div className="mt-1.5"><ReferenciaTerreno /></div>}
       {alMover && (
         <p className="num mt-1.5 text-[11px] text-texto-3">
           {punto.lat.toFixed(6)}, {punto.lon.toFixed(6)}

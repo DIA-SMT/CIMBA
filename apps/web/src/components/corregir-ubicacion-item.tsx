@@ -18,8 +18,9 @@ import { MiniMapa } from "@/components/mapa/mini-mapa";
  * salida era rechazarlo y pedir que lo cargaran de nuevo, con la foto y las
  * medidas otra vez.
  *
- * El mapa abre con satelital y red vial: sin ver la calle real no se puede
- * decidir dónde va el pin.
+ * El mapa abre en el plano de calles con la red vial encima: para clavar el
+ * pin hay que leer el nombre de la calle y la altura de la esquina, y el
+ * satélite —que antes abría por defecto— los tapaba. Queda a un botón.
  */
 export function CorregirUbicacionItem({
   itemId,
@@ -97,7 +98,7 @@ export function CorregirUbicacionItem({
         etiqueta={direccion}
         alMover={(p) => setPunto(p)}
         alto={260}
-        conTerreno
+        conRedVial
       />
       <input
         value={texto}

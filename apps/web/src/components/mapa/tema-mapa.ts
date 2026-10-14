@@ -46,6 +46,13 @@ export const ESTILO_MAPA_CLARO =
   process.env.NEXT_PUBLIC_MAP_STYLE_LIGHT ??
   "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json";
 
+/** Imagen satelital de Esri (uso gratuito con atribución). Vive acá y no en
+ *  mapa-selector para que mini-mapa y mapa-selector la usen sin importarse
+ *  entre sí. */
+export const TILES_SATELITE =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+export const ATRIBUCION_SATELITE = "Esri, Maxar, Earthstar Geographics";
+
 export function estiloMapa(tema: TemaMapa): string {
   return tema === "oscuro" ? ESTILO_MAPA_OSCURO : ESTILO_MAPA_CLARO;
 }

@@ -238,7 +238,7 @@ export function CompletarHecho({
             </button>
           </div>
           {punto ? (
-            <MiniMapa lat={punto.lat} lon={punto.lon} etiqueta={texto || direccion} alMover={setPunto} alto={240} conTerreno />
+            <MiniMapa lat={punto.lat} lon={punto.lon} etiqueta={texto || direccion} alMover={setPunto} alto={240} conRedVial />
           ) : (
             <p className="text-xs text-texto-3">Buscá la dirección o usá el GPS: después ajustás el pin en el mapa.</p>
           )}
