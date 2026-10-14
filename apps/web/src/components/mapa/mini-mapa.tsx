@@ -36,6 +36,67 @@ function cargarRedVial() {
 }
 
 /**
+ * LA RED VIAL SOLA: qué calle es de pavimento, cuál de ripio y cuál tiene
+ * cordón cuneta. Va dentro de CapasTerreno (con el satélite) y, sola, en
+ * Avance (Leo, 13/10: "para tener una mayor claridad de los sectores donde no
+ * se bachea"). `desdeZoom` la apaga en la vista de toda la ciudad, donde
+ * solo sería ruido.
+ */
+export function CapaRedVial({
+  desdeZoom = 0,
+  prefijo = "terreno",
+  antesDe,
+}: {
+  desdeZoom?: number;
+  prefijo?: string;
+  /** La capa del mapa que tiene que quedar ENCIMA: los datos llegan tarde y sin esto quedarían arriba de todo. */
+  antesDe?: string;
+}) {
+  const [redVial, setRedVial] = useState<unknown>(null);
+  useEffect(() => {
+    let vivo = true;
+    void cargarRedVial().then((d) => {
+      if (vivo) setRedVial(d);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  if (redVial == null) return null;
+  return (
+    <Source id={`${prefijo}-red-vial`} type="geojson" data={redVial as never}>
+      {/* El ripio es lo que hay que ver: en calle de tierra no hay bache
+          que bachear, es pasado de máquina. El pavimento va tenue, solo
+          como referencia de qué SÍ es bacheable. */}
+      <Layer
+        id={`${prefijo}-red-pavimento`}
+        beforeId={antesDe}
+        type="line"
+        minzoom={desdeZoom}
+        filter={["==", ["get", "capa"], "pavimento"]}
+        paint={{ "line-color": "#9fb0c4", "line-width": 1.2, "line-opacity": 0.5 }}
+      />
+      <Layer
+        id={`${prefijo}-red-ripio`}
+        beforeId={antesDe}
+        type="line"
+        minzoom={desdeZoom}
+        filter={["==", ["get", "capa"], "ripio"]}
+        paint={{ "line-color": "#e6893a", "line-width": 2.4, "line-opacity": 0.95 }}
+      />
+      <Layer
+        id={`${prefijo}-red-cordon`}
+        beforeId={antesDe}
+        type="line"
+        minzoom={desdeZoom}
+        filter={["==", ["get", "capa"], "cordon_cuneta"]}
+        paint={{ "line-color": "#95a2b6", "line-width": 1.8, "line-opacity": 0.8 }}
+      />
+    </Source>
+  );
+}
+
+/**
  * Satelital + red vial para cualquier mapa chico. Se comparte entre el
  * mini-mapa y el panel "ver en mapa" de las tablas: es la misma pregunta en
  * los dos lugares — ¿esto es pavimento o es ripio?

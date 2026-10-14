@@ -1074,7 +1074,7 @@ export function PantallaAvance({
               </p>
               <p className="flex items-center gap-2">
                 <span className="inline-block h-3 w-3 rounded-sm bg-celeste/30" aria-hidden="true" />
-                Barrio: más celeste, más trabajos. Punteado sin relleno: ninguno todavía
+                Barrio: más celeste, más trabajos. Borde fino, sin relleno: ninguno todavía
               </p>
               <p className="flex items-center gap-2">
                 <span className="inline-block h-3 w-3 rounded-full border-2 border-celeste" aria-hidden="true" />
@@ -1090,7 +1090,11 @@ export function PantallaAvance({
               </p>
               <p className="flex items-center gap-2">
                 <span className="inline-block h-0 w-3 border-t-2 border-dashed border-texto-2" aria-hidden="true" />
-                Punteado: área de una orden activa
+                Punteado, del color de la empresa: área de una orden activa (si es por zona, la zona entera)
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="inline-block h-0 w-3 border-t-[3px]" style={{ borderColor: "#e6893a" }} aria-hidden="true" />
+                Naranja: calle de ripio, donde no se bachea (se ve al acercarse)
               </p>
               {datos.territorio && (
                 <p className="flex items-center gap-2">

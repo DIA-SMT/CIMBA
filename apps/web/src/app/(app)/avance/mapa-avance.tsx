@@ -34,6 +34,7 @@ import { ETIQUETA_FUENTE, SEMAFORO_HEX, fechaCorta, numero } from "@/lib/formato
 import { AntesDespues } from "@/components/antes-despues";
 import type { ParAntesDespues } from "@/components/visor-antes-despues";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
+import { CapaRedVial } from "@/components/mapa/mini-mapa";
 
 /**
  * EL MAPA DE AVANCE, de abajo hacia arriba: contorno del recorte, barrios
@@ -649,11 +650,15 @@ export function MapaAvance({
               "line-color": oscuro ? "#8b96a8" : "#64748b",
               "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.4, 14, 1],
               "line-opacity": ["case", [">", N_BARRIO, 0], 0.28, 0.5],
-              "line-dasharray": [2, 2],
+              /* Línea llena y fina: el punteado es de las órdenes. Con los dos
+                 punteados, Leo leía los límites de barrio como áreas de orden. */
             }}
           />
         </Source>
       )}
+
+      {/* 0. Las calles: pavimento tenue, ripio en naranja. En ripio no se bachea. */}
+      <CapaRedVial desdeZoom={13} prefijo="av" antesDe="av-areas-relleno" />
 
       {/* 1. El área real de cada orden activa */}
       <Source key="av-areas" id="av-areas" type="geojson" data={areas}>
