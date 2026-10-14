@@ -93,8 +93,12 @@ export function BarraConfianza({ valor }: { valor: number | null }) {
   );
 }
 
-export function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border border-borde bg-panel ${className}`}>{children}</div>;
+export function Panel({ children, className = "", id }: { children: React.ReactNode; className?: string; id?: string }) {
+  return (
+    <div id={id} className={`rounded-xl border border-borde bg-panel ${className}`}>
+      {children}
+    </div>
+  );
 }
 
 export function TituloPagina({ titulo, sub, extra }: { titulo: string; sub?: string; extra?: React.ReactNode }) {

@@ -124,6 +124,8 @@ export default async function PaginaOrdenEmpresa({
           lon: i.lon,
           direccion: i.direccion,
           hecho: i.estado !== "pendiente" && i.estado !== "propuesto",
+          estado: i.estado === "propuesto" ? ("sin_validar" as const) : i.estado === "pendiente" ? ("falta" as const) : ("hecho" as const),
+          fueraM: i.fueraDelAmbitoM ?? null,
         }]
       : [],
   );
@@ -240,7 +242,7 @@ export default async function PaginaOrdenEmpresa({
        */}
       {(puntosDelMapa.length > 0 || orden.poligono != null) && (
         <div className="mb-4">
-          <MapaOrden puntos={puntosDelMapa} area={orden.poligono} />
+          <MapaOrden puntos={puntosDelMapa} area={orden.areaAmbito ?? orden.poligono} />
         </div>
       )}
 

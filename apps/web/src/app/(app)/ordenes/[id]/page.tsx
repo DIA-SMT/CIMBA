@@ -13,6 +13,7 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
 import { CorregirFecha } from "./corregir-fecha";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { MapaOrden } from "@/app/empresa/orden/[id]/mapa-orden";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { BorrarItem } from "./borrar-item";
 import { CorregirMedidas } from "./corregir-medidas";
@@ -134,6 +135,28 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   const puedeSupervisar = puedePlanificar || sesion.rol_cimba === "supervision";
   const noEncontrados = o.itemsDetalle.filter((i) => i.estado === "no_encontrado").length;
   const propuestos = o.itemsDetalle.filter((i) => i.estado === "propuesto");
+  /* Los puntos del mapa: lo que falta, lo hecho y lo que espera validación. */
+  const puntosDelMapa = o.itemsDetalle.flatMap((i) =>
+    i.lat != null && i.lon != null && i.estado !== "rechazado"
+      ? [
+          {
+            id: i.id,
+            lat: i.lat,
+            lon: i.lon,
+            direccion: i.direccion,
+            hecho: i.estado !== "pendiente" && i.estado !== "propuesto",
+            estado:
+              i.estado === "propuesto"
+                ? ("sin_validar" as const)
+                : i.estado === "pendiente"
+                  ? ("falta" as const)
+                  : ("hecho" as const),
+            fueraM: i.fueraDelAmbitoM ?? null,
+          },
+        ]
+      : [],
+  );
+  const fueraDelArea = puntosDelMapa.filter((p) => p.fueraM != null).length;
   // El plan real de la orden: lo propuesto sin validar (y lo rechazado) no es
   // trabajo encargado — ni infla el % de avance ni sale en la hoja impresa.
   const itemsPapel = o.itemsDetalle.filter((i) => i.estado !== "propuesto" && i.estado !== "rechazado");
@@ -298,6 +321,24 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
           </div>
         </Panel>
 
+        {/**
+          * DÓNDE ESTÁ CADA BACHE, antes de validar (Leo, 13/10). Es el mismo
+          * mapa que ve la empresa en su portal, con el área de la orden y un
+          * aro rojo en lo que cae afuera: validar un bache que está en la zona
+          * de otra empresa ahora se ve antes de tocar el botón.
+          */}
+        <section className="mb-6">
+          <h2 className="mb-2 text-sm font-bold tracking-wide uppercase">
+            Dónde está cada bache{" "}
+            {fueraDelArea > 0 && (
+              <span className="font-semibold text-peligro normal-case">
+                · {fueraDelArea === 1 ? "1 cae fuera del área de la orden" : `${numero(fueraDelArea)} caen fuera del área de la orden`}
+              </span>
+            )}
+          </h2>
+          <MapaOrden puntos={puntosDelMapa} area={o.areaAmbito ?? o.poligono} modo="direccion" alto={380} />
+        </section>
+
         {/* Bandeja de validación: lo que la cuadrilla encontró en la calle */}
         {propuestos.length > 0 && (
           <>
@@ -338,7 +379,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                     : []),
                 ];
                 return (
-                  <Panel key={it.id} className="border-amarillo/40 p-4">
+                  <Panel key={it.id} id={`item-${it.id}`} className="scroll-mt-20 border-amarillo/40 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -347,6 +388,11 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                           <span className="rounded-md border border-borde-2 px-2 py-0.5 text-[11px] font-semibold text-texto-2">
                             {ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}
                           </span>
+                          {it.fueraDelAmbitoM != null && (
+                            <span className="rounded-md bg-peligro/10 px-2 py-0.5 text-[11px] font-bold text-peligro">
+                              Fuera del área de la orden · a {numero(it.fueraDelAmbitoM)} m
+                            </span>
+                          )}
                         </div>
                         <p className="mt-1 text-xs text-texto-3">
                           Propuesto{prop.por && <> por <b className="text-texto-2">{prop.por}</b></>}
@@ -768,7 +814,7 @@ function FilaItem({
     ];
   });
   return (
-    <tr className="border-b border-borde/60 transition hover:bg-panel-2">
+    <tr id={`item-${item.id}`} className="scroll-mt-20 border-b border-borde/60 transition hover:bg-panel-2">
       <td className="max-w-56 px-3 py-2.5">
         <div className="flex items-center gap-1.5">
           {/* El pedido del Director: verificar el punto sin salir de la orden */}

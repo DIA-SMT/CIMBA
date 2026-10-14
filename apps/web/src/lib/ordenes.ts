@@ -730,7 +730,13 @@ export interface ItemOrden {
   lat: number | null;
   lon: number | null;
   fotos: Array<{ momento: string; storagePath: string | null; urlExterna: string | null }>;
+  /** Metros que el bache queda FUERA del área de la orden; null si está adentro o la orden no tiene área. */
+  fueraDelAmbitoM?: number | null;
 }
+
+export type AreaOrden =
+  | { type: "Polygon"; coordinates: Array<Array<[number, number]>> }
+  | { type: "MultiPolygon"; coordinates: Array<Array<Array<[number, number]>>> };
 
 export interface OrdenDetalle extends OrdenResumen {
   /**
@@ -738,6 +744,14 @@ export interface OrdenDetalle extends OrdenResumen {
    * esta orden y de ninguna otra: no se guarda como zona reutilizable.
    */
   poligono: { type: "Polygon"; coordinates: Array<Array<[number, number]>> } | null;
+  /**
+   * EL ÁREA DONDE TIENE QUE TRABAJAR LA EMPRESA, según el ámbito: la zona del
+   * contrato, el barrio, el distrito o el polígono dibujado. Null cuando el
+   * ámbito es un circuito o un corredor (no tienen un área que dibujar).
+   * Leo, 13/10: validó baches que estaban fuera del área de la empresa porque
+   * en la pantalla de la orden no había forma de verlo.
+   */
+  areaAmbito: AreaOrden | null;
   circuitoId: number | null;
   /**
    * POR DÓNDE SE DEFINIÓ la orden: lo que el Director eligió en el paso "2 ·
@@ -757,6 +771,17 @@ export interface OrdenDetalle extends OrdenResumen {
   itemsDetalle: ItemOrden[];
 }
 
+/**
+ * El área del ámbito de una orden, como geometría. Supone los alias `ot`
+ * (ordenes_trabajo), `z` (zonas_bacheo) y `b` (barrios) en la consulta.
+ */
+const GEOM_AMBITO = sql`(case ot.ambito
+  when 'zona' then z.geom::geometry
+  when 'barrio' then b.geom::geometry
+  when 'distrito' then (select d.geom::geometry from distritos d where d.id = ot.distrito_id)
+  when 'poligono' then ot.poligono::geometry
+end)`;
+
 export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDetalle | null> {
   // La RLS está escrita pero hoy no se aplica (la app corre como dueño de
   // las tablas): el enforcement de que un ejecutor (empresa contratista o
@@ -771,7 +796,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
              -- El área dibujada, para que el mapa de la orden la muestre: la
              -- empresa tiene que ver el pedazo de ciudad que le tocó, no solo
              -- los puntos sueltos que hay adentro.
-             st_asgeojson(ot.poligono)::json as poligono_geojson
+             st_asgeojson(ot.poligono)::json as poligono_geojson,
+             st_asgeojson(st_simplify(${GEOM_AMBITO}, 0.00005))::json as area_ambito
       from ordenes_trabajo ot
       join empresas e on e.id = ot.empresa_id
       left join circuitos c on c.id = ot.circuito_id
@@ -810,8 +836,17 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
     const items = (await tx.execute(sql`
       select oi.*, st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              (select v.tipo_intervencion::text from intervenciones v where v.id = oi.intervencion_id) as tipo_intervencion,
-        coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos
+        coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos,
+        case when amb.g is not null and oi.geom is not null and not st_intersects(amb.g, oi.geom)
+             then round(st_distance(amb.g::geography, oi.geom::geography))::int end as fuera_m
       from orden_items oi
+      left join lateral (
+        select ${GEOM_AMBITO} as g
+        from ordenes_trabajo ot
+        left join zonas_bacheo z on z.id = ot.zona_id
+        left join barrios b on b.id = ot.barrio_id
+        where ot.id = oi.orden_id
+      ) amb on true
       where oi.orden_id = ${id}
       order by oi.id
     `)) as unknown as Array<Record<string, unknown>>;
@@ -859,6 +894,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       lat: f.lat != null ? Number(f.lat) : null,
       lon: f.lon != null ? Number(f.lon) : null,
       fotos: f.intervencion_id != null ? (fotosPorIv.get(Number(f.intervencion_id)) ?? []) : [],
+      fueraDelAmbitoM: f.fuera_m != null ? Number(f.fuera_m) : null,
     }));
 
     const hechos = itemsDetalle.filter((i) => i.estado === "hecho").length;
@@ -924,6 +960,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       /* El área dibujada, si la orden se armó así. Va como GeoJSON crudo: lo
          consume el mapa, que es lo único que la necesita. */
       poligono: (o.poligono_geojson as OrdenDetalle["poligono"]) ?? null,
+      areaAmbito: (o.area_ambito as AreaOrden | null) ?? null,
       emitidaEn: o.emitida_en != null ? String(o.emitida_en) : null,
       // vence_en es una columna date pura: viene ya como "YYYY-MM-DD" (::text),
       // no como el Date-a-medianoche-UTC que String() corrompería un día.

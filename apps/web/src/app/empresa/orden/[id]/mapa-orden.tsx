@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { Layer, Map as MapaGL, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
 import { estiloMapa, usarTemaMapa } from "@/components/mapa/tema-mapa";
 import { CapasTerreno, ReferenciaTerreno } from "@/components/mapa/mini-mapa";
+import type { AreaOrden } from "@/lib/ordenes";
 
 /**
  * EL MAPA DE UBICACIÓN DE LA ORDEN.
@@ -29,12 +30,22 @@ export type PuntoOrden = {
   lon: number;
   direccion: string | null;
   hecho: boolean;
+  /**
+   * El estado a dibujar. Sin esto vale `hecho`. "sin_validar" es lo que la
+   * cuadrilla propuso ya tapado y espera la validación de Bacheo: no es
+   * "falta" (ya lo taparon) ni "tapado" todavía (nadie lo validó).
+   */
+  estado?: "falta" | "hecho" | "sin_validar";
+  /** Metros fuera del área de la orden, si cae afuera. */
+  fueraM?: number | null;
 };
 
 /** El semáforo de siempre, acá reducido a la única pregunta de la jornada:
  *  rojo = falta, verde = tapado. */
 const COLOR_FALTA = "#d42d20";
 const COLOR_HECHO = "#199e70";
+/** El aro de lo que cae fuera del área de la orden. */
+const COLOR_FUERA = "#d42d20";
 
 export function MapaOrden({
   puntos,
@@ -42,6 +53,7 @@ export function MapaOrden({
   alElegir,
   alto = 300,
   area = null,
+  modo = "empresa",
 }: {
   puntos: PuntoOrden[];
   /** Dónde está quien mira, si compartió el GPS. */
@@ -55,7 +67,9 @@ export function MapaOrden({
    * sueltos que hay adentro: el borde del área es parte de la instrucción —
    * lo que aparezca ahí adentro también es suyo.
    */
-  area?: { type: "Polygon"; coordinates: Array<Array<[number, number]>> } | null;
+  area?: AreaOrden | null;
+  /** La empresa toca un punto para ir a cargarlo; la Dirección, para ir a su fila. */
+  modo?: "empresa" | "direccion";
 }) {
   const tema = usarTemaMapa();
   const mapRef = useRef<MapRef>(null);
@@ -80,7 +94,13 @@ export function MapaOrden({
       features: puntos.map((p) => ({
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] },
-        properties: { id: p.id, hecho: p.hecho, direccion: p.direccion ?? "Sin dirección" },
+        properties: {
+          id: p.id,
+          hecho: p.hecho,
+          estado: p.estado ?? (p.hecho ? "hecho" : "falta"),
+          fuera: p.fueraM != null,
+          direccion: p.direccion ?? "Sin dirección",
+        },
       })),
     }),
     [puntos],
@@ -94,9 +114,12 @@ export function MapaOrden({
   const encuadre = useMemo(() => {
     const lats = puntos.map((p) => p.lat);
     const lons = puntos.map((p) => p.lon);
-    for (const [lon, lat] of area?.coordinates[0] ?? []) {
-      lats.push(lat);
-      lons.push(lon);
+    const anillos = area == null ? [] : area.type === "Polygon" ? [area.coordinates[0] ?? []] : area.coordinates.map((p) => p[0] ?? []);
+    for (const anillo of anillos) {
+      for (const [lon, lat] of anillo) {
+        lats.push(lat);
+        lons.push(lon);
+      }
     }
     if (lats.length === 0) return null;
     return {
@@ -158,11 +181,19 @@ export function MapaOrden({
               id="orden-puntos"
               type="circle"
               paint={{
-                "circle-radius": ["case", ["get", "hecho"], 6, 9],
-                "circle-color": ["case", ["get", "hecho"], COLOR_HECHO, COLOR_FALTA],
-                "circle-opacity": ["case", ["get", "hecho"], 0.7, 0.95],
-                "circle-stroke-width": 1.5,
-                "circle-stroke-color": "#ffffff",
+                "circle-radius": ["match", ["get", "estado"], "falta", 9, 6.5],
+                "circle-color": ["match", ["get", "estado"], "falta", COLOR_FALTA, "sin_validar", "#ffffff", COLOR_HECHO],
+                "circle-opacity": ["match", ["get", "estado"], "hecho", 0.7, 0.95],
+                // Lo que cae fuera del área lleva un aro rojo: se ve antes de validarlo.
+                "circle-stroke-width": ["case", ["get", "fuera"], 3, ["==", ["get", "estado"], "sin_validar"], 2.5, 1.5],
+                "circle-stroke-color": [
+                  "case",
+                  ["get", "fuera"],
+                  COLOR_FUERA,
+                  ["==", ["get", "estado"], "sin_validar"],
+                  COLOR_HECHO,
+                  "#ffffff",
+                ],
               }}
             />
           </Source>
@@ -205,6 +236,24 @@ export function MapaOrden({
           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLOR_HECHO }} />
           tapado
         </span>
+        {puntos.some((p) => p.estado === "sin_validar") && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2 bg-white" style={{ borderColor: COLOR_HECHO }} />
+            tapado, sin validar
+          </span>
+        )}
+        {puntos.some((p) => p.fueraM != null) && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full border-2" style={{ borderColor: COLOR_FUERA }} />
+            fuera del área de la orden
+          </span>
+        )}
+        {area && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-3 border-t-2 border-dashed border-azul" />
+            área de la orden
+          </span>
+        )}
         {miPunto && (
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "#0066ff" }} />
@@ -229,9 +278,26 @@ export function MapaOrden({
           <ReferenciaTerreno />
         </div>
       )}
-      <p className="mt-1 text-[11px] text-texto-3">Tocá un punto rojo para ir a cargarlo.</p>
+      <p className="mt-1 text-[11px] text-texto-3">
+        {modo === "direccion" ? "Tocá un punto para ver de qué bache se trata." : "Tocá un punto rojo para ir a cargarlo."}
+      </p>
 
-      {tocado && !tocado.hecho && (
+      {modo === "direccion" && tocado && (
+        <button
+          type="button"
+          onClick={() => irATarjeta(tocado.id)}
+          className="mt-2 w-full rounded-xl border border-borde-2 bg-panel px-4 py-3 text-left text-sm font-semibold"
+        >
+          {tocado.direccion ?? "Este bache"}
+          <span className="font-normal text-texto-3">
+            {" · "}
+            {tocado.estado === "sin_validar" ? "espera validación" : tocado.hecho ? "hecho" : "falta"}
+            {tocado.fueraM != null ? ` · fuera del área de la orden, a ${new Intl.NumberFormat("es-AR").format(tocado.fueraM)} m` : ""}
+          </span>
+          <span className="mt-0.5 block text-xs font-semibold text-celeste">Ir a su ficha →</span>
+        </button>
+      )}
+      {modo === "empresa" && tocado && !tocado.hecho && tocado.estado !== "sin_validar" && (
         <button
           type="button"
           onClick={() => irATarjeta(tocado.id)}
@@ -240,7 +306,12 @@ export function MapaOrden({
           Cargar {tocado.direccion ?? "este trabajo"} →
         </button>
       )}
-      {tocado?.hecho && (
+      {modo === "empresa" && tocado?.estado === "sin_validar" && (
+        <p className="mt-2 rounded-xl border border-borde-2 bg-panel px-4 py-3 text-sm text-texto-2">
+          {tocado.direccion ?? "Este bache"} ya está cargado: espera la validación de Bacheo.
+        </p>
+      )}
+      {modo === "empresa" && tocado?.hecho && (
         <p className="mt-2 rounded-xl border border-resuelto/40 bg-resuelto/10 px-4 py-3 text-sm text-resuelto">
           {tocado.direccion ?? "Este trabajo"} ya está cargado.
         </p>
