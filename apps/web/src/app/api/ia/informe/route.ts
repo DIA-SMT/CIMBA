@@ -28,7 +28,7 @@ import { mensajeDeError } from "@/lib/errores";
 const DESTINOS = ["bacheo", "sat", "ingenieria"] as const;
 // Pedidos que entran por el vecino vs detección propia del municipio.
 const FUENTES_VECINALES = "('atencion_ciudadana','redes_sociales','hcd','sat')";
-const FUENTES_INTERNAS = "('cuadrilla','secretaria','carga_manual','bachia')";
+const FUENTES_INTERNAS = "('cuadrilla','secretaria','carga_manual','bachia','obras_publicas')";
 
 const agregadosSchema = z.object({
   periodo: z.string().max(40),

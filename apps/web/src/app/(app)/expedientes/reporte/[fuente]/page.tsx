@@ -26,8 +26,9 @@ export const maxDuration = 60;
  */
 
 /** Los canales que piden y esperan respuesta. El resto (cuadrilla, carga
- *  manual, BachIA) son entradas nuestras: no hay a quién rendirle. */
-const CANALES: FuenteDemanda[] = ["hcd", "redes_sociales", "atencion_ciudadana", "secretaria", "sat"];
+ *  manual, BachIA) son entradas nuestras: no hay a quién rendirle. Obras
+ *  Públicas sí: la Secretaría quiere saber qué pasó con lo que cargó. */
+const CANALES: FuenteDemanda[] = ["hcd", "redes_sociales", "atencion_ciudadana", "secretaria", "sat", "obras_publicas"];
 
 const COLOR: Record<EstadoRendicion, string> = {
   reparado: "var(--color-hecho)",

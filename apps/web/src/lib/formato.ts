@@ -9,6 +9,7 @@ export const ETIQUETA_FUENTE: Record<FuenteDemanda, string> = {
   cuadrilla: "Cuadrilla",
   carga_manual: "Carga manual",
   sat: "SAT (Aguas)",
+  obras_publicas: "Obras Públicas",
 };
 
 export const ETIQUETA_TIPO: Record<TipoProblema, string> = {

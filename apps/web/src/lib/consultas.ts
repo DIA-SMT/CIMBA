@@ -90,6 +90,9 @@ export interface DemandaResumen {
   vinculos: number;
   metadata: Record<string, unknown>;
   contacto: Record<string, unknown> | null;
+  /** El nombre de la persona que lo cargó en CIMBA (Carga rápida, mapa). Null
+   *  si entró solo: 147, planillas, SIGOV. Pedido del usuario el 14/10. */
+  cargadoPor?: string | null;
 }
 
 /** Filtros de calidad de datos para la bandeja (panel /calidad). */
@@ -132,9 +135,11 @@ export async function listarDemandas(
              d.geocod_confianza, st_y(d.geom) as lat, st_x(d.geom) as lon,
              d.distrito_id, c.codigo as circuito, d.creado_en, d.metadata,
              ${verContacto ? sql`d.contacto` : sql`null::jsonb`} as contacto,
-             (select count(*) from demanda_incidente di where di.demanda_id = d.id) as vinculos
+             (select count(*) from demanda_incidente di where di.demanda_id = d.id) as vinculos,
+             pc.nombre as cargado_por
       from demandas d
       left join circuitos c on c.id = d.circuito_id
+      left join perfiles pc on pc.id = d.creado_por
       ${cond}
       order by d.creado_en desc
       limit ${limite} offset ${offset}
@@ -161,6 +166,7 @@ export async function listarDemandas(
         vinculos: Number(f.vinculos ?? 0),
         metadata: (f.metadata as Record<string, unknown>) ?? {},
         contacto: (f.contacto as Record<string, unknown>) ?? null,
+        cargadoPor: (f.cargado_por as string) ?? null,
       })),
       total: Number(total[0]?.n ?? 0),
     };
@@ -176,7 +182,8 @@ export async function obtenerDemanda(sesion: Sesion, id: number): Promise<Demand
              d.geocod_confianza, st_y(d.geom) as lat, st_x(d.geom) as lon,
              d.distrito_id, d.creado_en, d.metadata,
              ${verContacto ? sql`d.contacto` : sql`null::jsonb`} as contacto,
-             (select count(*) from demanda_incidente di where di.demanda_id = d.id) as vinculos
+             (select count(*) from demanda_incidente di where di.demanda_id = d.id) as vinculos,
+             (select p.nombre from perfiles p where p.id = d.creado_por) as cargado_por
       from demandas d where d.id = ${id}
     `)) as unknown as Array<Record<string, unknown>>;
     const f = filas[0];
@@ -196,6 +203,7 @@ export async function obtenerDemanda(sesion: Sesion, id: number): Promise<Demand
       vinculos: Number(f.vinculos ?? 0),
       metadata: (f.metadata as Record<string, unknown>) ?? {},
       contacto: (f.contacto as Record<string, unknown>) ?? null,
+      cargadoPor: (f.cargado_por as string) ?? null,
     };
   });
 }

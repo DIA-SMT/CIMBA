@@ -54,7 +54,7 @@ export default async function PaginaExpedientes() {
           Qué pidió cada canal y qué pasó con cada pedido, para imprimir y entregar.
         </p>
         <div className="flex flex-wrap gap-2">
-          {(["hcd", "redes_sociales", "atencion_ciudadana", "secretaria", "sat"] as const).map((f) => (
+          {(["hcd", "redes_sociales", "atencion_ciudadana", "secretaria", "sat", "obras_publicas"] as const).map((f) => (
             <Link
               key={f}
               href={`/expedientes/reporte/${f}`}

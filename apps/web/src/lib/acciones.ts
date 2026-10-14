@@ -484,10 +484,11 @@ export async function finalizarIntervencion(entrada: {
 }
 
 /**
- * Pedido de un ciudadano cargado por el personal: la carga presencial o
- * telefónica de un vecino (mostrador, 147 derivado, llamado directo). Entra
- * como demanda con fuente 'carga_manual', canal 'presencial' y el
- * área/distrito en metadata.
+ * Carga rápida: el pedido que carga el personal (lo que ve en la calle, o lo
+ * que un vecino reclama en persona o por teléfono). Entra con fuente
+ * 'obras_publicas' —un canal propio desde el 14/10, antes iba como
+ * 'carga_manual' mezclado con cualquier otra carga a mano—, canal
+ * 'presencial' y el área en metadata. Quién lo cargó queda en creado_por.
  */
 export async function crearDemandaCiudadano(formData: FormData) {
   // atencion_ciudadana incluida: es justamente quien atiende al vecino en
@@ -560,7 +561,7 @@ export async function crearDemandaCiudadano(formData: FormData) {
     const filas = (await tx.execute(sql`
       insert into demandas (fuente, tipo, descripcion, direccion_texto, geom, geocod_confianza,
                             solicitante, creado_por, metadata)
-      values ('carga_manual', ${datos.tipo}, ${descripcion}, ${datos.direccion},
+      values ('obras_publicas', ${datos.tipo}, ${descripcion}, ${datos.direccion},
               st_setsrid(st_makepoint(${datos.lon}, ${datos.lat}), 4326), 1.0,
               ${solicitante}, ${sesion.sub}, ${JSON.stringify(metadata)}::jsonb)
       returning id

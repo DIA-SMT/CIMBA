@@ -11,6 +11,8 @@ export const FUENTES_DEMANDA = [
   "cuadrilla",
   "carga_manual",
   "sat",
+  // Lo que carga la Secretaría de Obras Públicas en Carga rápida (migración 0040).
+  "obras_publicas",
 ] as const;
 export const fuenteDemandaSchema = z.enum(FUENTES_DEMANDA);
 export type FuenteDemanda = z.infer<typeof fuenteDemandaSchema>;

@@ -260,7 +260,14 @@ export default async function PaginaDemandas({
             {filas.map((d) => (
               <tr key={d.id} className="border-b border-borde/60 transition hover:bg-panel-2">
                 <td className="num px-4 py-2.5 text-texto-3">{d.id}</td>
-                <td className="px-4 py-2.5"><BadgeFuente fuente={d.fuente} /></td>
+                <td className="px-4 py-2.5">
+                  <BadgeFuente fuente={d.fuente} />
+                  {d.cargadoPor && (
+                    <span className="mt-0.5 block text-[10px] text-texto-3" title="Quién lo cargó en CIMBA">
+                      {d.cargadoPor}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5">
                   <BadgeTipo tipo={d.tipo} />
                   {/* Quién lo resuelve, en chico y con su color, debajo del tipo */}

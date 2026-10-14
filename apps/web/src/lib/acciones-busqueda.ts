@@ -48,7 +48,7 @@ const CONTEXTOS: Record<DestinoBusqueda, { schema: { parse: (v: unknown) => Reco
   demandas: {
     schema: esquemaDemandas,
     campos: `- q: texto libre para buscar en dirección o descripción
-- fuente: ${FUENTES_DEMANDA.join(" | ")} (pistas: "concejo/concejal"→hcd, "aguas/SAT"→sat, "vecinos/147"→atencion_ciudadana, "redes/instagram"→redes_sociales)
+- fuente: ${FUENTES_DEMANDA.join(" | ")} (pistas: "concejo/concejal"→hcd, "aguas/SAT"→sat, "vecinos/147"→atencion_ciudadana, "redes/instagram"→redes_sociales, "obras públicas/carga rápida"→obras_publicas)
 - estado: ${ESTADOS_DEMANDA.join(" | ")} (pistas: "sin vincular/pendiente"→recibida)`,
   },
   intervenciones: {

@@ -68,6 +68,12 @@ export default async function PaginaDemanda({ params }: { params: Promise<{ id: 
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
             <dt className="text-texto-3">Ingresó</dt>
             <dd className="num">{fechaCorta(demanda.creadoEn)}</dd>
+            {demanda.cargadoPor && (
+              <>
+                <dt className="text-texto-3">Lo cargó</dt>
+                <dd>{demanda.cargadoPor}</dd>
+              </>
+            )}
             <dt className="text-texto-3">Distrito</dt>
             <dd className="num">{demanda.distritoId ?? "—"}</dd>
             <dt className="text-texto-3">Geocodificación</dt>
