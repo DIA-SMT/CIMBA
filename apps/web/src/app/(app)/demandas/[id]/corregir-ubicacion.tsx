@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { corregirUbicacionDemanda } from "@/lib/acciones";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
-import { ReferenciaTerreno } from "@/components/mapa/mini-mapa";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -100,12 +99,7 @@ export function CorregirUbicacion({
         punto={punto}
         alElegir={(la, lo) => setPunto({ lat: la, lon: lo })}
         alto={300}
-        arrancaEnSatelite={false}
-        conRedVial
       />
-      <div className="mt-1.5">
-        <ReferenciaTerreno />
-      </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs text-texto-2">
           <input

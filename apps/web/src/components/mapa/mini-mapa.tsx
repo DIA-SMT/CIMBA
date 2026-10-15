@@ -186,7 +186,7 @@ export function MiniMapa({
   alMoverHasta,
   alto = 260,
   conTerreno = false,
-  conRedVial = false,
+  conRedVial: conRedVialPedido,
 }: {
   lat: number;
   lon: number;
@@ -224,6 +224,13 @@ export function MiniMapa({
    */
   conRedVial?: boolean;
 }) {
+  /**
+   * UN SOLO MAPA PARA UBICAR UN PUNTO (pedido del usuario, 14/10: "estandaricemos
+   * el tipo de mapa"). Si el pin se puede mover y nadie pidió otro fondo, es
+   * plano + red vial con el satélite a un botón — igual en la oficina, en el
+   * portal y en la Carga rápida.
+   */
+  const conRedVial = conRedVialPedido ?? (alMover != null && !conTerreno);
   const tema = usarTemaMapa();
   const mapRef = useRef<MapRef>(null);
   const [satelite, setSatelite] = useState(false);

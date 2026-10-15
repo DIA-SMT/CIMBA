@@ -5,7 +5,7 @@ import { Map as MapIcon, MapPin, Satellite } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Layer, Map as MapaGL, Marker, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
 import { bboxDeCapa, type CapaPuntos } from "@/lib/capa-archivo";
-import { CapaRedVial } from "./mini-mapa";
+import { CapaRedVial, ReferenciaTerreno } from "./mini-mapa";
 import { ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarTemaMapa } from "./tema-mapa";
 
 /** Mini-mapa para elegir una ubicación con un clic. Realza nombres y trazas de
@@ -17,17 +17,18 @@ export function MapaSelector({
   alElegir,
   alto = 320,
   capa = null,
-  arrancaEnSatelite = true,
-  conRedVial = false,
+  arrancaEnSatelite = false,
+  conRedVial = true,
 }: {
   punto: { lat: number; lon: number } | null;
   alElegir: (lat: number, lon: number) => void;
   alto?: number;
   capa?: CapaPuntos | null;
   /**
-   * Por defecto arranca en satelital (el reemplazo de QGIS). Para CORREGIR un
-   * punto ya ubicado conviene el plano: hay que leer el nombre de la calle
-   * —"sería mejor el que se ve solo la red vial", el usuario, 14/10—.
+   * Arranca en el plano con la red vial, como todo mapa donde se ubica un
+   * punto: hay que leer el nombre de la calle —"sería mejor el que se ve solo
+   * la red vial" y "estandaricemos el tipo de mapa", el usuario, 14/10—. El
+   * satélite (el reemplazo de QGIS) queda a un botón.
    */
   arrancaEnSatelite?: boolean;
   /** La red vial encima: qué calle es pavimento, cuál ripio, cuál cordón cuneta. */
@@ -118,114 +119,121 @@ export function MapaSelector({
   }, [capa]);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
-      <MapaGL
-        ref={mapRef}
-        // Con un punto ya ubicado (corregir un pedido), abre encima de él y a
-        // escala de cuadra: antes abría la ciudad entera y el pin había que
-        // buscarlo. Sin punto (un pedido nuevo), la ciudad.
-        initialViewState={
-          punto
-            ? { longitude: punto.lon, latitude: punto.lat, zoom: 17 }
-            : { longitude: -65.2226, latitude: -26.8241, zoom: 12.5 }
-        }
-        mapStyle={estiloMapa(tema)}
-        onClick={(e) => alElegir(e.lngLat.lat, e.lngLat.lng)}
-        attributionControl={{ compact: true }}
-      >
-        <NavigationControl position="bottom-right" showCompass={false} />
+    <div>
+      <div className="relative overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
+        <MapaGL
+          ref={mapRef}
+          // Con un punto ya ubicado (corregir un pedido), abre encima de él y a
+          // escala de cuadra: antes abría la ciudad entera y el pin había que
+          // buscarlo. Sin punto (un pedido nuevo), la ciudad.
+          initialViewState={
+            punto
+              ? { longitude: punto.lon, latitude: punto.lat, zoom: 17 }
+              : { longitude: -65.2226, latitude: -26.8241, zoom: 12.5 }
+          }
+          mapStyle={estiloMapa(tema)}
+          onClick={(e) => alElegir(e.lngLat.lat, e.lngLat.lng)}
+          attributionControl={{ compact: true }}
+        >
+          <NavigationControl position="bottom-right" showCompass={false} />
 
-        {satelite && (
-          <Source
-            id="selector-satelite"
-            type="raster"
-            tiles={[TILES_SATELITE]}
-            tileSize={256}
-            attribution={ATRIBUCION_SATELITE}
-          >
-            {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
-            <Layer id="selector-satelite-capa" type="raster" beforeId={hayAncla ? "roadname_minor" : undefined} />
-          </Source>
-        )}
+          {satelite && (
+            <Source
+              id="selector-satelite"
+              type="raster"
+              tiles={[TILES_SATELITE]}
+              tileSize={256}
+              attribution={ATRIBUCION_SATELITE}
+            >
+              {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
+              <Layer id="selector-satelite-capa" type="raster" beforeId={hayAncla ? "roadname_minor" : undefined} />
+            </Source>
+          )}
 
-        {/* Encima de todo, también del satélite: la red vial es lo que se mira. */}
-        {conRedVial && <CapaRedVial prefijo="selector" />}
+          {/* Encima de todo, también del satélite: la red vial es lo que se mira. */}
+          {conRedVial && <CapaRedVial prefijo="selector" />}
 
-        {capa && capa.features.length > 0 && (
-          <Source id="capa-archivo" type="geojson" data={capa}>
-            <Layer
-              id="capa-archivo-relleno"
-              type="fill"
-              filter={["==", ["geometry-type"], "Polygon"]}
-              paint={{ "fill-color": "#2EB1FF", "fill-opacity": 0.14 }}
-            />
-            <Layer
-              id="capa-archivo-linea"
-              type="line"
-              filter={["any", ["==", ["geometry-type"], "LineString"], ["==", ["geometry-type"], "Polygon"]]}
-              paint={{ "line-color": "#2EB1FF", "line-width": 2, "line-opacity": 0.85 }}
-            />
-            <Layer
-              id="capa-archivo-halo"
-              type="circle"
-              filter={["==", ["geometry-type"], "Point"]}
-              paint={{ "circle-radius": 9, "circle-color": "#2EB1FF", "circle-opacity": 0.18 }}
-            />
-            <Layer
-              id="capa-archivo-punto"
-              type="circle"
-              filter={["==", ["geometry-type"], "Point"]}
-              paint={{
-                "circle-radius": 4.5,
-                "circle-color": "#2EB1FF",
-                "circle-stroke-color": "#ffffff",
-                "circle-stroke-width": 1.2,
-              }}
-            />
-            <Layer
-              id="capa-archivo-nombre"
-              type="symbol"
-              minzoom={14}
-              layout={{
-                "text-field": ["coalesce", ["get", "nombre"], ""],
-                "text-size": 10,
-                "text-offset": [0, 1.1],
-                "text-anchor": "top",
-              }}
-              paint={{
-                "text-color": tema === "oscuro" ? "#c8d4e4" : "#41505f",
-                "text-halo-color": tema === "oscuro" ? "#070a10" : "#ffffff",
-                "text-halo-width": 1.4,
-              }}
-            />
-          </Source>
-        )}
+          {capa && capa.features.length > 0 && (
+            <Source id="capa-archivo" type="geojson" data={capa}>
+              <Layer
+                id="capa-archivo-relleno"
+                type="fill"
+                filter={["==", ["geometry-type"], "Polygon"]}
+                paint={{ "fill-color": "#2EB1FF", "fill-opacity": 0.14 }}
+              />
+              <Layer
+                id="capa-archivo-linea"
+                type="line"
+                filter={["any", ["==", ["geometry-type"], "LineString"], ["==", ["geometry-type"], "Polygon"]]}
+                paint={{ "line-color": "#2EB1FF", "line-width": 2, "line-opacity": 0.85 }}
+              />
+              <Layer
+                id="capa-archivo-halo"
+                type="circle"
+                filter={["==", ["geometry-type"], "Point"]}
+                paint={{ "circle-radius": 9, "circle-color": "#2EB1FF", "circle-opacity": 0.18 }}
+              />
+              <Layer
+                id="capa-archivo-punto"
+                type="circle"
+                filter={["==", ["geometry-type"], "Point"]}
+                paint={{
+                  "circle-radius": 4.5,
+                  "circle-color": "#2EB1FF",
+                  "circle-stroke-color": "#ffffff",
+                  "circle-stroke-width": 1.2,
+                }}
+              />
+              <Layer
+                id="capa-archivo-nombre"
+                type="symbol"
+                minzoom={14}
+                layout={{
+                  "text-field": ["coalesce", ["get", "nombre"], ""],
+                  "text-size": 10,
+                  "text-offset": [0, 1.1],
+                  "text-anchor": "top",
+                }}
+                paint={{
+                  "text-color": tema === "oscuro" ? "#c8d4e4" : "#41505f",
+                  "text-halo-color": tema === "oscuro" ? "#070a10" : "#ffffff",
+                  "text-halo-width": 1.4,
+                }}
+              />
+            </Source>
+          )}
 
-        {punto && (
-          <Marker
-            longitude={punto.lon}
-            latitude={punto.lat}
-            anchor="bottom"
-            draggable
-            onDragEnd={(e) => alElegir(e.lngLat.lat, e.lngLat.lng)}
-          >
-            {/* stopPropagation: un clic sobre el pin no debe llegar al mapa
-                (lo movería ~30 px al norte, a la posición del cursor). */}
-            <span onClick={(ev) => ev.stopPropagation()}>
-              <MapPin size={30} className="cursor-grab text-amarillo drop-shadow active:cursor-grabbing" fill="#0066FF" />
-            </span>
-          </Marker>
-        )}
-      </MapaGL>
+          {punto && (
+            <Marker
+              longitude={punto.lon}
+              latitude={punto.lat}
+              anchor="bottom"
+              draggable
+              onDragEnd={(e) => alElegir(e.lngLat.lat, e.lngLat.lng)}
+            >
+              {/* stopPropagation: un clic sobre el pin no debe llegar al mapa
+                  (lo movería ~30 px al norte, a la posición del cursor). */}
+              <span onClick={(ev) => ev.stopPropagation()}>
+                <MapPin size={30} className="cursor-grab text-amarillo drop-shadow active:cursor-grabbing" fill="#0066FF" />
+              </span>
+            </Marker>
+          )}
+        </MapaGL>
 
-      <button
-        onClick={() => setSatelite((s) => !s)}
-        title={satelite ? "Volver al plano de calles" : "Vista satelital: ubicá el punto mirando la imagen real"}
-        className={`panel-vidrio absolute top-2 right-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition ${satelite ? "text-amarillo ring-1 ring-amarillo/50" : "text-texto-2 hover:text-texto"}`}
-      >
-        {satelite ? <MapIcon size={12} /> : <Satellite size={12} />}
-        {satelite ? "Plano" : "Satélite"}
-      </button>
+        <button
+          onClick={() => setSatelite((s) => !s)}
+          title={satelite ? "Volver al plano de calles" : "Vista satelital: ubicá el punto mirando la imagen real"}
+          className={`panel-vidrio absolute top-2 right-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition ${satelite ? "text-amarillo ring-1 ring-amarillo/50" : "text-texto-2 hover:text-texto"}`}
+        >
+          {satelite ? <MapIcon size={12} /> : <Satellite size={12} />}
+          {satelite ? "Plano" : "Satélite"}
+        </button>
+      </div>
+      {conRedVial && (
+        <div className="mt-1.5">
+          <ReferenciaTerreno />
+        </div>
+      )}
     </div>
   );
 }
