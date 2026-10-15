@@ -3,6 +3,7 @@ import type { Geocoder, OpcionesGeocod, PrecisionGeocod, Punto, ResultadoGeocod 
 import { CONFIANZA_POR_PRECISION } from "@cimba/domain";
 import { crearGeocoderNominatim } from "./nominatim";
 import { ubicarCruceOsm } from "./cruce-osm";
+import { limpiarDireccion } from "./direccion";
 
 /**
  * EL GEOCODIFICADOR DE CIMBA: primero lo que el municipio sabe, después OSM.
@@ -102,7 +103,10 @@ function comoResultado(f: FilaCallejero): ResultadoGeocod {
 export function crearGeocoder(): Geocoder {
   const osm = crearGeocoderNominatim();
   return {
-    async geocodificar(direccion: string, opciones?: OpcionesGeocod): Promise<ResultadoGeocod | null> {
+    async geocodificar(escrita: string, opciones?: OpcionesGeocod): Promise<ResultadoGeocod | null> {
+      // Sin la ciudad al final ni el "al" de la altura (direccion.ts): con
+      // ellos el cruce y la altura no se reconocían.
+      const direccion = limpiarDireccion(escrita);
       let municipal: FilaCallejero | null = null;
       try {
         municipal = await consultarCallejero(direccion);
