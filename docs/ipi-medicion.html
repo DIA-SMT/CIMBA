@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="es-AR"><head><meta charset="utf-8">
+<title>IPI: cómo se mide el Estado del corredor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  :root { --azul:#0066FF; --celeste:#2EB1FF; --amarillo:#F4DC00; --tinta:#333333; --tinta-2:#5b6370; --borde:#e3e6eb; --tenue:#f4f7fb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Poppins, "Segoe UI", Arial, sans-serif; color: var(--tinta); font-size: 9.6pt; line-height: 1.5; background:#fff; }
+  .cabecera { display:flex; align-items:center; gap:12px; border-bottom: 3px solid var(--azul); padding-bottom: 10px; margin-bottom: 16px; }
+  .cabecera img { width: 38px; height: 38px; }
+  .cabecera .marca { font-weight:700; font-size: 11pt; letter-spacing: .2px; }
+  .cabecera .marca span { display:block; font-weight:400; font-size: 8pt; color: var(--tinta-2); }
+  .cabecera .fecha { margin-left:auto; font-size: 8.5pt; color: var(--tinta-2); text-align:right; }
+  h1 { font-size: 20pt; line-height:1.15; margin: 0 0 4px; font-weight:700; }
+  .sub { font-size: 11pt; color: var(--tinta-2); margin: 0 0 14px; }
+  h2 { font-size: 12.5pt; margin: 20px 0 6px; font-weight:700; color: var(--azul); break-after: avoid; }
+  h3 { font-size: 10.5pt; margin: 12px 0 4px; font-weight:600; break-after: avoid; }
+  p { margin: 0 0 7px; }
+  ul { margin: 0 0 8px; padding-left: 18px; } li { margin-bottom: 3px; }
+  .resumen { background: var(--tenue); border-left: 4px solid var(--azul); padding: 10px 14px; border-radius: 0 8px 8px 0; margin-bottom: 6px; }
+  .resumen p:last-child { margin-bottom:0; }
+  .cifras { display:flex; gap:10px; margin: 10px 0 4px; }
+  .cifra { flex:1; border:1px solid var(--borde); border-radius:10px; padding:8px 10px; }
+  .cifra b { display:block; font-size: 17pt; line-height:1.1; color: var(--tinta); }
+  .cifra span { font-size: 8pt; color: var(--tinta-2); }
+  table { width:100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 8.6pt; break-inside: auto; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th { text-align:left; font-weight:600; font-size: 7.6pt; text-transform: uppercase; letter-spacing:.3px; color: var(--tinta-2); border-bottom: 1.5px solid var(--tinta); padding: 5px 6px; vertical-align: bottom; }
+  td { border-bottom: 1px solid var(--borde); padding: 5px 6px; vertical-align: top; }
+  .num { text-align:right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mut { color: var(--tinta-2); font-size: 8pt; }
+  .comp { break-inside: avoid; }
+  .comp td:first-child { font-weight:600; width: 22%; }
+  .comp td:nth-child(2) { color: var(--tinta-2); width: 37%; }
+  .gr { display:inline-flex; align-items:center; gap:4px; font-size: 8pt; }
+  .gr i { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .formula { font-family: "Poppins", sans-serif; background:#fff; border:1px solid var(--borde); border-radius:8px; padding: 8px 12px; margin: 6px 0 10px; font-size: 9.6pt; }
+  .formula b { color: var(--azul); }
+  .grafico { border:1px solid var(--borde); border-radius:10px; padding: 10px 12px 6px; margin: 8px 0 6px; break-inside: avoid; }
+  .grafico .tit { font-weight:600; font-size: 9.5pt; margin-bottom: 2px; }
+  .leyenda { display:flex; gap:16px; font-size: 8.2pt; color: var(--tinta-2); margin-bottom: 2px; }
+  .leyenda i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  svg .ax { font-size: 9px; fill: #6b7280; font-family: Poppins, sans-serif; }
+  svg .val { font-size: 10px; fill: #333; font-weight: 600; font-family: Poppins, sans-serif; }
+  svg .cat { font-size: 10.5px; fill: #333; font-family: Poppins, sans-serif; }
+  .nota { font-size: 8.2pt; color: var(--tinta-2); }
+  .bloque { break-inside: avoid; }
+  .salto { break-before: page; }
+  .pie { margin-top: 18px; padding-top: 8px; border-top: 1px solid var(--borde); font-size: 7.8pt; color: var(--tinta-2); }
+</style></head>
+<body>
+
+<div class="cabecera">
+  <img src="../apps/web/public/marca/isotipo-smt.png" alt="">
+  <div class="marca">CIMBA<span>Centro Inteligente de Monitoreo de Baches y Asfalto · Municipalidad de San Miguel de Tucumán</span></div>
+  <div class="fecha">8 de octubre de 2026<br>Datos al día de la fecha</div>
+</div>
+
+<h1>Cómo mide CIMBA el IPI</h1>
+<p class="sub">La variable «Estado del corredor»: la regla anterior y la regla actual</p>
+
+<div class="resumen">
+  <p><b>Qué cambió.</b> Hasta hoy el Estado de cada corredor sumaba los baches reparados en los últimos 24 meses
+  y los pedidos pendientes. Eso hacía que <b>trabajar un corredor no lo mejorara nunca</b>: cada pedido reparado
+  salía de «pendiente» y entraba a «reparado», y con el recuento previo la cuenta subía.</p>
+  <p><b>Desde hoy el Estado mide lo que sigue roto.</b> Un bache arreglado que aguanta deja de contar, una obra borra
+  lo que había antes en su tramo, y lo arreglado se muestra aparte como trabajo hecho.</p>
+</div>
+
+<div class="cifras">
+  <div class="cifra"><b>115</b><span>de 149 corredores mejoran su Estado</span></div>
+  <div class="cifra"><b>0</b><span>empeoran</span></div>
+  <div class="cifra"><b>23 → 2</b><span>corredores en estado crítico</span></div>
+  <div class="cifra"><b>1.476</b><span>baches arreglados sobre corredores en 24 meses, ahora visibles</span></div>
+</div>
+
+<h2>1. El índice</h2>
+<p>El IPI (Índice de Prioridad de Intervención) es la metodología oficial del «Plan de priorización de corredores viales».
+CIMBA no la modifica: reproduce la fórmula aprobada para que el ranking que sale del sistema sea el mismo con el que se arma el Plan de Obras.</p>
+<div class="formula"><b>IPI</b> = Σ (variable normalizada de 0 a 100 × peso según el nivel jerárquico del corredor)</div>
+<p>El ranking se ordena <b>dentro de cada sector operativo y dentro de cada nivel</b>: nunca un sector contra otro, porque cada uno ya tiene su cupo de obra licitado.
+Una avenida que cruza tres sectores entra tres veces, una por sector. Hoy hay <b>149 corredores</b> cargados: 77 de nivel 1 (avenidas primarias) y 72 de nivel 2 (secundarias); las calles barriales (nivel 3) todavía no están cargadas.</p>
+
+<table>
+  <thead><tr><th>Variable</th><th>Cómo puntúa (0 a 100)</th><th>De dónde sale en CIMBA</th><th class="num">Nivel 1</th><th class="num">Nivel 2</th><th class="num">Nivel 3</th></tr></thead>
+  <tbody>
+    <tr><td><b>Interconexión de barrios</b></td><td>1 barrio 20 · 2 barrios 60 · 3 o más 100; +10 si atraviesa el sector entero</td><td>Barrios que cruza el eje</td><td class="num">35%</td><td class="num">30%</td><td class="num">10%</td></tr>
+    <tr><td><b>Accesibilidad del sector</b></td><td>Acceso principal 100 · secundario 60 · no cumple 20</td><td>Jerarquía del eje y si toca el borde del sector</td><td class="num">25%</td><td class="num">10%</td><td class="num">5%</td></tr>
+    <tr><td><b>Estado del corredor</b></td><td>Bueno 0 · regular 25 · malo 75 · crítico 100</td><td><b>La operación diaria (este documento)</b></td><td class="num">20%</td><td class="num">25%</td><td class="num">40%</td></tr>
+    <tr><td><b>Transporte público</b></td><td>Pasa 100 · no pasa 0</td><td>Recorridos de colectivos a 25 m</td><td class="num">10%</td><td class="num">10%</td><td class="num">10%</td></tr>
+    <tr><td><b>Equipamientos urbanos</b></td><td>Ninguno 0 · 1 o 2 50 · 3 o más 100 (a 150 m)</td><td><b>Falta la capa</b>: no puntúa y su peso se reparte entre las demás</td><td class="num">5%</td><td class="num">15%</td><td class="num">15%</td></tr>
+    <tr><td><b>Factibilidad de ejecución</b></td><td>Sin interferencias 100 · menores 50 · no factible: sale del ranking</td><td>Arranca en «sin interferencias» para todos; todavía no hay pantalla para cargarla</td><td class="num">5%</td><td class="num">10%</td><td class="num">20%</td></tr>
+  </tbody>
+</table>
+<p class="nota">«Compromisos asumidos» no suma puntos: es una marca que define acción, como pide la metodología.
+<b>De las seis variables, solo cambió la forma de medir el Estado.</b> Las demás siguen igual.</p>
+
+<h2>2. Qué pide la metodología para el Estado</h2>
+<p>El apartado 1.11 pide reemplazar la apreciación cualitativa del estado (el relevamiento visual) por una medición:
+la densidad de baches por kilómetro de corredor a 12 y 24 meses. Es lo que CIMBA puede calcular con la operación diaria y ninguna planilla puede calcular sola.
+CIMBA cuenta todo lo que cae a menos de 25 m del eje del corredor, lo divide por su largo y lo pasa a los cuatro grados oficiales con estos cortes:</p>
+<table style="width:auto">
+  <thead><tr><th>Grado</th><th class="num">Por km</th><th class="num">Valor</th><th>Equivale a</th></tr></thead>
+  <tbody>
+    <tr><td><span class="gr"><i style="background:#15803d"></i>bueno</span></td><td class="num">menos de 3</td><td class="num">0</td><td>menos de uno cada 333 m</td></tr>
+    <tr><td><span class="gr"><i style="background:#c08a00"></i>regular</span></td><td class="num">3 a 8</td><td class="num">25</td><td>hasta uno cada 125 m</td></tr>
+    <tr><td><span class="gr"><i style="background:#e8590c"></i>malo</span></td><td class="num">8 a 18</td><td class="num">75</td><td>alrededor de uno por cuadra</td></tr>
+    <tr><td><span class="gr"><i style="background:#d42d20"></i>crítico</span></td><td class="num">18 o más</td><td class="num">100</td><td>uno cada 55 m o menos</td></tr>
+  </tbody>
+</table>
+<p class="nota">Los cortes no cambiaron. Son <b>absolutos</b> a propósito: si se midieran contra el promedio de la ciudad,
+cuando se bachea toda la ciudad la mitad de los corredores seguiría saliendo «mala» contra la otra mitad y la mejora no se vería.</p>
+
+<h2>3. La regla anterior y la actual</h2>
+<div class="formula" style="margin-bottom:4px">
+  <span class="mut">Antes:</span> Estado = (baches reparados en 24 meses + pedidos pendientes) ÷ km<br>
+  <span class="mut">Ahora:</span> Estado = (<b>problemas abiertos</b> + <b>pedidos sin atender</b> + <b>reaperturas en 12 meses</b>) ÷ km
+</div>
+<table class="comp">
+  <thead><tr><th>Qué pasa con…</th><th>Regla anterior</th><th>Regla actual</th></tr></thead>
+  <tbody>
+    <tr><td>Qué mide</td><td>Todo lo que pasó en el corredor: lo pendiente y lo trabajado</td><td>Lo que sigue roto hoy, más lo que se volvió a romper</td></tr>
+    <tr><td>Un bache reparado</td><td>Suma durante 24 meses</td><td>No suma si aguanta. Suma como <b>reapertura</b> si se repara otro a menos de 10 m en los 12 meses siguientes</td></tr>
+    <tr><td>Un pedido pendiente</td><td>Suma cualquier pedido recibido, en validación o vinculado, de cualquier tipo (también los de la SAT)</td><td>Suma solo si es de bacheo y no tiene arreglo posterior a menos de 40 m: el mismo criterio que la Brecha. Si al lado hay un problema abierto, cuenta el problema y no el pedido</td></tr>
+    <tr><td>Un pedido vinculado a un problema ya reparado</td><td>Contaba dos veces: como reparado y como pendiente</td><td>No cuenta</td></tr>
+    <tr><td>Tres vecinos reclamando el mismo bache</td><td>Contaba 3</td><td>Cuenta 1: la unidad es el bache, no el ticket</td></tr>
+    <tr><td>Una obra de paños, carpeta o más de 50 m²</td><td>No sumaba, pero tampoco borraba los baches de antes</td><td>Borra lo que había antes a menos de 40 m: el pavimento es nuevo</td></tr>
+    <tr><td>Ventana de tiempo</td><td>24 meses. Como el registro empieza el 15/3/2026, en la práctica nada salía nunca de la cuenta</td><td>Lo abierto, a hoy. Reaperturas, últimos 12 meses</td></tr>
+    <tr><td>Lo que se ve en pantalla</td><td>«Patol./km»</td><td>«Roto/km», con el desglose al pasar el mouse, y la columna «Arreglados», que muestra el trabajo hecho sin que pese en contra</td></tr>
+  </tbody>
+</table>
+
+<h3>Por qué la regla anterior no servía</h3>
+<ul>
+  <li><b>Castigaba al corredor que se trabaja.</b> Mate de Luna (Sector 7, 3,9 km) tuvo 79 baches arreglados y figuraba <b>crítico</b>, con 25,9 por km. Lo que sigue roto ahí son 4 pedidos y 25 reaperturas: 7,4 por km, <b>regular</b>.</li>
+  <li><b>Contaba dos veces.</b> 213 pedidos con el trabajo ya hecho seguían vinculados sin cerrar y sumaban como reparados y como pendientes.</li>
+  <li><b>La obra no borraba lo anterior.</b> Combate de San Lorenzo tuvo obra el 30/9 y seguía cargando 35 baches de antes.</li>
+  <li><b>Mezclaba lo que no es calzada.</b> Pedidos de agua y tapas, que resuelve la SAT, sumaban al estado del pavimento.</li>
+</ul>
+<p class="nota">El desgaste de fondo no se pierde. Un corredor con muchos parches sigue apareciendo en <b>Cuadras que ya no se bachean</b> (Órdenes → Gestión):
+más del 30% de la cuadra bacheada en 24 meses, o dos reaperturas en 12 meses, lo pasa a obra Tipo C; tres cuadras seguidas así, a Tipo A.
+El Estado del IPI mira lo que hay que arreglar; esa pantalla mira cuándo dejar de bachear y hacer obra.</p>
+
+<h2>4. Qué cambió en los números</h2>
+<p>Las dos reglas se corrieron sobre los mismos datos del 8/10/2026: los 149 corredores, con la operación cargada desde el 15/3/2026.</p>
+<div class="grafico">
+  <div class="tit">Corredores por grado de Estado</div>
+  <div class="leyenda"><span><i style="background:#2EB1FF"></i>Regla anterior</span><span><i style="background:#0066FF"></i>Regla actual</span></div>
+  <svg viewBox="0 0 640 230" width="100%" role="img" aria-label="Corredores por grado de Estado, regla anterior y regla actual"><line x1="34" x2="632" y1="196" y2="196" stroke="#9aa1ab" stroke-width="1"/><text x="28" y="199.5" text-anchor="end" class="ax">0</text><line x1="34" x2="632" y1="151.5" y2="151.5" stroke="#e6e8ec" stroke-width="1"/><text x="28" y="155" text-anchor="end" class="ax">25</text><line x1="34" x2="632" y1="107" y2="107" stroke="#e6e8ec" stroke-width="1"/><text x="28" y="110.5" text-anchor="end" class="ax">50</text><line x1="34" x2="632" y1="62.5" y2="62.5" stroke="#e6e8ec" stroke-width="1"/><text x="28" y="66" text-anchor="end" class="ax">75</text><line x1="34" x2="632" y1="18" y2="18" stroke="#e6e8ec" stroke-width="1"/><text x="28" y="21.5" text-anchor="end" class="ax">100</text><path d="M73.75,196 L73.75,155.5 Q73.75,151.5 77.75,151.5 L103.75,151.5 Q107.75,151.5 107.75,155.5 L107.75,196 Z" fill="#2EB1FF"/><text x="90.75" y="146.5" text-anchor="middle" class="val">25</text><path d="M109.75,196 L109.75,32.68000000000001 Q109.75,28.680000000000007 113.75,28.680000000000007 L139.75,28.680000000000007 Q143.75,28.680000000000007 143.75,32.68000000000001 L143.75,196 Z" fill="#0066FF"/><text x="126.75" y="23.680000000000007" text-anchor="middle" class="val">94</text><text x="108.75" y="214" text-anchor="middle" class="cat">bueno</text><path d="M223.25,196 L223.25,121.67999999999999 Q223.25,117.67999999999999 227.25,117.67999999999999 L253.25,117.67999999999999 Q257.25,117.67999999999999 257.25,121.67999999999999 L257.25,196 Z" fill="#2EB1FF"/><text x="240.25" y="112.67999999999999" text-anchor="middle" class="val">44</text><path d="M259.25,196 L259.25,114.56 Q259.25,110.56 263.25,110.56 L289.25,110.56 Q293.25,110.56 293.25,114.56 L293.25,196 Z" fill="#0066FF"/><text x="276.25" y="105.56" text-anchor="middle" class="val">48</text><text x="258.25" y="214" text-anchor="middle" class="cat">regular</text><path d="M372.75,196 L372.75,98.54 Q372.75,94.54 376.75,94.54 L402.75,94.54 Q406.75,94.54 406.75,98.54 L406.75,196 Z" fill="#2EB1FF"/><text x="389.75" y="89.54" text-anchor="middle" class="val">57</text><path d="M408.75,196 L408.75,191.1 Q408.75,187.1 412.75,187.1 L438.75,187.1 Q442.75,187.1 442.75,191.1 L442.75,196 Z" fill="#0066FF"/><text x="425.75" y="182.1" text-anchor="middle" class="val">5</text><text x="407.75" y="214" text-anchor="middle" class="cat">malo</text><path d="M522.25,196 L522.25,159.06 Q522.25,155.06 526.25,155.06 L552.25,155.06 Q556.25,155.06 556.25,159.06 L556.25,196 Z" fill="#2EB1FF"/><text x="539.25" y="150.06" text-anchor="middle" class="val">23</text><path d="M558.25,196 L558.25,194.22 Q558.25,192.44 560.03,192.44 L590.47,192.44 Q592.25,192.44 592.25,194.22 L592.25,196 Z" fill="#0066FF"/><text x="575.25" y="187.44" text-anchor="middle" class="val">2</text><text x="557.25" y="214" text-anchor="middle" class="cat">crítico</text></svg>
+</div>
+<table style="width:auto">
+  <thead><tr><th></th><th class="num">bueno</th><th class="num">regular</th><th class="num">malo</th><th class="num">crítico</th><th class="num">Total</th></tr></thead>
+  <tbody>
+    <tr><td>Regla anterior</td><td class="num">25</td><td class="num">44</td><td class="num">57</td><td class="num">23</td><td class="num">149</td></tr>
+    <tr><td><b>Regla actual</b></td><td class="num"><b>94</b></td><td class="num"><b>48</b></td><td class="num"><b>5</b></td><td class="num"><b>2</b></td><td class="num">149</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><b>115</b> corredores mejoran de grado, <b>0</b> empeoran y 34 quedan igual.</li>
+  <li>Antes se contaban <b>2.884</b> patologías (1.476 reparadas + 1.408 pedidos pendientes). Ahora siguen rotas <b>735</b>: 70 problemas abiertos, 403 pedidos sin atender y 262 reaperturas. Los 1.476 baches arreglados se muestran aparte.</li>
+  <li>El IPI promedio baja de 73,6 a 63,6, porque el Estado pesa menos donde ya se trabajó.
+  80 corredores cambian de puesto dentro de su sector y nivel, y el primero del ranking cambia en 5 de los 22 grupos.</li>
+</ul>
+
+<h3>Los corredores más trabajados</h3>
+<p class="nota">Cuanto más se trabajó un corredor, más castigado estaba con la regla anterior.</p>
+<table><thead><tr><th>Corredor</th><th class="num">Arreglados<br>24 meses</th><th class="num">Antes<br>por km</th><th class="num">Ahora<br>roto/km</th><th class="num">Problemas · pedidos<br>· reaperturas</th><th class="num">IPI y puesto<br>en su sector y nivel</th></tr></thead><tbody><tr>
+  <td><b>Fernando Mate de Luna</b><br><span class="mut">Sector 7 · nivel 1 · 3,9 km</span></td>
+  <td class="num">79</td>
+  <td class="num">25,9<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">7,4<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">0 · 4 · 25</td>
+  <td class="num">100,0 → <b>84,2</b><br><span class="mut">puesto 1 → 1</span></td>
+</tr><tr>
+  <td><b>América</b><br><span class="mut">Sector 6 · nivel 1 · 2,0 km</span></td>
+  <td class="num">55</td>
+  <td class="num">38,2<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">6,4<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">0 · 1 · 12</td>
+  <td class="num">79,0 → <b>63,2</b><br><span class="mut">puesto 6 → 6</span></td>
+</tr><tr>
+  <td><b>Provincia de Mendoza</b><br><span class="mut">Sector 6 · nivel 2 · 4,8 km</span></td>
+  <td class="num">53</td>
+  <td class="num">16,7<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">2,3<br><span class="gr"><i style="background:#15803d"></i>bueno</span></td>
+  <td class="num mut">1 · 5 · 5</td>
+  <td class="num">83,2 → <b>61,2</b><br><span class="mut">puesto 2 → 4</span></td>
+</tr><tr>
+  <td><b>Gregorio Aráoz de Lamadrid</b><br><span class="mut">Sector 7 · nivel 2 · 3,9 km</span></td>
+  <td class="num">49</td>
+  <td class="num">16,0<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">4,6<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">0 · 1 · 17</td>
+  <td class="num">87,9 → <b>73,2</b><br><span class="mut">puesto 2 → 1</span></td>
+</tr><tr>
+  <td><b>Combate de San Lorenzo</b><br><span class="mut">Sector 7 · nivel 2 · 3,6 km</span></td>
+  <td class="num">44</td>
+  <td class="num">14,2<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">3,6<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">0 · 2 · 11</td>
+  <td class="num">83,2 → <b>68,5</b><br><span class="mut">puesto 3 → 2</span></td>
+</tr><tr>
+  <td><b>Fernando Mate de Luna</b><br><span class="mut">Sector 6 · nivel 1 · 5,2 km</span></td>
+  <td class="num">43</td>
+  <td class="num">12,3<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">3,1<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">0 · 5 · 11</td>
+  <td class="num">94,7 → <b>84,2</b><br><span class="mut">puesto 2 → 1</span></td>
+</tr><tr>
+  <td><b>General José de San Martín</b><br><span class="mut">Sector 6 · nivel 2 · 4,8 km</span></td>
+  <td class="num">43</td>
+  <td class="num">16,6<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">3,2<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">2 · 7 · 6</td>
+  <td class="num">83,2 → <b>68,5</b><br><span class="mut">puesto 2 → 1</span></td>
+</tr><tr>
+  <td><b>Benjamín Aráoz</b><br><span class="mut">Sector 8 · nivel 1 · 4,2 km</span></td>
+  <td class="num">39</td>
+  <td class="num">12,2<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">3,6<br><span class="gr"><i style="background:#c08a00"></i>regular</span></td>
+  <td class="num mut">1 · 1 · 13</td>
+  <td class="num">94,7 → <b>84,2</b><br><span class="mut">puesto 2 → 1</span></td>
+</tr></tbody></table>
+
+<h3>Los que siguen malos o críticos</h3>
+<p class="nota">Son los que tienen cosas abiertas de verdad. Los dos de Leguizamo son tramos de 100 y 200 m:
+con 4 pedidos ya superan los 18 por km (ver límites).</p>
+<table><thead><tr><th>Corredor</th><th class="num">Arreglados<br>24 meses</th><th class="num">Antes<br>por km</th><th class="num">Ahora<br>roto/km</th><th class="num">Problemas · pedidos<br>· reaperturas</th><th class="num">IPI y puesto<br>en su sector y nivel</th></tr></thead><tbody><tr>
+  <td><b>Leguizamo Irineo (B)</b><br><span class="mut">Sector 8 · nivel 1 · 0,1 km</span></td>
+  <td class="num">0</td>
+  <td class="num">27,6<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">27,6<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num mut">0 · 4 · 0</td>
+  <td class="num">39,0 → <b>39,0</b><br><span class="mut">puesto 9 → 9</span></td>
+</tr><tr>
+  <td><b>Irineo (B) Leguizamo</b><br><span class="mut">Sector 8 · nivel 1 · 0,2 km</span></td>
+  <td class="num">0</td>
+  <td class="num">21,1<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">21,1<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num mut">0 · 4 · 0</td>
+  <td class="num">70,5 → <b>70,5</b><br><span class="mut">puesto 6 → 6</span></td>
+</tr><tr>
+  <td><b>República de El Líbano</b><br><span class="mut">Sector 3 · nivel 1 · 0,7 km</span></td>
+  <td class="num">3</td>
+  <td class="num">16,2<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num">14,8<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num mut">3 · 7 · 1</td>
+  <td class="num">94,7 → <b>94,7</b><br><span class="mut">puesto 1 → 1</span></td>
+</tr><tr>
+  <td><b>Don Orione (ex Delfín Gallo)</b><br><span class="mut">Sector 3 · nivel 2 · 0,9 km</span></td>
+  <td class="num">17</td>
+  <td class="num">28,6<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">13,7<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num mut">0 · 1 · 11</td>
+  <td class="num">90,6 → <b>83,2</b><br><span class="mut">puesto 2 → 2</span></td>
+</tr><tr>
+  <td><b>República de El Líbano</b><br><span class="mut">Sector 4 · nivel 1 · 2,4 km</span></td>
+  <td class="num">33</td>
+  <td class="num">28,6<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">10,6<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num mut">8 · 10 · 8</td>
+  <td class="num">100,0 → <b>94,7</b><br><span class="mut">puesto 1 → 1</span></td>
+</tr><tr>
+  <td><b>Lisandro de la Torre</b><br><span class="mut">Sector 4 · nivel 1 · 0,1 km</span></td>
+  <td class="num">2</td>
+  <td class="num">52,8<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">10,6<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num mut">0 · 1 · 0</td>
+  <td class="num">49,5 → <b>44,2</b><br><span class="mut">puesto 7 → 7</span></td>
+</tr><tr>
+  <td><b>Juan Ramírez de Velazco</b><br><span class="mut">Sector 3 · nivel 2 · 1,2 km</span></td>
+  <td class="num">15</td>
+  <td class="num">22,6<br><span class="gr"><i style="background:#d42d20"></i>crítico</span></td>
+  <td class="num">10,1<br><span class="gr"><i style="background:#e8590c"></i>malo</span></td>
+  <td class="num mut">0 · 6 · 6</td>
+  <td class="num">95,3 → <b>87,9</b><br><span class="mut">puesto 1 → 1</span></td>
+</tr></tbody></table>
+
+<h2>5. Límites que conviene conocer</h2>
+<ul>
+  <li><b>Reapertura</b> es un bacheo a menos de 10 m de otro anterior, el mismo criterio que «Cuadras que ya no se bachean». Con el recuento previo, dos baches distintos a 8 m de distancia reparados en días distintos cuentan como reapertura.</li>
+  <li><b>Los tramos cortos amplifican.</b> En un corredor de 100 m, un solo pedido son 10 por km. El cálculo usa un largo mínimo de 50 m.</li>
+  <li><b>Pedidos sin fecha confiable</b> (los que entraron por planilla) se toman como atendidos si hay un arreglo cerca, igual que en la Brecha.</li>
+  <li><b>Los cortes son el primer calibrado.</b> Se revisan con la DOV cuando haya un año completo de operación cargada.</li>
+  <li><b>Falta la capa de equipamientos urbanos</b> (escuelas, salud, edificios públicos): es la única variable que todavía no puntúa.</li>
+  <li><b>La operación cargada empieza el 15/3/2026.</b> Lo anterior no está en CIMBA.</li>
+</ul>
+
+<h2>6. Cómo se actualiza</h2>
+<p>En <b>Órdenes → Gestión → Prioridad de corredores (IPI)</b>, el botón <b>«Recalcular el índice»</b> vuelve a medir los 149 corredores en unos segundos.
+Lo pueden usar planificación y administración.
+Si el puntaje guardado es de la regla anterior, la pantalla lo avisa con un cartel amarillo.</p>
+
+<div class="pie">CIMBA · Documento generado con los datos de producción del 8/10/2026. Las dos reglas se calcularon sobre los mismos datos, sin modificar la base.</div>
+</body></html>
