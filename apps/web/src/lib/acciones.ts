@@ -515,7 +515,10 @@ export async function crearDemandaCiudadano(formData: FormData) {
       lat: formData.get("lat"),
       lon: formData.get("lon"),
       tipo: formData.get("tipo"),
-      descripcion: formData.get("descripcion"),
+      /* El formulario no manda el campo si quedó vacío, y formData.get da
+         null: con .optional() solo pasa undefined. Sin este || la Carga rápida
+         sin descripción se caía entera (producción, 14/10 21:44). */
+      descripcion: formData.get("descripcion") || undefined,
       direccion: formData.get("direccion"),
       area: formData.get("area") || undefined,
       desdeGps: formData.get("desdeGps") || undefined,
