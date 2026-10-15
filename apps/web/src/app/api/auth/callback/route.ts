@@ -1,3 +1,4 @@
+import { origenPublico } from "@/lib/origen";
 import { NextResponse, type NextRequest } from "next/server";
 import { escribirCookieSesion, firmarSesion } from "@/lib/auth";
 import { upsertPerfil } from "@/lib/perfiles";
@@ -17,9 +18,9 @@ import {
  */
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("auth");
-  const destino = new URL("/", req.nextUrl.origin);
+  const destino = new URL("/", origenPublico(req));
 
-  if (!token) return NextResponse.redirect(new URL("/acceso", req.nextUrl.origin));
+  if (!token) return NextResponse.redirect(new URL("/acceso", origenPublico(req)));
 
   /**
    * Si el SSO no está configurado, esto tiene que terminar en la pantalla de
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     sinConfigurar = true;
   }
   if (!usuario) {
-    const acceso = new URL("/acceso", req.nextUrl.origin);
+    const acceso = new URL("/acceso", origenPublico(req));
     acceso.searchParams.set("error", sinConfigurar ? "sso_no_configurado" : "token_invalido");
     return NextResponse.redirect(acceso);
   }
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
   });
 
   if (!perfil.activo) {
-    const acceso = new URL("/acceso", req.nextUrl.origin);
+    const acceso = new URL("/acceso", origenPublico(req));
     acceso.searchParams.set("error", "perfil_inactivo");
     return NextResponse.redirect(acceso);
   }
