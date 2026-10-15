@@ -14,6 +14,8 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { COLOR_ESTADO_ITEM, fondoTenue } from "@/app/(app)/ordenes/etiquetas";
 import { resolverVistaPortal } from "../../vista";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { FotosPropuesto } from "./fotos-propuesto";
+import { fotoPropuestaAntes, fotoPropuestaDespues } from "@/lib/propuesto";
 import { CorregirMedidas } from "@/app/(app)/ordenes/[id]/corregir-medidas";
 import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
@@ -333,6 +335,20 @@ export default async function PaginaOrdenEmpresa({
                   {ETIQUETA_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo} · Bacheo lo está revisando: si
                   lo valida, aparece en los pendientes.
                 </p>
+                {/* Las fotos que mandó la cuadrilla: para verlas —y guiarse al
+                    corregir el pin— y para cambiar una que subió mal, mientras
+                    espera validación (pedido de INGECO, 15/10). */}
+                <FotosPropuesto
+                  itemId={item.id}
+                  urlAntes={(() => {
+                    const r = fotoPropuestaAntes(item.metadata);
+                    return r ? urlFoto({ storagePath: r, urlExterna: null }) : null;
+                  })()}
+                  urlDespues={(() => {
+                    const r = fotoPropuestaDespues(item.metadata);
+                    return r ? urlFoto({ storagePath: r, urlExterna: null }) : null;
+                  })()}
+                />
                 {/* Esperando validación era el único estado sin salida: ni la
                     empresa podía arreglar un pin mal puesto ni el Director
                     podía tocarlo antes de decidir. Se rechazaba y se cargaba

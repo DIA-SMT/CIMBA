@@ -3105,3 +3105,105 @@ export async function corregirTipoIntervencion(entrada: { intervencionId: number
   revalidatePath("/incidentes");
   return { ok: true };
 }
+
+/**
+ * CAMBIAR UNA FOTO DE UN BACHE PROPUESTO QUE TODAVÍA ESPERA VALIDACIÓN.
+ *
+ * Pedido de INGECO (15/10): al proponer un bache a veces se sube una foto
+ * equivocada, y hasta ahora el único arreglo era rechazarlo y cargar todo de
+ * nuevo. Mientras el bache está 'propuesto' —antes de que Bacheo lo valide— la
+ * empresa que lo cargó puede reemplazar la foto del antes o la del después.
+ *
+ * Las fotos del propuesto viven en el metadata del item (`foto_propuesta` y
+ * `ya_ejecutado.foto_despues`), no en `fotografias`: por eso esto actualiza el
+ * metadata y no una fila de fotos. La anterior se borra del servidor recién
+ * cuando la nueva ya quedó referenciada, nunca antes.
+ *
+ * Solo el propuesto y solo de la empresa dueña: mismo cerco que proponerItem.
+ */
+export async function reemplazarFotoPropuesto(formData: FormData) {
+  const sesion = await requerirSesion();
+  if (!["empresa", "cuadrilla", "admin", "planificacion"].includes(sesion.rol_cimba)) {
+    throw new ErrorVisible(`Rol ${sesion.rol_cimba} sin permiso para cambiar fotos`);
+  }
+  const itemId = z.coerce.number().int().positive().parse(formData.get("itemId"));
+  const cual = z.enum(["antes", "despues"]).parse(formData.get("cual"));
+  const foto = formData.get("foto");
+  const TIPOS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  if (!(foto instanceof File) || foto.size === 0) throw new ErrorVisible("Falta la foto");
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  // Propiedad y estado ANTES de subir nada, igual que proponerItem.
+  const previa = (
+    await conRls(claims(sesion), async (tx) =>
+      (await tx.execute(sql`
+        select oi.estado, oi.metadata, oi.orden_id,
+               ot.estado as orden_estado, ot.empresa_id
+        from orden_items oi
+        join ordenes_trabajo ot on ot.id = oi.orden_id
+        where oi.id = ${itemId}
+      `)) as unknown as Array<Record<string, unknown>>,
+    )
+  )[0];
+  if (!previa) throw new ErrorVisible("El bache no existe o no es de tu empresa");
+  if (String(previa.estado) !== "propuesto") {
+    throw new ErrorVisible("Las fotos se pueden cambiar solo mientras el bache espera validación");
+  }
+  if (!["emitida", "en_ejecucion"].includes(String(previa.orden_estado))) {
+    throw new ErrorVisible("La orden no está activa");
+  }
+  {
+    const empresaEjecutora = await empresaDelEjecutor(sesion);
+    if (empresaEjecutora != null && Number(previa.empresa_id) !== empresaEjecutora) {
+      throw new ErrorVisible("El bache no pertenece a tu empresa");
+    }
+  }
+
+  const metadata = (previa.metadata ?? {}) as Record<string, unknown>;
+  const yaEjecutado = metadata.ya_ejecutado as { foto_despues?: unknown } | undefined;
+  const rutaVieja =
+    cual === "antes"
+      ? (typeof metadata.foto_propuesta === "string" ? metadata.foto_propuesta : null)
+      : (typeof yaEjecutado?.foto_despues === "string" ? yaEjecutado.foto_despues : null);
+  if (cual === "despues" && !rutaVieja) {
+    throw new ErrorVisible("Este bache no tiene foto del después para cambiar");
+  }
+
+  const ordenId = Number(previa.orden_id);
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
+  const ruta = `ordenes/propuestos/${ordenId}-${Date.now()}-${cual}.${TIPOS[foto.type]}`;
+  const subida = await supabase.storage
+    .from("fotografias")
+    .upload(ruta, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+
+  try {
+    await conRls(claims(sesion), async (tx) => {
+      if (cual === "antes") {
+        await tx.execute(sql`
+          update orden_items
+          set metadata = jsonb_set(metadata, '{foto_propuesta}', ${JSON.stringify(ruta)}::jsonb)
+          where id = ${itemId} and estado = 'propuesto'
+        `);
+      } else {
+        await tx.execute(sql`
+          update orden_items
+          set metadata = jsonb_set(metadata, '{ya_ejecutado,foto_despues}', ${JSON.stringify(ruta)}::jsonb)
+          where id = ${itemId} and estado = 'propuesto'
+        `);
+      }
+    });
+  } catch (e) {
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  // La anterior ya no la referencia nadie: recién ahora se borra del servidor.
+  if (rutaVieja) await supabase.storage.from("fotografias").remove([rutaVieja]).catch(() => undefined);
+
+  revalidatePath(`/empresa/orden/${ordenId}`);
+  revalidatePath(`/ordenes/${ordenId}`);
+  return { ok: true };
+}
