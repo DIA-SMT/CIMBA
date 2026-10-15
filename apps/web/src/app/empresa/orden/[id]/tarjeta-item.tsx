@@ -15,6 +15,7 @@ import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
 import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
+import { TicketBache } from "@/components/ticket-bache";
 import { BarraConfianza, Panel } from "@/components/ui";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
 import {
@@ -26,6 +27,7 @@ import {
 } from "@/components/campos-medida";
 import { mensajeDeError } from "@/lib/errores";
 import { enviarOEncolar } from "@/lib/cola-envios";
+import { borrarFotosBorrador, claveFoto, guardarFotoBorrador, leerFotoBorrador } from "@/lib/fotos-borrador";
 import { describirPrecision, mejorPosicion } from "@/lib/gps";
 import { fechaCorta, hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
@@ -264,6 +266,42 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * LAS FOTOS DEL BORRADOR. El antes se saca al llegar y el después una hora
+   * más tarde: si en el medio se cerró la app, la del antes vuelve sola (ver
+   * lib/fotos-borrador.ts). Van aparte del efecto de arriba porque IndexedDB
+   * es asincrónico.
+   */
+  const [fotosRescatadas, setFotosRescatadas] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    void (async () => {
+      const [a, d] = await Promise.all([
+        leerFotoBorrador(claveFoto(item.id, "antes")),
+        leerFotoBorrador(claveFoto(item.id, "despues")),
+      ]);
+      if (!vivo || (!a && !d)) return;
+      if (a) {
+        setFotoAntes(a);
+        setPreviewAntes(URL.createObjectURL(a));
+        revisarFotoUsada("antes", a);
+      }
+      if (d) {
+        setFotoDespues(d);
+        setPreviewDespues(URL.createObjectURL(d));
+        revisarFotoUsada("despues", d);
+      }
+      setFotosRescatadas(true);
+      setRescatado(true);
+      setAbierto(true);
+    })();
+    return () => {
+      vivo = false;
+    };
+    // Una sola vez por tarjeta, al montar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
   /** Guardado continuo del borrador: cada tecla, sin botón de "guardar". */
   useEffect(() => {
     const b = { ...medida, obs };
@@ -385,10 +423,12 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
     previewAnterior: string | null,
   ) => {
     if (previewAnterior) URL.revokeObjectURL(previewAnterior);
+    const enBorrador = clave === "antes" || clave === "despues";
     if (!archivo) {
       setFoto(null);
       setPreview(null);
       revisarFotoUsada(clave, null);
+      if (enBorrador) void guardarFotoBorrador(claveFoto(item.id, clave), null);
       return;
     }
     setPreparandoFotos((n) => n + 1);
@@ -397,6 +437,8 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       const { archivo: listo, antes, despues } = await comprimirFoto(archivo);
       setFoto(listo);
       setPreview(URL.createObjectURL(listo));
+      // Ya comprimida: es la que viajaría, y ocupa poco en el teléfono.
+      if (enBorrador) void guardarFotoBorrador(claveFoto(item.id, clave), listo);
       if (despues < antes) setAhorroFoto(`${pesoCorto(antes)} → ${pesoCorto(despues)}`);
       revisarFotoUsada(clave, listo);
     } finally {
@@ -461,6 +503,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         // recuerda lo que se repite para el bache siguiente de la orden.
         if (encolado) setGuardadoLocal(true);
         borrarBorrador(item.id);
+        void borrarFotosBorrador(item.id);
         guardarMemoria(ordenId, {
           espesor: medida.espesor,
           medicion: medida.medicion,
@@ -558,6 +601,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
         <span className="rounded bg-panel-3 px-2 py-1 text-[11px] font-bold text-texto-2 uppercase">
           {ETIQUETA_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo}
         </span>
+        <TicketBache id={item.id} tickets147={item.tickets147} />
         {item.reclamos > 0 && (
           <span className="rounded bg-amarillo/15 px-2 py-1 text-[11px] font-bold text-amarillo">
             {item.reclamos === 1 ? "1 reclamo detrás" : `${item.reclamos} reclamos detrás`}
@@ -616,14 +660,25 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
       {rescatado && (
         <div className="mt-2 rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-snug">
           <b className="text-amarillo">Recuperado de este teléfono:</b> habías empezado a cargar este
-          bache y quedó a medias. Revisá las medidas antes de enviar — las fotos hay que sacarlas de
-          nuevo.{" "}
+          bache y quedó a medias.{" "}
+          {fotosRescatadas
+            ? "Volvieron también las fotos: revisá las medidas y las fotos antes de enviar."
+            : "Revisá las medidas antes de enviar — las fotos hay que sacarlas de nuevo."}{" "}
           <button
             type="button"
             onClick={() => {
               setMedida(medidaVacia(medida.medicion));
               setObs("");
               borrarBorrador(item.id);
+              // De cero es de cero: también las fotos guardadas.
+              void borrarFotosBorrador(item.id);
+              if (previewAntes) URL.revokeObjectURL(previewAntes);
+              if (previewDespues) URL.revokeObjectURL(previewDespues);
+              setFotoAntes(null);
+              setPreviewAntes(null);
+              setFotoDespues(null);
+              setPreviewDespues(null);
+              setFotosRescatadas(false);
               setRescatado(false);
             }}
             className="font-semibold text-celeste underline"

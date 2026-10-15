@@ -13,6 +13,26 @@ import { MiniMapa } from "@/components/mapa/mini-mapa";
 import { Achicando } from "./tarjeta-item";
 import { mensajeDeError } from "@/lib/errores";
 import { enviarOEncolar } from "@/lib/cola-envios";
+import { claveFotoPropuesta, guardarFotoBorrador, leerFotoBorrador } from "@/lib/fotos-borrador";
+
+/** Lo tipeado del bache propuesto (dirección y observaciones), en el teléfono. */
+const claveTextoPropuesta = (ordenId: number) => `cimba:borrador-propuesta:${ordenId}`;
+function leerTextoPropuesta(ordenId: number): { direccion?: string; obs?: string } | null {
+  try {
+    const crudo = localStorage.getItem(claveTextoPropuesta(ordenId));
+    return crudo ? (JSON.parse(crudo) as { direccion?: string; obs?: string }) : null;
+  } catch {
+    return null;
+  }
+}
+function guardarTextoPropuesta(ordenId: number, v: { direccion: string; obs: string }) {
+  try {
+    if (!v.direccion.trim() && !v.obs.trim()) localStorage.removeItem(claveTextoPropuesta(ordenId));
+    else localStorage.setItem(claveTextoPropuesta(ordenId), JSON.stringify(v));
+  } catch {
+    /* almacenamiento bloqueado: se sigue sin borrador */
+  }
+}
 import { describirPrecision, mejorPosicion } from "@/lib/gps";
 import { hoyISO, minimoEjecucion } from "@/lib/formato";
 import {
@@ -115,6 +135,46 @@ export function ProponerItem({
   const [candidato, setCandidato] = useState<Candidato | null>(null);
   const [ubicacion, setUbicacion] = useState<Ubicacion | null>(null);
 
+  /**
+   * EL BORRADOR DEL BACHE PROPUESTO. La foto del antes se saca al encontrarlo
+   * y la del después cuando ya está tapado: si en el medio se cierra la app,
+   * vuelven las fotos, la dirección y las observaciones (pedido del usuario,
+   * 14/10; ver lib/fotos-borrador.ts). Se borra solo al enviar.
+   */
+  const [recuperado, setRecuperado] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    const texto = leerTextoPropuesta(ordenId);
+    if (texto?.direccion) setDireccionTexto(texto.direccion);
+    if (texto?.obs) setObs(texto.obs);
+    void (async () => {
+      const [a, d] = await Promise.all([
+        leerFotoBorrador(claveFotoPropuesta(ordenId, "antes")),
+        leerFotoBorrador(claveFotoPropuesta(ordenId, "despues")),
+      ]);
+      if (!vivo) return;
+      if (a) {
+        setFoto(a);
+        setPreview(URL.createObjectURL(a));
+      }
+      if (d) {
+        setFotoDespues(d);
+        setPreviewDespues(URL.createObjectURL(d));
+        setYaTapado(true);
+      }
+      if (a || d || texto?.direccion || texto?.obs) {
+        setRecuperado(true);
+        setAbierto(true);
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [ordenId]);
+  useEffect(() => {
+    guardarTextoPropuesta(ordenId, { direccion: direccionTexto, obs });
+  }, [ordenId, direccionTexto, obs]);
+
   const buscarDireccion = async (texto: string) => {
     const q = texto.trim();
     if (q.length < 4) {
@@ -192,6 +252,7 @@ export function ProponerItem({
       setArchivo(null);
       setUrl(null);
       revisarFotoUsada(cuadro, null);
+      void guardarFotoBorrador(claveFotoPropuesta(ordenId, cuadro), null);
       return;
     }
     setPreparandoFoto(true);
@@ -199,6 +260,7 @@ export function ProponerItem({
       const { archivo: listo } = await comprimirFoto(archivo);
       setArchivo(listo);
       setUrl(URL.createObjectURL(listo));
+      void guardarFotoBorrador(claveFotoPropuesta(ordenId, cuadro), listo);
       revisarFotoUsada(cuadro, listo);
     } finally {
       setPreparandoFoto(false);
@@ -229,6 +291,7 @@ export function ProponerItem({
     setFechaEjecucion(hoyISO());
     void elegirFoto(undefined);
     void elegirFotoEn(undefined, previewDespues, setFotoDespues, setPreviewDespues, "despues");
+    setRecuperado(false);
   };
 
   const enviar = () => {
@@ -366,6 +429,12 @@ export function ProponerItem({
         esProblema ? "border-amarillo/40" : "border-celeste/40"
       }`}
     >
+      {recuperado && (
+        <p className="rounded-lg border border-amarillo/40 bg-amarillo/10 px-3 py-2 text-[12px] leading-snug">
+          <b className="text-amarillo">Recuperado de este teléfono:</b> habías empezado a cargar esto y quedó a
+          medias. Revisá la dirección, las fotos y las medidas antes de enviar.
+        </p>
+      )}
       <div className="flex items-center justify-between gap-2">
         <p className="text-base font-bold">
           {esProblema ? "Reportar un problema" : "Proponer un bache nuevo"}
