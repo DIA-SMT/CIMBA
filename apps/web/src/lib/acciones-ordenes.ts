@@ -1028,11 +1028,8 @@ export async function reportarItemHecho(formData: FormData) {
    * transacción, con las rutas ya subidas. Si la transacción falla después,
    * los archivos se borran en el catch.
    */
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const subirArchivo = async (archivo: File, momento: "antes" | "despues") => {
     const ruta = `ordenes/${datos.itemId}/${momento}-${Date.now()}.${TIPOS_FOTO[archivo.type]}`;
     const bytes = Buffer.from(await archivo.arrayBuffer());
@@ -1682,11 +1679,8 @@ export async function proponerItem(formData: FormData) {
     throw new ErrorVisible("Si ya lo taparon, falta la foto del trabajo terminado");
   }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const subidas: string[] = [];
   const subir = async (archivo: File, sufijo: string) => {
     const ruta = `ordenes/propuestos/${datos.ordenId}-${Date.now()}-${sufijo}.${TIPOS[archivo.type]}`;
@@ -1857,11 +1851,8 @@ export async function reportarProblemaCalle(formData: FormData) {
     }
   }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const ruta = `calle/problemas/${datos.ordenId}-${Date.now()}.${TIPOS[foto.type]}`;
   const subida = await supabase.storage
     .from("fotografias")
@@ -2304,11 +2295,8 @@ export async function marcarYaResuelto(formData: FormData) {
     }
   }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const ruta = `ordenes/${datos.itemId}/ya-resuelto-${Date.now()}.${TIPOS[foto.type]}`;
   const subida = await supabase.storage
     .from("fotografias")
@@ -2472,11 +2460,8 @@ export async function reportarItemNoEjecutable(formData: FormData) {
     }
   }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const ruta = `ordenes/${datos.itemId}/no-ejecutable-${Date.now()}.${TIPOS[foto.type]}`;
   const subida = await supabase.storage
     .from("fotografias")
@@ -2818,11 +2803,8 @@ export async function completarItemHecho(formData: FormData) {
     throw new ErrorVisible("Falta ubicar el bache: marcalo en el mapa antes de guardar.");
   }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const subirArchivo = async (archivo: File, momento: "antes" | "despues") => {
     const ruta = `ordenes/${datos.itemId}/${momento}-${Date.now()}.${TIPOS_FOTO[archivo.type]}`;
     const bytes = Buffer.from(await archivo.arrayBuffer());

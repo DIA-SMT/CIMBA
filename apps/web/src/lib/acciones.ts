@@ -383,11 +383,8 @@ export async function subirFoto(formData: FormData) {
   }
   const ruta = `intervenciones/${datos.intervencionId}/${datos.momento}-${Date.now()}.${extension}`;
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const subida = await supabase.storage
     .from("fotografias")
     .upload(ruta, Buffer.from(await archivo.arrayBuffer()), {
@@ -580,11 +577,8 @@ export async function crearDemandaCiudadano(formData: FormData) {
    */
   if (id != null && fotos.length > 0) {
     try {
-      const { createClient } = await import("@supabase/supabase-js");
-      const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-        process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-      );
+      const { clienteFotos } = await import("./almacen-fotos");
+      const supabase = clienteFotos();
       for (const [i, foto] of fotos.entries()) {
         const ruta = `ciudadano/${id}/${Date.now()}-${i}.${TIPOS_FOTO[foto.type]}`;
         const subida = await supabase.storage

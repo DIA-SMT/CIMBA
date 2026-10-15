@@ -7,13 +7,16 @@
  * Módulo plano (sin "use client"/"server-only"): lo usan ambos lados.
  */
 
-const BASE_STORAGE = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/fotografias`;
+// Las fotos propias las sirve nginx desde el servidor en /fotos. La base es
+// absoluta (https://cimba.smt.gob.ar/fotos) para que los links de las
+// exportaciones y los CSV sirvan fuera del sistema; en pantalla una ruta
+// relativa alcanzaría igual.
+const BASE_STORAGE = process.env.NEXT_PUBLIC_CIMBA_FOTOS_BASE ?? "/fotos";
 
-/** URL pública de una foto guardada en Storage, o la externa si vino de otro sistema. */
+/** URL de una foto propia servida por el servidor, o la externa si vino de otro sistema. */
 export function urlFoto(foto: { storagePath: string | null; urlExterna: string | null }): string | null {
   if (foto.urlExterna) return foto.urlExterna;
   if (!foto.storagePath) return null;
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return null;
   // El path viene de la base (lo escribió subirFoto), pero puede traer espacios
   // o acentos: encodear cada segmento sin romper las barras.
   const ruta = foto.storagePath.split("/").map(encodeURIComponent).join("/");

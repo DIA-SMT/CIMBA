@@ -1,7 +1,8 @@
 import "server-only";
+import { promises as fs } from "node:fs";
 import { getDb, sql } from "@cimba/db";
 import { ALTO_HUELLA, ANCHO_HUELLA, huellaDePixeles } from "@cimba/domain";
-import { urlFoto } from "./fotos";
+import { rutaLocalFoto } from "./almacen-fotos";
 
 /**
  * LA HUELLA DE UNA FOTO, del lado del servidor (la cuenta está en
@@ -30,10 +31,10 @@ export async function huellaDeImagen(datos: ArrayBuffer | Buffer): Promise<strin
 
 /**
  * Completa la huella de las fotos de un trabajo que todavía no la tienen. Se
- * llama DESPUÉS de guardar la carga, en los caminos donde la foto ya estaba en
- * Storage (la propuesta que se valida, el "ya estaba resuelto", la carga sin
- * orden): baja cada foto (es pública) y anota su huella. Si algo falla, la
- * foto queda sin huella y nada más: la carga ya está guardada.
+ * llama DESPUÉS de guardar la carga, en los caminos donde la foto ya estaba
+ * guardada (la propuesta que se valida, el "ya estaba resuelto", la carga sin
+ * orden): lee cada foto del disco del servidor y anota su huella. Si algo
+ * falla, la foto queda sin huella y nada más: la carga ya está guardada.
  *
  * El trabajo se puede nombrar por la intervención, por el item de la orden o
  * por el problema: cada camino tiene a mano uno distinto.
@@ -60,11 +61,14 @@ export async function completarHuellas(de: {
         )
     `)) as unknown as Array<{ id: number; storage_path: string | null; url_externa: string | null }>;
     for (const f of fotos) {
-      const url = urlFoto({ storagePath: f.storage_path, urlExterna: f.url_externa });
-      if (!url) continue;
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) continue;
-      const huella = await huellaDeImagen(await r.arrayBuffer());
+      if (!f.storage_path) continue;
+      let datos: Buffer;
+      try {
+        datos = await fs.readFile(rutaLocalFoto(f.storage_path));
+      } catch {
+        continue;
+      }
+      const huella = await huellaDeImagen(datos);
       if (!huella) continue;
       await db.execute(sql`update fotografias set huella = ${huella}::bit(64) where id = ${Number(f.id)}`);
     }

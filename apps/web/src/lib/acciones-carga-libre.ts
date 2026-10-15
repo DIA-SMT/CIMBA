@@ -168,11 +168,8 @@ export async function reportarTrabajoLibre(formData: FormData) {
    * cero. Si después falla la transacción, se borran en el catch — sin fila
    * que las referencie serían basura en un bucket público.
    */
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  );
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
   const subidas: string[] = [];
   const subirArchivo = async (archivo: File, momento: "antes" | "despues") => {
     const ruta = `libre/${empresaId}/${Date.now()}-${momento}.${TIPOS_FOTO[archivo.type]}`;
