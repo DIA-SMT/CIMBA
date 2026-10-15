@@ -732,6 +732,19 @@ export interface ItemOrden {
   fotos: Array<{ momento: string; storagePath: string | null; urlExterna: string | null }>;
   /** Metros que el bache queda FUERA del área de la orden; null si está adentro o la orden no tiene área. */
   fueraDelAmbitoM?: number | null;
+  /**
+   * LA FECHA DEL BACHE: cuándo se tapó (o cuándo se fue y no se pudo), no
+   * cuándo se cargó. Null mientras está pendiente. Va en la planilla y en el
+   * CSV (pedido del usuario, 14/10).
+   */
+  fechaTrabajo?: string | null;
+  /**
+   * Los N° de ticket del 147 (Atención Ciudadana) de los reclamos atados a
+   * este bache, separados por coma; null si no tiene. Junto con el número del
+   * bache (el id del item, el "ticket interno") es lo que usan la empresa y el
+   * inspector para hablar del mismo bache (14/10).
+   */
+  tickets147?: string | null;
 }
 
 export type AreaOrden =
@@ -838,7 +851,23 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
              (select v.tipo_intervencion::text from intervenciones v where v.id = oi.intervencion_id) as tipo_intervencion,
         coalesce((select count(*) from demanda_incidente di where di.incidente_id = oi.incidente_id), 0)::int as reclamos,
         case when amb.g is not null and oi.geom is not null and not st_intersects(amb.g, oi.geom)
-             then round(st_distance(amb.g::geography, oi.geom::geography))::int end as fuera_m
+             then round(st_distance(amb.g::geography, oi.geom::geography))::int end as fuera_m,
+        /* La fecha del trabajo, con el mismo orden de preferencia que Avance:
+           la de la intervención; la escrita a mano; la de "ya lo tapamos";
+           y si no, la del reporte (la planilla de Ingeco la trae ahí). Los
+           regex evitan que un valor raro en metadata tire la página entera. */
+        case when oi.estado = 'pendiente' then null else coalesce(
+          (select v.finalizada_en from intervenciones v where v.id = oi.intervencion_id),
+          case when oi.metadata->'fecha_manual'->>'fecha' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+               then ((oi.metadata->'fecha_manual'->>'fecha')::date + time '12:00') at time zone 'America/Argentina/Tucuman' end,
+          case when oi.metadata->'ya_ejecutado'->>'en' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+               then (oi.metadata->'ya_ejecutado'->>'en')::timestamptz end,
+          oi.reportado_en) end as fecha_trabajo,
+        (select string_agg(distinct er.id_remoto, ', ')
+           from demanda_incidente di
+           join external_ref er on er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                               and er.id_local = di.demanda_id
+          where di.incidente_id = oi.incidente_id) as tickets_147
       from orden_items oi
       left join lateral (
         select ${GEOM_AMBITO} as g
@@ -895,6 +924,8 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       lon: f.lon != null ? Number(f.lon) : null,
       fotos: f.intervencion_id != null ? (fotosPorIv.get(Number(f.intervencion_id)) ?? []) : [],
       fueraDelAmbitoM: f.fuera_m != null ? Number(f.fuera_m) : null,
+      fechaTrabajo: f.fecha_trabajo != null ? String(f.fecha_trabajo) : null,
+      tickets147: (f.tickets_147 as string) ?? null,
     }));
 
     const hechos = itemsDetalle.filter((i) => i.estado === "hecho").length;

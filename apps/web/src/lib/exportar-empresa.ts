@@ -1,6 +1,7 @@
 import "server-only";
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
+import { urlFoto } from "./fotos";
 
 /**
  * TODO LO QUE LA EMPRESA CARGÓ, EN UNA PLANILLA.
@@ -23,6 +24,8 @@ const claims = (s: Sesion) => ({
 });
 
 export interface TrabajoExportable {
+  /** El número del bache (el "ticket interno"): null en la carga libre, que no tiene item. */
+  ticket: number | null;
   fecha: string | null;
   orden: string | null;
   direccion: string | null;
@@ -54,7 +57,8 @@ export async function trabajosDeEmpresa(
     const filas = (await tx.execute(sql`
       /* Lo cargado CONTRA UNA ORDEN. Solo los items que la empresa tocó:
          pendiente todavía no es trabajo y no tiene nada que exportar. */
-      select oi.reportado_en as fecha,
+      select oi.id as ticket,
+             oi.reportado_en as fecha,
              ot.numero as orden,
              oi.direccion,
              oi.estado::text as estado,
@@ -62,14 +66,24 @@ export async function trabajosDeEmpresa(
              oi.tipo_obra::text as tipo_obra,
              oi.ancho_m, oi.largo_m, oi.espesor_cm, oi.superficie_m2, oi.volumen_m3,
              oi.metadata->>'capataz' as capataz,
-             oi.metadata->>'ticket_147' as ticket_147,
+             /* El del 147: el escrito a mano en cargas viejas, o el de los
+                reclamos de Atención Ciudadana atados al bache. */
+             coalesce(oi.metadata->>'ticket_147',
+               (select string_agg(distinct er.id_remoto, ', ')
+                  from demanda_incidente di
+                  join external_ref er on er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                                      and er.id_local = di.demanda_id
+                 where di.incidente_id = oi.incidente_id)) as ticket_147,
              oi.observaciones,
              st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              (oi.acta_id is not null) as certificado,
-             (select f.url_externa from fotografias f
+             /* La foto puede estar afuera (las del Apps Script, url_externa) o
+                en nuestro Storage (las del portal, storage_path): se exportaban
+                solo las de afuera y las del portal salían vacías. */
+             (select coalesce(f.url_externa, f.storage_path) from fotografias f
                 where f.intervencion_id = oi.intervencion_id and f.momento = 'antes'
                 order by f.id limit 1) as foto_antes,
-             (select f.url_externa from fotografias f
+             (select coalesce(f.url_externa, f.storage_path) from fotografias f
                 where f.intervencion_id = oi.intervencion_id and f.momento = 'despues'
                 order by f.id limit 1) as foto_despues
       from orden_items oi
@@ -85,7 +99,8 @@ export async function trabajosDeEmpresa(
          en metadata, que es la misma clave con la que entran las cargas del
          Apps Script y las de SIGOV. Cuando se filtra por una orden puntual,
          esta mitad no corresponde. */
-      select iv.finalizada_en as fecha,
+      select null::bigint as ticket,
+             iv.finalizada_en as fecha,
              null as orden,
              i.direccion,
              'hecho' as estado,
@@ -100,9 +115,9 @@ export async function trabajosDeEmpresa(
              iv.observaciones,
              st_y(i.geom), st_x(i.geom),
              false,
-             (select f.url_externa from fotografias f
+             (select coalesce(f.url_externa, f.storage_path) from fotografias f
                 where f.intervencion_id = iv.id and f.momento = 'antes' order by f.id limit 1),
-             (select f.url_externa from fotografias f
+             (select coalesce(f.url_externa, f.storage_path) from fotografias f
                 where f.intervencion_id = iv.id and f.momento = 'despues' order by f.id limit 1)
       from intervenciones iv
       join incidentes i on i.id = iv.incidente_id
@@ -116,7 +131,14 @@ export async function trabajosDeEmpresa(
     `)) as unknown as Array<Record<string, unknown>>;
 
     const num = (v: unknown) => (v != null ? Number(v) : null);
+    /** Un path de Storage se vuelve la URL pública; una URL de afuera queda igual. */
+    const url = (v: unknown) => {
+      if (v == null) return null;
+      const s = String(v);
+      return /^https?:\/\//i.test(s) ? s : urlFoto({ storagePath: s, urlExterna: null });
+    };
     return filas.map((f) => ({
+      ticket: num(f.ticket),
       fecha: f.fecha != null ? String(f.fecha) : null,
       orden: (f.orden as string) ?? null,
       direccion: (f.direccion as string) ?? null,
@@ -134,8 +156,8 @@ export async function trabajosDeEmpresa(
       lat: num(f.lat),
       lon: num(f.lon),
       certificado: Boolean(f.certificado),
-      fotoAntes: (f.foto_antes as string) ?? null,
-      fotoDespues: (f.foto_despues as string) ?? null,
+      fotoAntes: url(f.foto_antes),
+      fotoDespues: url(f.foto_despues),
     }));
   });
 }

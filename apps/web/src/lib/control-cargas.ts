@@ -41,7 +41,10 @@ export interface BajaCarga {
 }
 
 export interface CargaControl {
+  /** También es el "ticket interno" del bache: el número que ve la empresa en su portal. */
   itemId: number;
+  /** Los N° de ticket del 147 de los reclamos atados al bache, separados por coma. */
+  tickets147: string | null;
   ordenId: number;
   ordenNumero: string;
   ordenEstado: string;
@@ -106,14 +109,28 @@ function filtroVista(vista: VistaControl) {
 
 export async function cargasParaControlar(
   sesion: Sesion,
-  opciones: { vista: VistaControl; empresaId?: number | null; ordenId?: number | null; pagina?: number },
+  opciones: {
+    vista: VistaControl;
+    empresaId?: number | null;
+    ordenId?: number | null;
+    pagina?: number;
+    /** N° de ticket: el del bache o el del 147. "Es más fácil para el inspector controlar por número de ticket" (14/10). */
+    ticket?: string | null;
+  },
 ): Promise<ResultadoControl> {
   const empresaId = opciones.empresaId ?? null;
   const ordenId = opciones.ordenId ?? null;
   const pagina = Math.max(1, opciones.pagina ?? 1);
+  const ticket = opciones.ticket && /^\d{1,12}$/.test(opciones.ticket) ? opciones.ticket : null;
   const alcance = sql`
     (${empresaId}::bigint is null or ot.empresa_id = ${empresaId})
     and (${ordenId}::bigint is null or ot.id = ${ordenId})
+    and (${ticket}::text is null
+         or oi.id::text = ${ticket}
+         or exists (select 1 from demanda_incidente di
+                     join external_ref er on er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                                         and er.id_local = di.demanda_id
+                     where di.incidente_id = oi.incidente_id and er.id_remoto = ${ticket}))
   `;
 
   return conRls(claims(sesion), async (tx) => {
@@ -140,6 +157,11 @@ export async function cargasParaControlar(
              st_y(st_centroid(oi.geom)) as lat, st_x(st_centroid(oi.geom)) as lon,
              oi.reportado_en, oi.ancho_m, oi.largo_m, oi.espesor_cm, oi.superficie_m2, oi.volumen_m3,
              oi.tipo_obra::text as tipo_obra, oi.metadata,
+             (select string_agg(distinct er.id_remoto, ', ')
+                from demanda_incidente di
+                join external_ref er on er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                                    and er.id_local = di.demanda_id
+               where di.incidente_id = oi.incidente_id) as tickets_147,
              /* Las fotos de la carga. Si se dio de baja por mal cargada, el
                 item ya no apunta a esa intervención: la baja guarda cuál era. */
              coalesce((
@@ -269,6 +291,7 @@ export async function cargasParaControlar(
 
       return {
         itemId: Number(f.id),
+        tickets147: (f.tickets_147 as string) ?? null,
         ordenId: Number(f.orden_id),
         ordenNumero: String(f.numero),
         ordenEstado: String(f.orden_estado),

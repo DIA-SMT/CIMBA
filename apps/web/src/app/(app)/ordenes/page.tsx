@@ -216,9 +216,11 @@ export default async function PaginaOrdenes({
           </Link>
         )}
       </form>
+      {/* En el celular cada orden es una ficha (14/10): eran 10 columnas en
+          262 px y solo se veían el número y el estado. */}
       <PanelTabla>
-        <table className="w-full text-sm">
-          <thead>
+        <table className="w-full text-sm max-md:block">
+          <thead className="max-md:hidden">
             <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
               <th className="px-4 py-3">Número</th>
               <th className="px-4 py-3">Estado</th>
@@ -239,7 +241,7 @@ export default async function PaginaOrdenes({
               <th className="px-4 py-3" />
             </tr>
           </thead>
-          <tbody>
+          <tbody className="max-md:block">
             {ordenesFiltradas.map((o) => {
               // El denominador es el trabajo ENCARGADO (enPlan), el mismo que
               // usa el detalle: dividiendo por o.items, lo que la empresa propuso
@@ -248,8 +250,11 @@ export default async function PaginaOrdenes({
               const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
               const vencida = estaVencida(o);
               return (
-                <tr key={o.id} className="border-b border-borde/60 transition hover:bg-panel-2">
-                  <td className="px-4 py-2.5">
+                <tr
+                  key={o.id}
+                  className="border-b border-borde/60 transition hover:bg-panel-2 max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2.5 max-md:px-3 max-md:py-3.5"
+                >
+                  <td className="px-4 py-2.5 max-md:p-0">
                     <Link href={`/ordenes/${o.id}`} className="num font-bold text-celeste hover:underline">
                       {o.numero}
                     </Link>
@@ -257,7 +262,7 @@ export default async function PaginaOrdenes({
                       <span className="ml-1.5 text-[10px] font-bold text-peligro">VENCIDA</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-2.5 max-md:p-0 max-md:text-right">
                     <span
                       className="rounded-md px-2 py-0.5 text-[11px] font-bold"
                       style={{ background: fondoTenue(COLOR_ESTADO_ORDEN[o.estado]), color: COLOR_ESTADO_ORDEN[o.estado] }}
@@ -265,10 +270,10 @@ export default async function PaginaOrdenes({
                       {ETIQUETA_ESTADO_ORDEN[o.estado]}
                     </span>
                   </td>
-                  <td className="max-w-44 truncate px-4 py-2.5" title={o.empresaNombre}>
+                  <td data-etiqueta="Empresa" className="max-w-44 truncate px-4 py-2.5 max-md:max-w-none max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" title={o.empresaNombre}>
                     {o.empresaNombre}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td data-etiqueta="Ámbito" className="px-4 py-2.5 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
                     {o.ambitoNombre ? (
                       <>
                         <span className="text-[11px] text-texto-3">
@@ -280,10 +285,10 @@ export default async function PaginaOrdenes({
                       <span className="text-texto-3">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-xs" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
+                  <td data-etiqueta="Prioridad" className="px-4 py-2.5 text-xs max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" style={{ color: COLOR_PRIORIDAD[o.prioridad] }}>
                     {ETIQUETA_PRIORIDAD[o.prioridad]}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td data-etiqueta="Progreso" className="px-4 py-2.5 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
                     <div className="flex items-center gap-2">
                       <span className="num text-xs text-texto-2">
                         {numero(o.hechos)}/{numero(o.enPlan)}
@@ -293,19 +298,20 @@ export default async function PaginaOrdenes({
                       </span>
                     </div>
                   </td>
-                  <td className="num px-4 py-2.5 text-right" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
+                  <td data-etiqueta="m²" className="num px-4 py-2.5 text-right max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" style={{ color: o.m2Reportados > 0 ? "var(--color-ok)" : "var(--color-texto-3)" }}>
                     {o.m2Reportados > 0 ? numero(o.m2Reportados) : "—"}
                   </td>
                   <td
-                    className="num px-4 py-2.5 text-right font-semibold"
+                    data-etiqueta="Toneladas"
+                    className="num px-4 py-2.5 text-right font-semibold max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]"
                     style={{ color: o.tnReportadas > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}
                   >
                     {o.tnReportadas > 0 ? formatoToneladas(o.tnReportadas) : "—"}
                   </td>
-                  <td className={`num px-4 py-2.5 ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>
+                  <td data-etiqueta="Vence" className={`num px-4 py-2.5 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)] ${vencida ? "font-bold text-peligro" : "text-texto-2"}`} title={vencida ? "Vencida y todavía activa" : undefined}>
                     {fechaCorta(o.venceEn)}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 text-right max-md:col-span-2 max-md:p-0 max-md:text-left">
                     <Link href={`/ordenes/${o.id}`} className="text-xs font-semibold text-celeste hover:underline">
                       Abrir →
                     </Link>

@@ -92,6 +92,7 @@ export async function GET(req: NextRequest) {
     ordenId ? "cimba-trabajos-de-la-orden" : "cimba-mis-trabajos",
     csv(
       [
+        "Ticket",
         "Fecha",
         "Orden",
         "Dirección",
@@ -113,6 +114,7 @@ export async function GET(req: NextRequest) {
         "Foto después",
       ],
       trabajos.map((t) => [
+        t.ticket,
         fechaCorta(t.fecha),
         // Sin orden = carga libre: que se lea, no que quede una celda vacía
         // que parezca un dato faltante.

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
+import { TicketBache } from "@/components/ticket-bache";
 import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
@@ -11,6 +12,7 @@ import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
 import { ChipMiniMapa } from "@/components/mapa/mini-mapa";
 import type { TipoIntervencion } from "@cimba/domain";
 import { AccionesOrden } from "./acciones-orden";
+import { HojaOrdenImprimible } from "./hoja-orden";
 import { CorregirFecha } from "./corregir-fecha";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
 import { MapaOrden } from "@/app/empresa/orden/[id]/mapa-orden";
@@ -34,38 +36,9 @@ import {
 
 export const dynamic = "force-dynamic";
 
-/**
- * Estilos de impresión: en papel solo existe la hoja `.hoja-impresion`.
- * El truco de visibility (y no display) esquiva el chrome del layout
- * (header, nav, chat flotante) sin tocar archivos ajenos a este módulo.
- */
-const CSS_IMPRESION = `
-@media print {
-  @page { margin: 12mm; }
-  html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
-  body > div { display: block !important; height: auto !important; overflow: visible !important; }
-  main { overflow: visible !important; }
-  header, nav { display: none !important; }
-  body * { visibility: hidden; }
-  .hoja-impresion, .hoja-impresion * { visibility: visible; }
-  .hoja-impresion { position: absolute; top: 0; left: 0; width: 100%; color: #000; }
-  .hoja-impresion table { width: 100%; border-collapse: collapse; }
-  .hoja-impresion th, .hoja-impresion td { border: 1px solid #555; padding: 5px 7px; font-size: 11px; text-align: left; }
-  .hoja-impresion th { background: #eee; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
-  /* Evidencia fotográfica: una foto jamás se corta entre dos páginas. */
-  .hoja-impresion figure, .hoja-impresion img { break-inside: avoid; page-break-inside: avoid; }
-}
-`;
 
 const ETIQUETA_MOMENTO: Record<string, string> = { antes: "Antes", durante: "Durante", despues: "Después" };
-/** Orden funcional para leer la evidencia de cada item: antes → durante → después. */
-const ORDEN_MOMENTO: Record<string, number> = { antes: 0, durante: 1, despues: 2 };
 
-/** Fecha ordenable con los sin-fecha al final (reportes viejos sin timestamp). */
-function tiempoReporte(iso: string | null): number {
-  const t = iso != null ? Date.parse(iso) : NaN;
-  return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
-}
 
 /** Quién y cuándo propuso el item (metadata.propuesto, lo escribe proponerItem). */
 function datosPropuesto(metadata: Record<string, unknown>): { por: string | null; en: string | null } {
@@ -186,35 +159,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
       { items: 0, m2: 0, toneladas: 0 },
     );
   const totales = sumar(o.itemsDetalle.filter((i) => i.estado !== "propuesto"));
-  const totalesPapel = sumar(itemsPapel);
 
   const pct = o.enPlan > 0 ? Math.round((100 * o.hechos) / o.enPlan) : 0;
   const colorEstado = COLOR_ESTADO_ORDEN[o.estado];
 
-  // ── Evidencia para papel ────────────────────────────────────────────────
-  // "Que aparezcan las fotos también al imprimir": los items HECHOS con foto,
-  // cronológicos por reportado_en. El número de item es el de la tabla de
-  // arriba (posición en la orden), para que el pie de cada foto se pueda
-  // cruzar a mano con la planilla.
-  // Posición sobre la hoja impresa (itemsPapel), que es donde se cruza a mano.
-  const posicionItem = new Map(itemsPapel.map((it, i) => [it.id, i + 1]));
-  const evidencia = o.itemsDetalle
-    .filter((it) => it.estado === "hecho")
-    .map((it) => ({
-      item: it,
-      fotos: it.fotos
-        .flatMap((f) => {
-          const url = urlFoto(f);
-          return url ? [{ url, momento: f.momento }] : [];
-        })
-        .sort((a, b) => (ORDEN_MOMENTO[a.momento] ?? 9) - (ORDEN_MOMENTO[b.momento] ?? 9)),
-    }))
-    .filter((e) => e.fotos.length > 0)
-    .sort((a, b) => tiempoReporte(a.item.reportadoEn) - tiempoReporte(b.item.reportadoEn));
 
   return (
     <div className="mx-auto max-w-6xl p-6">
-      <style>{CSS_IMPRESION}</style>
 
       {/* ══ Versión pantalla ══ */}
       <div className="print:hidden">
@@ -385,6 +336,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                         <div className="flex flex-wrap items-center gap-2">
                           <ChipMiniMapa lat={it.lat} lon={it.lon} etiqueta={it.direccion ?? `Item #${it.id}`} />
                           <span className="font-semibold">{it.direccion ?? "Sin dirección"}</span>
+                          <TicketBache id={it.id} tickets147={it.tickets147} />
                           <span className="rounded-md border border-borde-2 px-2 py-0.5 text-[11px] font-semibold text-texto-2">
                             {ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}
                           </span>
@@ -492,9 +444,12 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
             </Link>
           )}
         </h2>
+        {/* En el celular la tabla se vuelve una ficha por bache (14/10: "deben
+            verse todos los items"): 11 columnas en 375 px eran 1.272 px de
+            tabla en 262 visibles. Cada dato lleva su nombre (data-etiqueta). */}
         <PanelTabla>
-          <table className="w-full text-sm">
-            <thead>
+          <table className="w-full text-sm max-md:block">
+            <thead className="max-md:hidden">
               <tr className="border-b border-borde text-left text-[10px] font-semibold tracking-wider text-texto-3 uppercase">
                 <th className="px-3 py-3">Dirección</th>
                 <th className="px-3 py-3">Tipo</th>
@@ -513,7 +468,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 <th className="px-3 py-3" />
               </tr>
             </thead>
-            <tbody>
+            <tbody className="max-md:block">
               {/* Los propuestos viven arriba, en la bandeja con sus botones:
                   acá abajo solo el plan y sus desenlaces (rechazados incluidos). */}
               {o.itemsDetalle
@@ -531,20 +486,20 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
                 * donde se cuela un error de tipeo en un número que es un pago.
                 */}
               {totales.items > 0 && (
-                <tr className="border-t-2 border-borde bg-panel-2 text-sm font-bold">
-                  <td className="px-3 py-3" colSpan={6}>
+                <tr className="border-t-2 border-borde bg-panel-2 text-sm font-bold max-md:grid max-md:grid-cols-2 max-md:gap-2 max-md:p-3">
+                  <td className="px-3 py-3 max-md:col-span-2 max-md:p-0" colSpan={6}>
                     Total reportado{" "}
                     <span className="font-normal text-texto-3">
                       — {numero(totales.items)} {totales.items === 1 ? "trabajo" : "trabajos"} con medidas
                     </span>
                   </td>
-                  <td className="num px-3 py-3 text-right" style={{ color: "#199e70" }}>
+                  <td data-etiqueta="m²" className="num px-3 py-3 text-right max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" style={{ color: "#199e70" }}>
                     {numero(totales.m2)}
                   </td>
-                  <td className="num px-3 py-3 text-right text-amarillo">
+                  <td data-etiqueta="Toneladas" className="num px-3 py-3 text-right text-amarillo max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
                     {formatoToneladas(totales.toneladas)}
                   </td>
-                  <td className="px-3 py-3" colSpan={3} />
+                  <td className="px-3 py-3 max-md:hidden" colSpan={3} />
                 </tr>
               )}
             </tbody>
@@ -552,236 +507,8 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
         </PanelTabla>
       </div>
 
-      {/* ══ Hoja de impresión: la orden en papel ══ */}
-      <section className="hoja-impresion hidden print:block">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <p style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>ORDEN DE TRABAJO {o.numero}</p>
-            <p style={{ fontSize: 11, margin: "2px 0 0" }}>
-              Dirección de Bacheo — Municipalidad de San Miguel de Tucumán
-            </p>
-          </div>
-          <div style={{ textAlign: "right", fontSize: 11 }}>
-            <p style={{ margin: 0 }}>
-              Estado: <b>{ETIQUETA_ESTADO_ORDEN[o.estado]}</b>
-            </p>
-            <p style={{ margin: 0 }}>
-              Prioridad: <b>{ETIQUETA_PRIORIDAD[o.prioridad]}</b>
-            </p>
-          </div>
-        </div>
-
-        <table style={{ marginTop: 12 }}>
-          <tbody>
-            <tr>
-              <td style={{ width: "34%" }}>
-                <b>Empresa:</b> {o.empresaNombre}
-              </td>
-              {/* Por dónde se definió la orden. Antes decía siempre "Circuito"
-                  y leía solo circuitoCodigo: una orden armada por distrito
-                  —que es el caso más común— salía impresa como "Circuito: —" y
-                  el capataz recibía siete direcciones sin ninguna referencia de
-                  zona. Ahora dice lo que se eligió en "2 · Por dónde se
-                  define": "Distrito: 12", "Barrio: Néstor Kirchner"… */}
-              <td style={{ width: "22%" }}>
-                <b>{ETIQUETA_AMBITO[o.ambito] ?? "Ámbito"}:</b> {o.ambitoNombre ?? "—"}
-              </td>
-              <td style={{ width: "22%" }}>
-                <b>Emitida:</b> {fechaCorta(o.emitidaEn)}
-              </td>
-              <td style={{ width: "22%" }}>
-                <b>Vence:</b> {fechaCorta(o.venceEn)}
-              </td>
-            </tr>
-            {o.contratoDecreto && (
-              <tr>
-                <td colSpan={4}>
-                  <b>Contrato / Decreto:</b> {o.contratoDecreto}
-                </td>
-              </tr>
-            )}
-            {o.titulo && (
-              <tr>
-                <td colSpan={4}>
-                  <b>Título:</b> {o.titulo}
-                </td>
-              </tr>
-            )}
-            {o.indicaciones && (
-              <tr>
-                <td colSpan={4}>
-                  <b>Indicaciones:</b> {o.indicaciones}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        <table style={{ marginTop: 12 }}>
-          <thead>
-            <tr>
-              <th style={{ width: 24 }}>#</th>
-              <th>Dirección</th>
-              <th style={{ width: 60 }}>Tipo</th>
-              <th style={{ width: 80 }} title="Cómo se resolvió realmente">Intervención</th>
-              <th style={{ width: 50 }}>Reclamos</th>
-              <th style={{ width: 62 }}>Ancho (m)</th>
-              <th style={{ width: 62 }}>Largo (m)</th>
-              <th style={{ width: 66 }}>Espesor (cm)</th>
-              <th style={{ width: 50 }}>m²</th>
-              <th style={{ width: 58 }}>Toneladas</th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* Solo el plan real: un propuesto sin validar (o rechazado) no es
-                trabajo encargado y no puede salir en la planilla que se firma. */}
-            {itemsPapel.map((it, i) => (
-              <tr key={it.id}>
-                <td>{i + 1}</td>
-                <td>
-                  {it.direccion ?? (it.incidenteId != null ? `Incidente #${it.incidenteId}` : "—")}
-                  {it.estado === "no_encontrado" && <> — NO ENCONTRADO</>}
-                  {it.estado === "ya_resuelto" && <> — YA ESTABA RESUELTO</>}
-                </td>
-                <td>{ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}</td>
-                {/* Lo pendiente sale en blanco: se completa al reportar */}
-                <td>
-                  {it.tipoIntervencion != null
-                    ? (ETIQUETA_TIPO_INTERVENCION[it.tipoIntervencion as TipoIntervencion] ?? it.tipoIntervencion)
-                    : " "}
-                </td>
-                <td style={{ textAlign: "right" }}>{it.reclamos}</td>
-                {/* Lo pendiente se imprime con las celdas vacías: las medidas
-                    se anotan a mano en la calle y se cargan después */}
-                <td style={{ textAlign: "right" }}>{it.anchoM ?? " "}</td>
-                <td style={{ textAlign: "right" }}>{it.largoM ?? " "}</td>
-                <td style={{ textAlign: "right" }}>{it.espesorCm ?? " "}</td>
-                <td style={{ textAlign: "right" }}>{it.superficieM2 != null ? numero(it.superficieM2) : " "}</td>
-                {/* Las toneladas del bache, al lado de sus m²: es lo que se
-                    certifica, y quien firma el acta no tendría que hacer la
-                    cuenta en el margen de la hoja. */}
-                <td style={{ textAlign: "right" }}>
-                  {it.superficieM2 != null && it.espesorCm != null
-                    ? formatoToneladas(toneladasDe(volumenDe(it.superficieM2, it.espesorCm)))
-                    : " "}
-                </td>
-              </tr>
-            ))}
-            {totalesPapel.items > 0 && (
-              <tr style={{ fontWeight: 800, borderTop: "2px solid #555" }}>
-                <td colSpan={8} style={{ textAlign: "right" }}>TOTAL</td>
-                <td style={{ textAlign: "right" }}>{numero(totalesPapel.m2)}</td>
-                <td style={{ textAlign: "right" }}>{formatoToneladas(totalesPapel.toneladas)}</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        <p style={{ fontSize: 10, marginTop: 8 }}>
-          {numero(itemsPapel.length)} items · la empresa carga cada trabajo con medidas y foto en su portal, o completa
-          esta planilla a mano y la carga al volver.
-        </p>
-
-        {/* Evidencia fotográfica: solo si hay hechos con fotos. En reportes
-            parciales convive con los pendientes, que arriba siguen imprimiendo
-            sus celdas vacías para anotar a mano. */}
-        {evidencia.length > 0 && (
-          <div style={{ marginTop: 18 }}>
-            <p style={{ fontSize: 13, fontWeight: 800, margin: 0, textTransform: "uppercase", borderBottom: "1px solid #555", paddingBottom: 3 }}>
-              Evidencia fotográfica
-            </p>
-            <p style={{ fontSize: 10, margin: "3px 0 0" }}>
-              Fotos cargadas por {o.empresaNombre} al reportar cada trabajo, en orden cronológico.
-            </p>
-            {evidencia.map(({ item, fotos }) => {
-              const pos = posicionItem.get(item.id);
-              const medidas =
-                item.anchoM != null && item.largoM != null && item.espesorCm != null
-                  ? `${numero(item.anchoM)} × ${numero(item.largoM)} m · ${numero(item.espesorCm)} cm`
-                  : null;
-              return (
-                <div key={item.id} style={{ marginTop: 12 }}>
-                  <p style={{ fontSize: 11, margin: "0 0 4px", breakInside: "avoid" }}>
-                    <b>
-                      Item {pos} — {item.direccion ?? "Sin dirección"}
-                    </b>
-                    {medidas && <> · {medidas}</>}
-                    {item.superficieM2 != null && (
-                      <>
-                        {" "}
-                        · <b>{numero(item.superficieM2)} m²</b>
-                      </>
-                    )}
-                    {/* Las toneladas al lado de la descripción: es la unidad
-                        con la que se certifica el pago, y quien mira la
-                        evidencia para firmar no tendría que ir a buscarla a la
-                        tabla de arriba ni hacer la cuenta al margen. */}
-                    {item.superficieM2 != null && item.espesorCm != null && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <b>{formatoToneladas(toneladasDe(volumenDe(item.superficieM2, item.espesorCm)))}</b>
-                      </>
-                    )}
-                  </p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4mm" }}>
-                    {fotos.map((f, j) => (
-                      <figure key={j} style={{ margin: 0, breakInside: "avoid", pageBreakInside: "avoid" }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element -- imagen de Storage, sin optimizador */}
-                        <img
-                          src={f.url}
-                          alt={`Foto ${ETIQUETA_MOMENTO[f.momento] ?? f.momento} — item ${pos}`}
-                          /* Excepción deliberada a la regla de lazy: esta sección
-                             vive en display:none y una imagen lazy ahí adentro
-                             NUNCA se descarga — al imprimir salían recuadros en
-                             blanco. Eager las trae de entrada; los mismos
-                             archivos ya se pidieron para los thumbnails, así
-                             que en la práctica es caché, no doble descarga. */
-                          loading="eager"
-                          /**
-                           * NUNCA recortada. Estaba fijada en 8×6 cm con
-                           * object-fit:cover, y el capataz saca las fotos con
-                           * el teléfono en vertical: el recorte a caja
-                           * apaisada se comía la mitad del bache, que es lo
-                           * único que la foto tiene que probar. Ahora la foto
-                           * entra entera —se achica hasta caber, nunca se
-                           * corta— y la caja se adapta a lo que hay.
-                           */
-                          style={{
-                            width: "8cm",
-                            maxWidth: "100%",
-                            height: "auto",
-                            maxHeight: "9cm",
-                            objectFit: "contain",
-                            border: "1px solid #555",
-                          }}
-                        />
-                        <figcaption style={{ fontSize: 9, marginTop: 2 }}>
-                          {(ETIQUETA_MOMENTO[f.momento] ?? f.momento).toUpperCase()} — {o.numero} · item {pos} ·{" "}
-                          {fechaCorta(item.reportadoEn)}
-                        </figcaption>
-                      </figure>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 40, marginTop: 36 }}>
-          <div style={{ flex: 1, borderTop: "1px solid #000", paddingTop: 4, fontSize: 11 }}>
-            Entregó — Dirección de Bacheo
-            <br />
-            Aclaración y fecha
-          </div>
-          <div style={{ flex: 1, borderTop: "1px solid #000", paddingTop: 4, fontSize: 11 }}>
-            Recibí conforme — {o.empresaNombre}
-            <br />
-            Aclaración y fecha
-          </div>
-        </div>
-      </section>
+      {/* ══ Hoja de impresión: la orden en papel (la misma que baja la empresa) ══ */}
+      <HojaOrdenImprimible o={o} />
     </div>
   );
 }
@@ -814,8 +541,11 @@ function FilaItem({
     ];
   });
   return (
-    <tr id={`item-${item.id}`} className="scroll-mt-20 border-b border-borde/60 transition hover:bg-panel-2">
-      <td className="max-w-56 px-3 py-2.5">
+    <tr
+      id={`item-${item.id}`}
+      className="scroll-mt-20 border-b border-borde/60 transition hover:bg-panel-2 max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2.5 max-md:px-3 max-md:py-3.5"
+    >
+      <td className="max-w-56 px-3 py-2.5 max-md:col-span-2 max-md:max-w-none max-md:p-0">
         <div className="flex items-center gap-1.5">
           {/* El pedido del Director: verificar el punto sin salir de la orden */}
           <ChipMiniMapa lat={item.lat} lon={item.lon} etiqueta={item.direccion ?? `Item #${item.id}`} />
@@ -823,6 +553,7 @@ function FilaItem({
             <span className="block truncate" title={item.direccion ?? undefined}>
               {item.direccion ?? "Sin dirección"}
             </span>
+            <TicketBache id={item.id} tickets147={item.tickets147} className="mt-0.5" />
             {item.observaciones && (
               <span className="block truncate text-[11px] text-texto-3" title={item.observaciones}>
                 {item.observaciones}
@@ -831,11 +562,11 @@ function FilaItem({
           </span>
         </div>
       </td>
-      <td className="px-3 py-2.5 text-xs text-texto-2">{ETIQUETA_TIPO_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo}</td>
-      <td className="num px-3 py-2.5 text-right font-bold" style={{ color: item.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
+      <td data-etiqueta="Tipo" className="px-3 py-2.5 text-xs text-texto-2 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">{ETIQUETA_TIPO_TRABAJO[item.tipoTrabajo] ?? item.tipoTrabajo}</td>
+      <td data-etiqueta="Reclamos" className="num px-3 py-2.5 text-right font-bold max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" style={{ color: item.reclamos > 0 ? "var(--color-amarillo)" : "var(--color-texto-3)" }}>
         {numero(item.reclamos)}
       </td>
-      <td className="px-3 py-2.5">
+      <td data-etiqueta="Estado" className="px-3 py-2.5 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
         <span
           className="rounded-md px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
           style={{ background: fondoTenue(COLOR_ESTADO_ITEM[item.estado]), color: COLOR_ESTADO_ITEM[item.estado] }}
@@ -843,7 +574,7 @@ function FilaItem({
           {ETIQUETA_ESTADO_ITEM[item.estado]}
         </span>
       </td>
-      <td className="px-3 py-2.5">
+      <td data-etiqueta="Intervención" className="px-3 py-2.5 max-md:min-w-0 max-md:[&_select]:w-full max-md:[&_select]:min-w-0max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
         {item.tipoIntervencion != null && item.intervencionId != null ? (
           puedeCorregirTipo ? (
             /* "Capaz que empieza como bacheo y al final se ha hecho cambio de
@@ -861,7 +592,7 @@ function FilaItem({
           <span className="text-xs text-texto-3">—</span>
         )}
       </td>
-      <td className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2">
+      <td data-etiqueta="Medidas" className="num px-3 py-2.5 text-xs whitespace-nowrap text-texto-2 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
         <span className="flex items-center gap-1.5">
           {medidas ?? "—"}
           {/* "Todos nos equivocamos, seguro cargan mal": la medida entra desde
@@ -881,18 +612,25 @@ function FilaItem({
           )}
         </span>
       </td>
-      <td className="num px-3 py-2.5 text-right" style={{ color: item.superficieM2 != null ? "#199e70" : "#5c6b84" }}>
+      <td data-etiqueta="m²" className="num px-3 py-2.5 text-right max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]" style={{ color: item.superficieM2 != null ? "#199e70" : "#5c6b84" }}>
         {item.superficieM2 != null ? numero(item.superficieM2) : "—"}
       </td>
-      <td className="num px-3 py-2.5 text-xs text-texto-2">{fechaCorta(item.reportadoEn)}</td>
-      <td className="px-3 py-2.5">
+      {/* Faltaba: el encabezado tenía "Toneladas" y la fila no, así que desde
+          acá cada dato caía bajo la columna de al lado. */}
+      <td data-etiqueta="Toneladas" className="num px-3 py-2.5 text-right text-amarillo max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
+        {item.superficieM2 != null && item.espesorCm != null
+          ? formatoToneladas(toneladasDe(volumenDe(item.superficieM2, item.espesorCm)))
+          : "—"}
+      </td>
+      <td data-etiqueta="Reportado" className="num px-3 py-2.5 text-xs text-texto-2 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">{fechaCorta(item.reportadoEn)}</td>
+      <td data-etiqueta="Fotos" className="px-3 py-2.5 max-md:col-span-2 max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-[10px] max-md:before:font-semibold max-md:before:tracking-wider max-md:before:text-texto-3 max-md:before:uppercase max-md:before:content-[attr(data-etiqueta)]">
         {fotosVisor.length > 0 ? (
           <GaleriaFotos fotos={fotosVisor} miniAlto={80} miniAncho={80} className="flex gap-1.5" />
         ) : (
           <span className="text-xs text-texto-3">—</span>
         )}
       </td>
-      <td className="px-3 py-2.5 text-right">
+      <td className="px-3 py-2.5 text-right max-md:col-span-2 max-md:p-0 max-md:text-left">
         {item.incidenteId != null && (
           <Link
             href={`/incidentes/${item.incidenteId}`}

@@ -3,6 +3,9 @@ import { Download } from "lucide-react";
 import { notFound } from "next/navigation";
 import { leerSesion } from "@/lib/auth";
 import { obtenerOrden, type ItemOrden } from "@/lib/ordenes";
+import { TicketBache } from "@/components/ticket-bache";
+import { HojaOrdenImprimible } from "@/app/(app)/ordenes/[id]/hoja-orden";
+import { BotonPdfOrden } from "./boton-pdf";
 import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
 import { formatoToneladas } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
@@ -246,6 +249,11 @@ export default async function PaginaOrdenEmpresa({
         </div>
       )}
 
+      {/* La orden en PDF: la MISMA hoja que imprime la Dirección, con la
+          tabla y las fotos (14/10). Solo existe al imprimir; acá va el botón. */}
+      <BotonPdfOrden cerrados={orden.cerrados} />
+      <HojaOrdenImprimible o={orden} />
+
       {/* Lo cargado en ESTA orden: el papel que la empresa lleva a la
           medición conjunta. */}
       {orden.cerrados > 0 && (
@@ -316,6 +324,7 @@ export default async function PaginaOrdenEmpresa({
               <Panel key={item.id} className="px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                  <TicketBache id={item.id} tickets147={item.tickets147} />
                   <span className="rounded bg-amarillo/15 px-2 py-1 text-[11px] font-bold text-amarillo">
                     Esperando validación
                   </span>
@@ -347,6 +356,7 @@ export default async function PaginaOrdenEmpresa({
                 <Panel key={item.id} className="px-4 py-3 text-sm opacity-80">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                    <TicketBache id={item.id} tickets147={item.tickets147} />
                     <span className="rounded bg-panel-3 px-2 py-1 text-[11px] font-bold text-texto-2">
                       Rechazado
                     </span>
@@ -406,6 +416,7 @@ export default async function PaginaOrdenEmpresa({
               <Panel key={item.id} className="px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+                  <TicketBache id={item.id} tickets147={item.tickets147} />
                   {/* El MISMO verde apagado que ve el Director en /ordenes/[id]:
                       sale de COLOR_ESTADO_ITEM.ya_resuelto, no de un hex acá. */}
                   <span
@@ -435,7 +446,9 @@ export default async function PaginaOrdenEmpresa({
           <div className="space-y-2">
             {noEncontrados.map((item) => (
               <Panel key={item.id} className="px-4 py-3 text-sm">
-                <p className="font-medium">{item.direccion ?? "Sin dirección"}</p>
+                <p className="font-medium">
+                  {item.direccion ?? "Sin dirección"} <TicketBache id={item.id} tickets147={item.tickets147} />
+                </p>
                 {item.observaciones && (
                   <p className="mt-0.5 text-xs text-texto-3">Motivo: {item.observaciones}</p>
                 )}
@@ -474,6 +487,7 @@ function ItemACompletar({ item }: { item: ItemOrden }) {
     <Panel className="px-4 py-3 text-sm">
       <div className="flex items-start gap-3">
         <span className="min-w-0 flex-1 font-medium">{item.direccion ?? "Sin dirección"}</span>
+        <TicketBache id={item.id} tickets147={item.tickets147} />
         <span className="num shrink-0 font-bold text-resuelto">{m2(item.superficieM2)} m²</span>
       </div>
       <p className="mt-0.5 text-xs text-texto-3">
@@ -527,6 +541,7 @@ function ItemHecho({ item }: { item: ItemOrden }) {
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {item.direccion ?? "Sin dirección"}
         </span>
+        <TicketBache id={item.id} tickets147={item.tickets147} />
         <span className="num shrink-0 text-sm font-bold text-resuelto">{m2(item.superficieM2)} m²</span>
       </summary>
       <div className="border-t border-borde px-4 py-3 text-sm">

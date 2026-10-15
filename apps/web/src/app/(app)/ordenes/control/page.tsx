@@ -42,7 +42,7 @@ const ORDEN_MOMENTO: Record<string, number> = { antes: 0, durante: 1, despues: 2
 export default async function PaginaControl({
   searchParams,
 }: {
-  searchParams: Promise<{ vista?: string; empresa?: string; orden?: string; pagina?: string }>;
+  searchParams: Promise<{ vista?: string; empresa?: string; orden?: string; pagina?: string; ticket?: string }>;
 }) {
   const sesion = (await leerSesion())!;
   if (!["admin", "planificacion", "supervision"].includes(sesion.rol_cimba)) {
@@ -57,9 +57,10 @@ export default async function PaginaControl({
   const empresaId = /^\d{1,9}$/.test(sp.empresa ?? "") ? Number(sp.empresa) : null;
   const ordenId = /^\d{1,12}$/.test(sp.orden ?? "") ? Number(sp.orden) : null;
   const pagina = /^\d{1,4}$/.test(sp.pagina ?? "") ? Math.max(1, Number(sp.pagina)) : 1;
+  const ticket = /^\d{1,12}$/.test((sp.ticket ?? "").trim()) ? (sp.ticket ?? "").trim() : null;
 
   const [resultado, empresas] = await Promise.all([
-    cargasParaControlar(sesion, { vista, empresaId, ordenId, pagina }),
+    cargasParaControlar(sesion, { vista, empresaId, ordenId, pagina, ticket }),
     empresasConCargas(sesion),
   ]);
   const paginas = Math.max(1, Math.ceil(resultado.total / CARGAS_POR_PAGINA));
@@ -71,6 +72,7 @@ export default async function PaginaControl({
       vista,
       empresa: empresaId,
       orden: ordenId,
+      ticket,
       pagina: null,
       ...cambios,
     };
@@ -135,6 +137,31 @@ export default async function PaginaControl({
           </Link>
         )}
       </div>
+
+      {/* Por N° de ticket: el del bache (el que ve la empresa en su portal) o el
+          del 147. "Es más fácil para el inspector controlar por número de
+          ticket" (14/10). Un formulario GET común: anda sin JavaScript y el
+          link se puede pasar por WhatsApp. */}
+      <form action="/ordenes/control" method="get" className="mb-5 flex flex-wrap items-center gap-2 text-xs">
+        <input type="hidden" name="vista" value={vista} />
+        {empresaId != null && <input type="hidden" name="empresa" value={empresaId} />}
+        {ordenId != null && <input type="hidden" name="orden" value={ordenId} />}
+        <input
+          name="ticket"
+          defaultValue={ticket ?? ""}
+          inputMode="numeric"
+          placeholder="N° de ticket (del bache o del 147)"
+          className="w-64 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm placeholder:text-texto-3"
+        />
+        <button type="submit" className="rounded-lg bg-azul px-3 py-2 font-semibold text-white transition hover:brightness-110">
+          Buscar
+        </button>
+        {ticket && (
+          <Link href={enlace({ ticket: null })} className="rounded-md bg-amarillo/10 px-2 py-1 font-semibold text-amarillo">
+            ticket {ticket} · quitar ✕
+          </Link>
+        )}
+      </form>
 
       {resultado.cargas.length === 0 ? (
         <Panel className="p-8 text-center text-sm text-texto-3">
@@ -220,6 +247,10 @@ function TarjetaCarga({ c }: { c: CargaControl }) {
             <Link href={`/ordenes/${c.ordenId}`} className="num text-xs font-semibold text-celeste hover:underline">
               {c.ordenNumero}
             </Link>
+            <span className="num rounded-md bg-panel-3 px-1.5 py-0.5 text-[11px] font-semibold text-texto-2">
+              Ticket {c.itemId}
+              {c.tickets147 && <> · 147 N° {c.tickets147}</>}
+            </span>
           </div>
           <p className="mt-0.5 text-[12px] text-texto-2">
             <b>{c.empresa}</b>

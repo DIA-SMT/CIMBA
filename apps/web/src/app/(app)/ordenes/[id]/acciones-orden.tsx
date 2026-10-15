@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeftRight, CheckCircle2, Printer, Send } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, Download, Printer, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { EstadoOrden } from "@cimba/domain";
@@ -91,6 +91,15 @@ export function AccionesOrden({
         >
           <Printer size={15} /> Imprimir
         </button>
+        {/* La misma orden para cruzarla en QGIS o en una planilla: cada bache
+            con su ticket, la fecha y las coordenadas exactas (14/10). */}
+        <a
+          href={`/api/ordenes/${ordenId}/csv`}
+          className="flex items-center gap-2 rounded-lg border border-borde-2 px-4 py-2.5 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
+          title="Bajar los baches de la orden en CSV, con fecha y coordenadas exactas"
+        >
+          <Download size={15} /> Descargar CSV
+        </a>
         {/* Cerrar va ANTES que anular y con más peso visual: es lo que pasa
             al final de casi todas las órdenes, mientras que anular es la
             excepción (la orden que nunca tendría que haber salido). */}
