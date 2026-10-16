@@ -142,7 +142,7 @@ export async function enviarTelegram(datos: {
 
 /** La base pública, para armar enlaces absolutos desde las rutas de `carga.url`. */
 function basePublica(): string {
-  return process.env.CIMBA_URL_PUBLICA ?? "https://cimba-smt.vercel.app";
+  return process.env.CIMBA_URL_PUBLICA ?? "https://cimba.smt.gob.ar";
 }
 
 /** Plantilla mínima y sobria: el contenido manda, no el diseño. */
