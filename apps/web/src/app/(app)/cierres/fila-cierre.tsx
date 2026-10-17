@@ -218,7 +218,7 @@ export function FilaCierre({
               </Link>
               ), con tu nombre y la fecha — también aparece en Actividad. El aviso al vecino lo mandás
               vos con los botones de arriba: el sistema abre el chat o el mail con el texto puesto, y el
-              envío queda en tus manos. Cuando Innovación habilite el cierre de tickets del 147, este
+              envío queda en tus manos. Cuando Innovación habilite el cierre de tickets de Atención Ciudadana, este
               mismo botón va a cerrar el ticket y mandar la respuesta sin ese paso.
             </p>
             {error && <p className="mt-2 text-sm text-peligro">{error}</p>}

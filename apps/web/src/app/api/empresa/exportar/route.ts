@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
         "Superficie (m2)",
         "Volumen (m3)",
         "Capataz",
-        "Ticket 147",
+        "Ticket Atención Ciudadana",
         "Observaciones",
         "Latitud",
         "Longitud",

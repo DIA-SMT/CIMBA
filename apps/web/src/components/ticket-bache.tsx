@@ -18,11 +18,11 @@ export function TicketBache({
 }) {
   return (
     <span
-      className={`num inline-flex shrink-0 items-center rounded-md bg-panel-3 px-1.5 py-0.5 text-[11px] font-semibold text-texto-2 ${className}`}
+      className={`num inline-flex max-w-full flex-wrap items-center rounded-md bg-panel-3 px-1.5 py-0.5 text-[11px] font-semibold text-texto-2 ${className}`}
       title="El número de este bache: con este número lo busca el inspector"
     >
       Ticket {id}
-      {tickets147 && <> · 147 N° {tickets147}</>}
+      {tickets147 && <> · Atención Ciudadana N° {tickets147}</>}
     </span>
   );
 }

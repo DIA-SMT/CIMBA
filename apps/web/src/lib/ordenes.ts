@@ -104,6 +104,12 @@ export interface PendienteCircuito {
   /** De dónde vienen esos reclamos (fuente_demanda, sin repetir): el Director
    *  quiere ver al armar la orden si detrás hay vecinos, el Concejo o la SAT. */
   fuentes: string[];
+  /**
+   * Los números de reclamo de Atención Ciudadana detrás de esta fila. "Podrías
+   * identificarle a él cuál tiene reclamo de Atención Ciudadana" (17/10): el
+   * que arma la orden es Leo, y la fuente en letra chica no alcanzaba.
+   */
+  reclamosAc: string[];
   superficieM2: number | null;
   detectadoEn: string;
   /** El pedido vino en una planilla sin fecha: la antigüedad no se conoce. */
@@ -272,6 +278,11 @@ export async function pendientesEnAmbito(
                        from demanda_incidente di
                        join demandas d on d.id = di.demanda_id
                        where di.incidente_id = i.id), '{}') as fuentes,
+             coalesce((select array_agg(distinct er.id_remoto)
+                       from demanda_incidente di
+                       join external_ref er on er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                                           and er.id_local = di.demanda_id
+                       where di.incidente_id = i.id), '{}') as reclamos_ac,
              exists (
                select 1 from orden_items oi
                join ordenes_trabajo ot on ot.id = oi.orden_id
@@ -309,6 +320,9 @@ export async function pendientesEnAmbito(
              d.creado_en, coalesce(d.metadata->>'sin_fecha' = 'true', false) as sin_fecha,
              coalesce(d.menciones, 0) as menciones, d.prioridad_informada,
              st_y(d.geom) as lat, st_x(d.geom) as lon,
+             (select er.id_remoto from external_ref er
+               where er.sistema = 'atencion_ciudadana' and er.entidad_local = 'demanda'
+                 and er.id_local = d.id limit 1) as reclamo_ac,
              rep.metros as arreglo_metros, rep.fecha as arreglo_fecha,
              case
                when rep.metros is not null then 'posible_resuelta'
@@ -363,6 +377,7 @@ export async function pendientesEnAmbito(
         score: f.score_prioridad != null ? Number(f.score_prioridad) : null,
         reclamos: Number(f.reclamos ?? 0),
         fuentes: p.fuentes,
+        reclamosAc: ((f.reclamos_ac as string[]) ?? []).sort(),
         superficieM2: f.superficie_m2 != null ? Number(f.superficie_m2) : null,
         detectadoEn: String(f.detectado_en),
         sinFecha: false,
@@ -378,6 +393,7 @@ export async function pendientesEnAmbito(
       id: number;
       tipo: TipoProblema | null;
       fuente: string;
+      reclamoAc: string | null;
       direccion: string | null;
       creadoEn: string;
       sinFecha: boolean;
@@ -413,6 +429,7 @@ export async function pendientesEnAmbito(
         id: Number(f.id),
         tipo: pedido.tipo,
         fuente: pedido.fuente,
+        reclamoAc: (f.reclamo_ac as string) ?? null,
         direccion: (f.direccion as string) ?? null,
         creadoEn: new Date(String(f.creado_en)).toISOString(),
         sinFecha: Boolean(f.sin_fecha),
@@ -460,6 +477,7 @@ export async function pendientesEnAmbito(
           score,
           reclamos: g.length,
           fuentes: [...new Set(g.map((x) => x.fuente))],
+          reclamosAc: [...new Set(g.flatMap((x) => (x.reclamoAc ? [x.reclamoAc] : [])))].sort(),
           superficieM2: null,
           detectadoEn: primero.creadoEn,
           sinFecha: g.every((x) => x.sinFecha),

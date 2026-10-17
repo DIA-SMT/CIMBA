@@ -43,7 +43,7 @@ export const GLOSARIO = {
   // ── Estados de un PEDIDO (demanda) ──
   recibida: {
     titulo: "Recibida",
-    texto: "El pedido entró al sistema (del 147, del Concejo, de redes, o cargado acá) y todavía nadie lo cotejó contra el territorio.",
+    texto: "El pedido entró al sistema (de Atención Ciudadana, del Concejo, de redes, o cargado acá) y todavía nadie lo cotejó contra el territorio.",
   },
   en_validacion: {
     titulo: "En validación",

@@ -150,7 +150,7 @@ export default async function PaginaControl({
           name="ticket"
           defaultValue={ticket ?? ""}
           inputMode="numeric"
-          placeholder="N° de ticket (del bache o del 147)"
+          placeholder="N° de ticket (del bache o de Atención Ciudadana)"
           className="w-64 rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm placeholder:text-texto-3"
         />
         <button type="submit" className="rounded-lg bg-azul px-3 py-2 font-semibold text-white transition hover:brightness-110">
@@ -249,7 +249,7 @@ function TarjetaCarga({ c }: { c: CargaControl }) {
             </Link>
             <span className="num rounded-md bg-panel-3 px-1.5 py-0.5 text-[11px] font-semibold text-texto-2">
               Ticket {c.itemId}
-              {c.tickets147 && <> · 147 N° {c.tickets147}</>}
+              {c.tickets147 && <> · Atención Ciudadana N° {c.tickets147}</>}
             </span>
           </div>
           <p className="mt-0.5 text-[12px] text-texto-2">

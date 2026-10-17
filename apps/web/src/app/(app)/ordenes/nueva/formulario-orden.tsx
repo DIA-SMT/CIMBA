@@ -18,7 +18,7 @@ import type { EmpresaResumen, PendienteCircuito } from "@/lib/ordenes";
 import { Panel } from "@/components/ui";
 import { SelectorBuscable, type OpcionBuscable } from "@/components/selector-buscable";
 import { ChipMiniMapa, MiniMapa } from "@/components/mapa/mini-mapa";
-import { ETIQUETA_PRIORIDAD } from "../etiquetas";
+import { ETIQUETA_PRIORIDAD, fondoTenue } from "../etiquetas";
 import { mensajeDeError } from "@/lib/errores";
 
 interface CircuitoOpcion {
@@ -435,6 +435,12 @@ export function FormularioOrden({
     setSeleccion(new Set(pendientes.filter((p) => !p.enOrden).slice(0, n).map((p) => p.clave)));
   };
 
+  /** Detrás hay un vecino que reclamó por Atención Ciudadana (con o sin número). */
+  const tieneAc = (p: PendienteCircuito) => p.fuentes.includes("atencion_ciudadana") || p.reclamosAc.length > 0;
+  const conAc = pendientes.filter((p) => tieneAc(p) && !p.enOrden);
+  /** Suma a lo ya tildado los que tienen reclamo de Atención Ciudadana. */
+  const elegirAc = () => setSeleccion((s) => new Set([...s, ...conAc.map((p) => p.clave)]));
+
   const actualizarTramo = (i: number, cambios: Partial<Tramo>) =>
     setTramos((ts) => ts.map((t, j) => (j === i ? { ...t, ...cambios } : t)));
 
@@ -785,13 +791,28 @@ export function FormularioOrden({
                     hecho».
                   </span>
                 )}
+                {!cargando && conAc.length > 0 && (
+                  <span className="mt-0.5 block text-[11px] font-semibold" style={{ color: "var(--color-celeste)" }}>
+                    {numero(conAc.length)} {conAc.length === 1 ? "tiene" : "tienen"} reclamo de Atención Ciudadana:
+                    van marcados en la lista.
+                  </span>
+                )}
                 {!cargando && cubiertos.conTrabajoCerca > 0 && (
                   <span className="mt-0.5 block text-[11px] font-normal text-texto-3">
                     No se listan {numero(cubiertos.conTrabajoCerca)} pedidos con un trabajo en marcha a menos de 40 m.
                   </span>
                 )}
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {conAc.length > 0 && (
+                  <button
+                    onClick={elegirAc}
+                    className="rounded-md border border-celeste/50 bg-celeste/10 px-2.5 py-1 text-[11px] font-semibold text-celeste transition hover:bg-celeste/20"
+                    title="Suma a la orden todos los que tienen reclamo de Atención Ciudadana"
+                  >
+                    Tildar los de Atención Ciudadana ({numero(conAc.length)})
+                  </button>
+                )}
                 <button
                   onClick={() => elegirTop(10)}
                   disabled={pendientes.length === 0}
@@ -875,6 +896,16 @@ export function FormularioOrden({
                                 </span>
                                 {p.enOrden && (
                                   <span className="text-[10px] text-texto-3">ya está en otra orden activa</span>
+                                )}
+                                {tieneAc(p) && (
+                                  <span
+                                    className="mt-0.5 mb-0.5 inline-block rounded px-1.5 py-px text-[10px] font-bold"
+                                    style={{ background: fondoTenue("var(--color-celeste)"), color: "var(--color-celeste)" }}
+                                    title="Un vecino lo reclamó por Atención Ciudadana"
+                                  >
+                                    Atención Ciudadana
+                                    {p.reclamosAc.length > 0 && <> N° {p.reclamosAc.join(", ")}</>}
+                                  </span>
                                 )}
                                 {/* Todavía no es un problema: se releva solo al
                                     crear la orden, con sus pedidos vinculados. */}

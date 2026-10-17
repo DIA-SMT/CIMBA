@@ -191,7 +191,7 @@ export function HojaOrdenImprimible({ o }: { o: OrdenDetalle }) {
                       controla el inspector (14/10). */}
                   <span style={{ display: "block", fontSize: 9, color: "#444" }}>
                     Ticket N° {it.id}
-                    {it.tickets147 && <> · 147 N° {it.tickets147}</>}
+                    {it.tickets147 && <> · Atención Ciudadana N° {it.tickets147}</>}
                   </span>
                 </td>
                 <td>{ETIQUETA_TIPO_TRABAJO[it.tipoTrabajo] ?? it.tipoTrabajo}</td>
@@ -258,7 +258,7 @@ export function HojaOrdenImprimible({ o }: { o: OrdenDetalle }) {
                       Item {pos} — {item.direccion ?? "Sin dirección"}
                     </b>
                     {" "}· Ticket N° {item.id}
-                    {item.tickets147 && <> · 147 N° {item.tickets147}</>}
+                    {item.tickets147 && <> · Atención Ciudadana N° {item.tickets147}</>}
                     {item.fechaTrabajo && <> · {fechaCorta(item.fechaTrabajo)}</>}
                     {medidas && <> · {medidas}</>}
                     {item.superficieM2 != null && (

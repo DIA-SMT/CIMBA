@@ -40,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     csv(
       [
         "Ticket",
-        "Ticket 147",
+        "Ticket Atención Ciudadana",
         "Orden",
         "Dirección",
         "Estado",

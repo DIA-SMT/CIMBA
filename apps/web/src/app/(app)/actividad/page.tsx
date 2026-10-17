@@ -187,7 +187,7 @@ export default async function PaginaActividad({
           <Link
             href={`/actividad?${new URLSearchParams({ ...(sp.usuario ? { usuario: sp.usuario } : {}), ...(incluirSistema ? {} : { sistema: "1" }) })}`}
             className="text-xs font-semibold text-texto-3 hover:text-texto"
-            title="La sincronización automática (reclamos del 147, SIGOV) también escribe: mostrarla u ocultarla"
+            title="La sincronización automática (reclamos de Atención Ciudadana, SIGOV) también escribe: mostrarla u ocultarla"
           >
             {incluirSistema ? "ocultar lo automático" : "mostrar también lo automático"}
           </Link>
