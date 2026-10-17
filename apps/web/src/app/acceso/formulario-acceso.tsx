@@ -1,7 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useMigueInteraction } from "@/components/migue/migue-interaction";
 
@@ -17,13 +16,25 @@ function volverSeguro(v: string | undefined): string | null {
 
 /** Acceso simple temporal: un usuario y contraseña, mientras no está conectado el SSO. */
 export function FormularioAcceso({ volver }: { volver?: string } = {}) {
-  const router = useRouter();
   const migue = useMigueInteraction();
   const [usuario, setUsuario] = useState("");
   const [clave, setClave] = useState("");
   const [claveVisible, setClaveVisible] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [entrando, setEntrando] = useState(false);
+
+  // Si vuelve con "atrás" desde adentro, el navegador puede mostrar esta
+  // misma página congelada en "Entrando…": se la deja usable otra vez.
+  useEffect(() => {
+    const alVolver = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      setEntrando(false);
+      setCargando(false);
+    };
+    window.addEventListener("pageshow", alVolver);
+    return () => window.removeEventListener("pageshow", alVolver);
+  }, []);
 
   const entrar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +42,7 @@ export function FormularioAcceso({ volver }: { volver?: string } = {}) {
     migue.wink();
     setCargando(true);
     setError(null);
+    let entro = false;
     try {
       const res = await fetch("/api/auth/simple", {
         method: "POST",
@@ -45,7 +57,19 @@ export function FormularioAcceso({ volver }: { volver?: string } = {}) {
         // estaba. La clave temporal manda igual: primero se cambia.
         const destino = cuerpo?.destino ?? "/mapa";
         const vuelta = volverSeguro(volver);
-        router.push(destino === "/clave" || !vuelta ? destino : vuelta);
+        /**
+         * "NO INGRESA" (14/10). La clave estaba bien —la auditoría muestra el
+         * ingreso— pero el botón se reactivaba en el acto mientras la pantalla
+         * de destino se armaba (unos segundos: Avance, Mis órdenes), así que
+         * no cambiaba nada a la vista y se volvía a tocar: ingresos repetidos
+         * a los 3, 6 y 18 segundos. Ahora queda en "Entrando a CIMBA…" hasta
+         * que abre, y la navegación es una carga completa —con la barra de
+         * progreso del navegador, y sin depender del enrutador del cliente,
+         * que después de una publicación nueva puede quedar desfasado—.
+         */
+        entro = true;
+        setEntrando(true);
+        window.location.assign(destino === "/clave" || !vuelta ? destino : vuelta);
         return;
       }
       const cuerpo = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -53,7 +77,8 @@ export function FormularioAcceso({ volver }: { volver?: string } = {}) {
     } catch {
       setError("Se cortó la conexión. Probá de nuevo.");
     } finally {
-      setCargando(false);
+      // Si entró, el botón queda ocupado hasta que cambia la página.
+      if (!entro) setCargando(false);
     }
   };
 
@@ -109,10 +134,10 @@ export function FormularioAcceso({ volver }: { volver?: string } = {}) {
       {error && <p className="text-center text-xs text-peligro">{error}</p>}
       <button
         type="submit"
-        disabled={cargando || !usuario.trim() || !clave}
+        disabled={cargando || entrando || !usuario.trim() || !clave}
         className="w-full rounded-xl bg-azul px-4 py-3.5 text-center font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
       >
-        {cargando ? "Ingresando…" : "Ingresar"}
+        {entrando ? "Entrando a CIMBA…" : cargando ? "Ingresando…" : "Ingresar"}
       </button>
     </form>
   );
