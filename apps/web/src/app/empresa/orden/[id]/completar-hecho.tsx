@@ -15,6 +15,25 @@ import { Achicando } from "./tarjeta-item";
 type Momento = "antes" | "despues";
 
 /**
+ * El archivo de imagen de un arrastre, mirando los dos lados del dataTransfer.
+ *
+ * Arrastrada desde una carpeta —o desde WhatsApp de escritorio— la imagen llega
+ * en `files`. Pero arrastrada DESDE una web (WhatsApp Web) el navegador no la
+ * pone en `files` sino en `items`: la misma lectura que hace el pegar con
+ * Ctrl+V. Mirando solo `files`, ese arrastre no agarraba nada —y WhatsApp Web
+ * cambió a ese camino—. getAsFile() va acá, sincrónico: el dataTransfer no
+ * sobrevive al handler.
+ */
+function archivoImagen(dt: DataTransfer): File | null {
+  const directo = dt.files?.[0];
+  if (directo && directo.type.startsWith("image/")) return directo;
+  const item = Array.from(dt.items ?? []).find(
+    (i) => i.kind === "file" && i.type.startsWith("image/"),
+  );
+  return item?.getAsFile() ?? null;
+}
+
+/**
  * COMPLETAR UN BACHE YA HECHO: la foto que faltó y, si no tenía, el lugar.
  *
  * Es la otra mitad de la planilla de Ingeco (13/10/2026): los baches entraron
@@ -278,7 +297,7 @@ export function CompletarHecho({
                     onDrop={(e) => {
                       e.preventDefault();
                       setDestino(m);
-                      void ponerFoto(m, e.dataTransfer.files?.[0]);
+                      void ponerFoto(m, archivoImagen(e.dataTransfer));
                     }}
                     className={`relative flex h-32 w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border-2 text-center transition ${
                       elegida
