@@ -1,36 +1,52 @@
 #!/bin/bash
 #
-# El respaldo diario de los datos de CIMBA.
+# El respaldo diario de CIMBA, en el servidor propio.
 #
-# POR QUÉ ES DE DATOS Y NO DE TODO: la estructura de la base —las tablas, los
-# índices, las funciones, las políticas— ya está versionada en
-# supabase/migrations, así que se reconstruye entera desde git. Lo único que no
-# existe en ningún otro lado son los datos: los reclamos de los vecinos, las
-# órdenes, las actas. Eso es lo que esto copia.
+# QUÉ COPIA
+#   · la base "cimba" del Postgres local, entera (estructura y datos), con
+#     pg_dump en su formato propio: se restaura con pg_restore;
+#   · las fotos que suben las cuadrillas y el portal (CIMBA_FOTOS_DIR), que no
+#     viven en la base sino en archivos;
+#   · la configuración del servidor que no está en git (.env, pm2, cron, nginx).
+# Y sube todo, cifrado, a Backblaze (paso 5), una vez configurado con
+# poner-clave-respaldo-cimba.
 #
-# POR QUÉ CON psql Y NO CON pg_dump: la base es PostgreSQL 17 y el servidor
-# donde corre esto tiene las herramientas de la 16. pg_dump se niega a volcar
-# una versión más nueva; psql conecta igual. Copiar tabla por tabla con COPY es
-# el formato propio de Postgres — se encarga él de las geometrías, los jsonb y
-# los escapes— así que se restaura con COPY sin ninguna conversión.
+# POR QUÉ CAMBIÓ (23/10/2026): hasta ese día esto copiaba, tabla por tabla, la
+# base de Supabase, que quedó congelada el 15/10 con la mudanza al servidor
+# propio. El registro decía "ok" todos los días y la base real no tenía ninguna
+# copia: la del 22/10 tenía 3.409 pedidos y la real 3.461, y las fotos (664 MB)
+# no entraban en ningún respaldo. Ahora la base es local y de la misma versión
+# que las herramientas (16), así que pg_dump anda sin conectarse a ningún lado.
+# Para que un error así se vea a simple vista, el estado dice cuántos pedidos
+# tiene la copia y cuándo fue el último movimiento de la base copiada.
 #
-# POR QUÉ EN ESTE SERVIDOR: son datos personales de vecinos. Guardarlos acá los
-# deja bajo control del municipio, en vez de en un servicio de afuera.
+# LAS FOTOS: una carpeta por día, pero los archivos que no cambiaron se
+# comparten con la carpeta del día anterior (rsync --link-dest), así que cada
+# día ocupa solo lo nuevo. La app borra fotos de verdad en varios lugares
+# (CLAUDE.md §4): con esto, una foto borrada sigue en las copias CONSERVAR días.
 #
-# RESTAURAR (ver también el final de este archivo):
-#   1. Crear la base y correr las migraciones:  pnpm db:migrar
-#   2. Descomprimir el respaldo y cargar cada tabla con COPY ... FROM
+# Son datos personales de vecinos y claves del servidor: todo queda solo para
+# root (umask 077).
+#
+# RESTAURAR (ver también el final de este archivo)
+#   base:    sudo -u postgres createdb cimba
+#            sudo -u postgres pg_restore -d cimba < cimba-AAAAMMDD-HHMM.dump
+#   fotos:   rsync -a fotos/AAAAMMDD-HHMM/ /var/www/cimba/fotos/
+#   config:  tar xzf config-AAAAMMDD-HHMM.tar.gz -C /
 #
 set -uo pipefail
+umask 077
+cd /   # el cron arranca en /root, donde el usuario postgres no puede entrar
 
 DESTINO=/srv/respaldos/cimba
-CONEXION=/srv/respaldos/cimba.url     # 600, solo root. Puerto 5432 (sesión).
 CONSERVAR=14                          # cuántas copias diarias se guardan
 MINIMO_BYTES=1000000                  # 1 MB: por debajo de eso algo salió mal
+FOTOS=$(grep -m1 -oP '^CIMBA_FOTOS_DIR=\K.*' /srv/cimba/app/.env 2>/dev/null || true)
+FOTOS=${FOTOS:-/var/www/cimba/fotos}
 
 marca=$(date +%Y%m%d-%H%M)
 registro="$DESTINO/respaldo.log"
-mkdir -p "$DESTINO"
+mkdir -p "$DESTINO/fotos"
 
 decir() { echo "[$(date +'%F %T')] $*" | tee -a "$registro"; }
 
@@ -54,83 +70,90 @@ fallar() {
   exit 1
 }
 
-[ -r "$CONEXION" ] || fallar "no puedo leer $CONEXION"
-URL=$(cat "$CONEXION")
-
-trabajo=$(mktemp -d)
-trap 'rm -rf "$trabajo"' EXIT
-
 decir "empieza el respaldo $marca"
 
-# Las tablas del esquema public. Se listan en cada corrida y no se fija una
-# lista acá a propósito: una tabla nueva entra sola en el respaldo. Una lista
-# escrita a mano es una tabla que un día nadie copia y nadie se entera.
-psql "$URL" -Atc \
-  "select tablename from pg_tables where schemaname='public' order by tablename" \
-  > "$trabajo/tablas.txt" 2>>"$registro" || fallar "no pude listar las tablas"
+# ── 1. La base ───────────────────────────────────────────────────────────────
+base="$DESTINO/cimba-$marca.dump"
+sudo -u postgres pg_dump -Fc -d cimba > "$base" 2>>"$registro" || fallar "pg_dump no terminó"
+tamano=$(stat -c%s "$base")
+[ "$tamano" -ge "$MINIMO_BYTES" ] || fallar "la copia de la base quedó en $tamano bytes, sospechosamente chica"
+# Que se pueda leer entera: mejor enterarse hoy que el día que haga falta.
+pg_restore --list "$base" > /dev/null 2>>"$registro" || fallar "la copia de la base no se puede leer"
+pedidos=$(sudo -u postgres psql -d cimba -Atc "select count(*) from demandas" 2>>"$registro") \
+  || fallar "no pude contar los pedidos de la base"
+ultimo=$(sudo -u postgres psql -d cimba -Atc \
+  "select to_char(max(ocurrido_en) at time zone 'America/Argentina/Tucuman', 'YYYY-MM-DD HH24:MI') from auditoria" 2>/dev/null)
+decir "base: $(basename "$base"), $(du -h "$base" | cut -f1), $pedidos pedidos, último movimiento $ultimo"
 
-total=$(wc -l < "$trabajo/tablas.txt")
-[ "$total" -gt 0 ] || fallar "la lista de tablas vino vacía"
-decir "$total tablas para copiar"
+# ── 2. Las fotos ─────────────────────────────────────────────────────────────
+[ -d "$FOTOS" ] || fallar "no encuentro la carpeta de fotos $FOTOS"
+anterior=$(ls -1d "$DESTINO"/fotos/20* 2>/dev/null | tail -n 1)
+rsync -a ${anterior:+--link-dest="$anterior"} "$FOTOS/" "$DESTINO/fotos/$marca/" 2>>"$registro"
+r=$?
+# 24 = algún archivo desapareció mientras se copiaba (lo borró la app): no es falla.
+[ "$r" -eq 0 ] || [ "$r" -eq 24 ] || fallar "la copia de las fotos terminó con código $r"
+originales=$(find "$FOTOS" -type f | wc -l)
+copiadas=$(find "$DESTINO/fotos/$marca" -type f | wc -l)
+[ "$copiadas" -ge "$originales" ] || [ "$r" -eq 24 ] || fallar "se copiaron $copiadas de $originales fotos"
+decir "fotos: $copiadas archivos ($(du -sh "$FOTOS" | cut -f1) en la carpeta original)"
 
-mkdir -p "$trabajo/datos"
-: > "$trabajo/manifiesto.txt"
-echo "respaldo: $marca" >> "$trabajo/manifiesto.txt"
-echo "origen:   $(psql "$URL" -Atc 'select version()' 2>/dev/null | cut -c1-40)" >> "$trabajo/manifiesto.txt"
-echo "" >> "$trabajo/manifiesto.txt"
+# ── 3. La configuración que no está en git ───────────────────────────────────
+nginx=$(grep -l "cimba.smt.gob.ar" /etc/nginx/sites-enabled/* 2>/dev/null | head -n 1)
+tar czf "$DESTINO/config-$marca.tar.gz" -C / \
+  srv/cimba/app/.env srv/cimba/app/ecosystem.config.cjs srv/cimba/cron-cimba.sh \
+  etc/cron.d/respaldo-cimba usr/local/bin/respaldo-cimba.sh ${nginx:+"${nginx#/}"} \
+  2>>"$registro" || fallar "no pude guardar la configuración"
 
-while read -r tabla; do
-  [ -n "$tabla" ] || continue
-  if ! psql "$URL" -Atc "\copy (select * from public.\"$tabla\") to stdout" \
-       2>>"$registro" | gzip -c > "$trabajo/datos/$tabla.tsv.gz"; then
-    fallar "no pude copiar la tabla $tabla"
-  fi
-  # El conteo de filas va al manifiesto: es lo que permite comparar una copia
-  # con la anterior y notar que una tabla se vació sin que nadie lo dijera.
-  filas=$(gzip -dc "$trabajo/datos/$tabla.tsv.gz" | wc -l)
-  printf '%-34s %10d filas\n' "$tabla" "$filas" >> "$trabajo/manifiesto.txt"
-done < "$trabajo/tablas.txt"
-
-copiadas=$(ls -1 "$trabajo/datos" | wc -l)
-[ "$copiadas" -eq "$total" ] || fallar "se copiaron $copiadas de $total tablas"
-
-# Qué migraciones estaban aplicadas: sin esto, quien restaure no sabe contra
-# qué versión del esquema cargar los datos.
-psql "$URL" -Atc "select nombre from cimba_migraciones order by nombre" \
-  > "$trabajo/migraciones-aplicadas.txt" 2>/dev/null
-
-archivo="$DESTINO/cimba-$marca.tar.gz"
-tar czf "$archivo" -C "$trabajo" datos manifiesto.txt migraciones-aplicadas.txt tablas.txt \
-  || fallar "no pude armar el archivo"
-
-tamano=$(stat -c%s "$archivo")
-[ "$tamano" -ge "$MINIMO_BYTES" ] || fallar "el archivo quedó en $tamano bytes, sospechosamente chico"
-
-# Se guarda el manifiesto suelto también: permite ver qué hay adentro sin
-# descomprimir 100 MB.
-cp "$trabajo/manifiesto.txt" "$DESTINO/cimba-$marca.manifiesto.txt"
-
-# Retención: se borran las más viejas, nunca la última.
-ls -1t "$DESTINO"/cimba-*.tar.gz 2>/dev/null | tail -n +$((CONSERVAR + 1)) | while read -r viejo; do
+# ── 4. Retención: se borran las más viejas, nunca la última ──────────────────
+ls -1t "$DESTINO"/cimba-*.dump 2>/dev/null | tail -n +$((CONSERVAR + 1)) | while read -r viejo; do
   decir "borro copia vieja: $(basename "$viejo")"
-  rm -f "$viejo" "${viejo%.tar.gz}.manifiesto.txt"
+  rm -f "$viejo"
 done
+ls -1t "$DESTINO"/config-*.tar.gz 2>/dev/null | tail -n +$((CONSERVAR + 1)) | xargs -r rm -f
+ls -1dt "$DESTINO"/fotos/20* 2>/dev/null | tail -n +$((CONSERVAR + 1)) | xargs -r rm -rf
 
-decir "listo: $(basename "$archivo") — $(du -h "$archivo" | cut -f1), $total tablas"
-echo "ok $(date +%F\ %T) $(basename "$archivo") $total tablas $(du -h "$archivo" | cut -f1)" > "$DESTINO/estado"
+# ── 5. La copia fuera del servidor (Backblaze, cifrada) ──────────────────────
+# Si el servidor se pierde, las copias de acá se pierden con él. Se suben
+# cifradas (rclone crypt): en Backblaze solo hay archivos ilegibles. La base y
+# la configuración van con --immutable (nunca se pisa nada allá; además el
+# bucket tiene Object Lock). Las fotos se copian sin borrar nada de allá: si la
+# app borra una, la de Backblaze queda. Se configura una vez con
+# poner-clave-respaldo-cimba; hasta entonces, esto no hace nada.
+RCLONE=/usr/local/bin/rclone
+RCONF=/srv/respaldos/cimba-rclone.conf
+if [ -f "$RCONF" ] && [ -x "$RCLONE" ]; then
+  if "$RCLONE" --config "$RCONF" copy --immutable --transfers 2 \
+       --include "cimba-*.dump" --include "config-*.tar.gz" "$DESTINO" respaldos-cimba:base 2>>"$registro" \
+     && "$RCLONE" --config "$RCONF" copy --transfers 4 "$FOTOS" respaldos-cimba:fotos 2>>"$registro"; then
+    afuera="copia cifrada en Backblaze"
+    decir "Backblaze: subido"
+  else
+    afuera="FALLÓ la subida a Backblaze"
+    decir "Backblaze: falló la subida (la copia local está bien)"
+    avisar "⚠️ El respaldo de CIMBA se hizo, pero no se pudo subir a Backblaze. Mirar $registro"
+  fi
+else
+  afuera="sin copia fuera del servidor (falta poner-clave-respaldo-cimba)"
+fi
+
+decir "listo: $(basename "$base") — $pedidos pedidos, $copiadas fotos, $afuera"
+echo "ok $(date +%F\ %T) $(basename "$base") $(du -h "$base" | cut -f1) · $pedidos pedidos · $copiadas fotos · último movimiento $ultimo · $afuera" > "$DESTINO/estado"
 
 # ── Cómo se restaura ─────────────────────────────────────────────────────────
 #
-#   tar xzf cimba-AAAAMMDD-HHMM.tar.gz -C /tmp/restaurar
-#   cat /tmp/restaurar/migraciones-aplicadas.txt   # contra qué esquema es
+#   # la base, en una base vacía (estructura y datos vienen juntos). La copia
+#   # es solo de root: se le pasa por la entrada estándar, porque pg_restore
+#   # corre como postgres y no puede abrir el archivo (probado el 23/10: con el
+#   # archivo como argumento restaura cero tablas).
+#   sudo -u postgres createdb cimba
+#   sudo -u postgres pg_restore -d cimba < /srv/respaldos/cimba/cimba-AAAAMMDD-HHMM.dump
 #
-#   # con la base ya migrada a esa altura:
-#   for f in /tmp/restaurar/datos/*.tsv.gz; do
-#     t=$(basename "$f" .tsv.gz)
-#     gzip -dc "$f" | psql "$URL" -c "\copy public.\"$t\" from stdin"
-#   done
+#   # las fotos del día elegido:
+#   rsync -a /srv/respaldos/cimba/fotos/AAAAMMDD-HHMM/ /var/www/cimba/fotos/
 #
-# El orden importa si hay claves foráneas: conviene cargar con las
-# restricciones diferidas, o restaurar en el orden en que las migraciones
-# crearon las tablas. Para una restauración completa y ordenada, lo más simple
-# es crear la base vacía, correr las migraciones y cargar en ese orden.
+#   # la configuración (.env, pm2, cron, nginx), en sus lugares:
+#   tar xzf /srv/respaldos/cimba/config-AAAAMMDD-HHMM.tar.gz -C /
+#
+# Las copias de antes del 23/10 (cimba-*.tar.gz con su manifiesto) son de la
+# base de Supabase: hasta el 15/10 era la base real; después, una copia
+# congelada. Se restauran como dice la versión vieja de este archivo en git.
