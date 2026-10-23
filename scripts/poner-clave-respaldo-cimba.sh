@@ -17,7 +17,10 @@
 #
 # ANTES, en Backblaze (lo hace quien tiene la cuenta):
 #   1. Un bucket privado llamado smt-cimba-respaldos-2026, con Object Lock
-#      (30 días) y una regla que borre lo de más de 90 días.
+#      (30 días). SIN regla de borrado por antigüedad (Estudia tiene una de 90
+#      días): acá las fotos se suben una sola vez, y esa regla las borraría de
+#      la copia a los 90 días. Ocupa poco: ~10 MB por día de base más las fotos
+#      nuevas. Si el bucket se llama distinto: B2_BUCKET=nombre poner-clave-respaldo-cimba
 #   2. Una Application Key con acceso SOLO a ese bucket (lectura y escritura).
 #
 # LA CONTRASEÑA DEL CIFRADO se muestra una vez al final y queda en
