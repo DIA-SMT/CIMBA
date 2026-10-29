@@ -1,5 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
+import { nombreArchivo } from "./nombre-archivo";
 
 /**
  * CSV para Excel argentino, en un solo lugar.
@@ -33,11 +34,12 @@ export function csv(columnas: string[], filas: unknown[][]): string {
   return "﻿" + lineas.join("\r\n");
 }
 
-export function respuestaCsv(nombre: string, contenido: string): NextResponse {
+/** `documento` es lo que va entre CIMBA y la fecha: "PEDIDOS", "ORDEN-2026-0027"… (ver nombreArchivo). */
+export function respuestaCsv(documento: string, contenido: string): NextResponse {
   return new NextResponse(contenido, {
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${nombre}-${new Date().toISOString().slice(0, 10)}.csv"`,
+      "content-disposition": `attachment; filename="${nombreArchivo(documento)}.csv"`,
     },
   });
 }

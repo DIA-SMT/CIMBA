@@ -161,6 +161,19 @@ export const toneladasDe = (volumenM3: number) =>
 export const toneladasDeSuperficie = (superficieM2: number, espesorCm: number) =>
   toneladasDe(volumenDe(superficieM2, espesorCm));
 
+/**
+ * EL BACHE TIPO: 1 m × 1 m × 5 cm = 0,05 m³ de mezcla, unas 0,12 t a la
+ * densidad de arriba. Pedido de la Dirección (propuesta 08, 24/10) para decir
+ * todo lo hecho en una unidad comparable entre empresas y períodos. Se calcula
+ * por la mezcla y no por la superficie (decisión del 28/10), así que solo
+ * cuenta lo que tiene el espesor cargado. Es un valor estadístico: va junto a
+ * los m² y las toneladas reales, nunca en su lugar, y no es lo que se certifica.
+ */
+export const TONELADAS_BACHE_TIPO = 0.05 * DENSIDAD_ASFALTO_T_M3;
+
+/** Cuántos baches tipo equivalen a esas toneladas de mezcla. */
+export const bachesTipoDe = (toneladas: number) => Math.round(toneladas / TONELADAS_BACHE_TIPO);
+
 /** "12,40 t" — una sola forma de escribirlo en toda la app. */
 export const formatoToneladas = (t: number) =>
   `${t.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;

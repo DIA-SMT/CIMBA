@@ -66,7 +66,7 @@ export default async function PaginaReporteCanal({
         <TituloPagina
           titulo={`Reporte a ${nombre}`}
           sub="Qué pidieron por este canal y qué pasó con cada pedido. No cambia nada: es para imprimir y entregar."
-          extra={<BotonImprimir />}
+          extra={<BotonImprimir documento={`REPORTE-${nombre}`} />}
         />
 
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">

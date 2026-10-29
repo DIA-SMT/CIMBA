@@ -47,6 +47,17 @@ export const medidaVacia = (medicion: Medicion = "lados"): ValorMedida => ({
 const aNumero = (s: string) => Number(s.trim().replace(",", "."));
 
 /**
+ * Lo que se deja escribir en una medida: dígitos y UN separador decimal, coma
+ * o punto. Lo demás se descarta al tipear (un espacio, una letra del
+ * autocorrector, un segundo separador).
+ */
+const soloDecimal = (s: string) => {
+  const t = s.replace(/[^\d.,]/g, "");
+  const i = t.search(/[.,]/);
+  return i < 0 ? t : t.slice(0, i + 1) + t.slice(i + 1).replace(/[.,]/g, "");
+};
+
+/**
  * Lo que se puede calcular con lo cargado, y qué falta para poder enviar.
  * Una sola función para el cartel en vivo y para la validación: si fueran dos,
  * el capataz vería "= 6 m²" y el botón le diría que falta algo.
@@ -126,27 +137,30 @@ export function medidaAFormData(fd: FormData, v: ValorMedida) {
   }
 }
 
+/**
+ * Campo de TEXTO con teclado decimal, no type="number". Con type="number" el
+ * celular con el teclado en español no dejaba poner la coma: el campo la
+ * rechazaba o quedaba vacío y la medida se perdía ("no puedo poner coma en las
+ * dimensiones", 28/10). Como texto acepta coma o punto, y aNumero la convierte.
+ */
 function Campo({
   etiqueta,
   valor,
   alCambiar,
-  paso = 0.1,
 }: {
   etiqueta: string;
   valor: string;
   alCambiar: (v: string) => void;
-  paso?: number;
 }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-texto-2">{etiqueta}</span>
       <input
-        type="number"
+        type="text"
         inputMode="decimal"
-        step={paso}
-        min={0}
+        autoComplete="off"
         value={valor}
-        onChange={(e) => alCambiar(e.target.value)}
+        onChange={(e) => alCambiar(soloDecimal(e.target.value))}
         className="num w-full rounded-xl border border-borde-2 bg-panel-2 px-3 py-3.5 text-lg"
       />
     </label>
@@ -244,7 +258,6 @@ export function CamposMedida({
             etiqueta="Mezcla usada (m³)"
             valor={valor.volumen}
             alCambiar={(v) => set({ volumen: v })}
-            paso={0.01}
           />
           <Campo etiqueta="Espesor (cm)" valor={valor.espesor} alCambiar={(v) => set({ espesor: v })} />
         </div>

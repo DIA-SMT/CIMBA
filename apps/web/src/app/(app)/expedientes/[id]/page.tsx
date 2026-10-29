@@ -33,7 +33,7 @@ export default async function PaginaExpediente({ params }: { params: Promise<{ i
             momento de la firma.
           </p>
         </div>
-        <BotonImprimirNota />
+        <BotonImprimirNota numero={exp.numero} />
       </div>
 
       <NotaSat

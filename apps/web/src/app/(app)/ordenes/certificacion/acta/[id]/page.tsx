@@ -41,7 +41,7 @@ export default async function PaginaActa({ params }: { params: Promise<{ id: str
         <Link href="/ordenes/certificacion" className="inline-flex items-center gap-1.5 text-sm text-texto-2 hover:text-texto">
           <ArrowLeft size={15} /> Certificación
         </Link>
-        <BotonImprimir />
+        <BotonImprimir numero={a.numero} />
       </div>
 
       <section className="hoja-acta rounded-xl border border-borde bg-panel p-6 text-sm">

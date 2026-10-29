@@ -19,6 +19,7 @@ import {
 } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
+import { bachesTipoDe } from "@/lib/medicion";
 import { LogoCimba } from "@/components/marca";
 import { usarTemaMapa } from "@/components/mapa/tema-mapa";
 
@@ -84,7 +85,7 @@ export function RailAvance({
   const filaSel = empresaSel ? datos.porEmpresa.find((e) => e.empresa === empresaSel) : null;
   /* Con una empresa elegida, la cifra grande es la de ESA empresa. */
   const hero = filaSel
-    ? { n: filaSel.n, m2: filaSel.m2, toneladas: filaSel.toneladas, empresas: 1 }
+    ? { n: filaSel.n, m2: filaSel.m2, toneladas: filaSel.toneladas, empresas: 1, obras: { n: 0, m2: 0 } }
     : c.ventana;
   const puedeNavegar = !pantalla && !publico;
   /* Lo cargado en las últimas 48 h que está en la ventana (con "Hoy" solo lo de hoy). */
@@ -144,6 +145,26 @@ export function RailAvance({
             {!empresaSel && ` · ${numero(hero.empresas)} ${hero.empresas === 1 ? "empresa" : "empresas"}`}
           </span>
         </p>
+        {/* El bache tipo (propuesta 08): una unidad para comparar, al lado de
+            los m² y las toneladas reales, nunca en su lugar. Sale de la mezcla,
+            así que solo aparece si hay espesores cargados. */}
+        {hero.toneladas > 0 && (
+          <p
+            className="num mt-1 text-sm text-texto-2"
+            title="Bache tipo: 1 m × 1 m × 5 cm, unas 0,12 t de mezcla. Es un valor para comparar, no lo que se certifica."
+          >
+            equivale a <b className="text-texto">{numero(bachesTipoDe(hero.toneladas))}</b> baches tipo
+            <span className="text-texto-3"> (1 m² × 5 cm)</span>
+          </p>
+        )}
+        {/* Las obras no entran en los baches ni en sus m² (un paño son 150 m²
+            o más): se dicen aparte para que no desaparezcan. */}
+        {!empresaSel && hero.obras.n > 0 && (
+          <p className="num mt-1 text-sm text-texto-2">
+            y además <b className="text-texto">{numero(hero.obras.n)}</b> {hero.obras.n === 1 ? "obra" : "obras"} con{" "}
+            {numero(hero.obras.m2)} m², que se cuentan aparte del bacheo
+          </p>
+        )}
         {alcance && hero.n > 0 && (
           <p className="num mt-2 text-sm font-semibold text-texto-2">
             en <b className="text-texto">{numero(alcance.cuadras)}</b> {alcance.cuadras === 1 ? "cuadra" : "cuadras"}

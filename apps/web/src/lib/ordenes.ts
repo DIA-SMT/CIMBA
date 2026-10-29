@@ -601,6 +601,13 @@ export interface OrdenResumen {
    * 10" adentro, sin nada que explicara la diferencia.
    */
   enPlan: number;
+  /**
+   * Lo que la empresa propuso y Bacheo todavía no validó ni rechazó. No se
+   * podía sacar de `items - enPlan` porque esa resta también cuenta los
+   * rechazados: hacía falta su propio conteo para que se vea en el listado y
+   * no quede ninguno olvidado.
+   */
+  propuestos: number;
   /** Los que ya no están pendientes: hechos + no encontrados + ya resueltos.
    *  Es lo que hace avanzar la barra — con solo `hechos`, una orden cerrada
    *  con dos "no encontrado" se quedaba en 80% para siempre. */
@@ -621,6 +628,8 @@ export interface OrdenResumen {
    * reportado la cerraría— y por eso hay que poder distinguirla en pantalla.
    */
   abierta: boolean;
+  /** La empresa marcó «terminamos de cargar»: espera que la Dirección la cierre. */
+  cargaTerminada: { por: string | null; en: string } | null;
 }
 
 /**
@@ -671,6 +680,8 @@ export async function listarOrdenes(
              (select count(*) from orden_items oi where oi.orden_id = ot.id
                 and oi.estado not in ('propuesto','rechazado'))::int as en_plan,
              (select count(*) from orden_items oi where oi.orden_id = ot.id
+                and oi.estado = 'propuesto')::int as propuestos,
+             (select count(*) from orden_items oi where oi.orden_id = ot.id
                 and oi.estado in ('hecho','no_encontrado','ya_resuelto','no_ejecutable'))::int as cerrados,
              (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'hecho')::int as hechos,
              (select round(coalesce(sum(oi.superficie_m2), 0))::int from orden_items oi
@@ -705,6 +716,7 @@ export async function listarOrdenes(
       ambitoNombre: nombreDelAmbito(f),
       items: Number(f.items ?? 0),
       enPlan: Number(f.en_plan ?? 0),
+      propuestos: Number(f.propuestos ?? 0),
       cerrados: Number(f.cerrados ?? 0),
       hechos: Number(f.hechos ?? 0),
       m2Reportados: Number(f.m2 ?? 0),
@@ -714,8 +726,15 @@ export async function listarOrdenes(
       creadoEn: String(f.creado_en),
       ultimoReporte: f.ultimo_reporte != null ? new Date(String(f.ultimo_reporte)).toISOString() : null,
       abierta: esAbierta(f.metadata),
+      cargaTerminada: cargaTerminadaDe(f.metadata),
     }));
   });
+}
+
+/** La marca que deja marcarCargaTerminada (quién y cuándo), o null. */
+function cargaTerminadaDe(metadata: unknown): OrdenResumen["cargaTerminada"] {
+  const c = (metadata as { carga_terminada?: { por?: unknown; en?: unknown } } | null)?.carga_terminada;
+  return c && typeof c.en === "string" ? { por: typeof c.por === "string" ? c.por : null, en: c.en } : null;
 }
 
 /** La marca que deja crearOrden cuando la orden nace sin puntos. */
@@ -747,7 +766,8 @@ export interface ItemOrden {
   reclamos: number;
   lat: number | null;
   lon: number | null;
-  fotos: Array<{ momento: string; storagePath: string | null; urlExterna: string | null }>;
+  /** `id` es el de la fila en fotografias: lo necesita «Cambiar foto». */
+  fotos: Array<{ id: number; momento: string; storagePath: string | null; urlExterna: string | null }>;
   /** Metros que el bache queda FUERA del área de la orden; null si está adentro o la orden no tiene área. */
   fueraDelAmbitoM?: number | null;
   /**
@@ -903,7 +923,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
     const fotos =
       idsIv.length > 0
         ? ((await tx.execute(sql`
-            select intervencion_id, momento, storage_path, url_externa
+            select id, intervencion_id, momento, storage_path, url_externa
             from fotografias where intervencion_id = any(${sql`array[${sql.join(idsIv.map((x) => sql`${x}`), sql`, `)}]::bigint[]`})
             order by tomada_en
           `)) as unknown as Array<Record<string, unknown>>)
@@ -913,6 +933,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       const k = Number(f.intervencion_id);
       const lista = fotosPorIv.get(k) ?? [];
       lista.push({
+        id: Number(f.id),
         momento: String(f.momento),
         storagePath: (f.storage_path as string) ?? null,
         urlExterna: (f.url_externa as string) ?? null,
@@ -994,6 +1015,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
       contratoDecreto: (o.contrato_decreto as string) ?? null,
       items: itemsDetalle.length,
       enPlan,
+      propuestos: itemsDetalle.filter((i) => i.estado === "propuesto").length,
       cerrados,
       hechos,
       m2Reportados: Math.round(itemsDetalle.reduce((a, i) => a + (i.superficieM2 ?? 0), 0)),
@@ -1006,6 +1028,7 @@ export async function obtenerOrden(sesion: Sesion, id: number): Promise<OrdenDet
         ),
       ),
       abierta: esAbierta(o.metadata),
+      cargaTerminada: cargaTerminadaDe(o.metadata),
       /* El área dibujada, si la orden se armó así. Va como GeoJSON crudo: lo
          consume el mapa, que es lo único que la necesita. */
       poligono: (o.poligono_geojson as OrdenDetalle["poligono"]) ?? null,
@@ -1599,6 +1622,13 @@ export async function contarOrdenesVencidas(sesion: Sesion): Promise<number> {
       where ot.estado in ('emitida', 'en_ejecucion')
         and ot.vence_en is not null
         and ot.vence_en < (now() at time zone 'America/Argentina/Tucuman')::date
+        -- Las que ya terminaron y esperan que la Dirección las cierre no son
+        -- vencidas (misma regla que estaVencida en formato.ts).
+        and not coalesce(ot.metadata ? 'carga_terminada', false)
+        and (coalesce(ot.metadata->>'orden_abierta', '') = 'true'
+             or exists (select 1 from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')
+             or not exists (select 1 from orden_items oi where oi.orden_id = ot.id
+                            and oi.estado not in ('propuesto','rechazado')))
     `)) as unknown as Array<{ n: number }>;
     return Number(filas[0]?.n ?? 0);
   });

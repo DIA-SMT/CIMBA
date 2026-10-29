@@ -30,6 +30,14 @@ export async function GET(req: NextRequest) {
       and ot.vence_en is not null
       and ot.vence_en <= current_date
       and coalesce(ot.metadata->>'aviso_vencimiento', '') <> current_date::text
+      -- Desde el 28/10 la orden no se cierra sola: la que ya terminó y espera
+      -- que la Dirección la cierre no recibe el aviso de vencida (autorizado
+      -- por la Dirección el 28/10). Misma regla que contarOrdenesVencidas.
+      and not coalesce(ot.metadata ? 'carga_terminada', false)
+      and (coalesce(ot.metadata->>'orden_abierta', '') = 'true'
+           or exists (select 1 from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')
+           or not exists (select 1 from orden_items oi where oi.orden_id = ot.id
+                          and oi.estado not in ('propuesto','rechazado')))
   `)) as unknown as Array<{ id: number; numero: string; vence: string; empresa: string; empresa_id: number; pendientes: number }>;
 
   // ── Cierres pendientes: el empujón diario ──────────────────────────────

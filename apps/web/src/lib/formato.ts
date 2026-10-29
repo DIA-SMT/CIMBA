@@ -247,14 +247,33 @@ export function hoyISO(): string {
  * "hoy" ya sería el día siguiente y una orden que vence hoy aparecería
  * vencida.
  */
-export const estaVencida = (o: { venceEn: string | null; estado: string }): boolean =>
-  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn < hoyISO();
+type OrdenConVencimiento = {
+  venceEn: string | null;
+  estado: string;
+  cargaTerminada?: unknown;
+  abierta?: boolean;
+  enPlan?: number;
+  cerrados?: number;
+};
+
+/**
+ * Una orden activa que ya no tiene nada que hacer: la empresa marcó
+ * «terminamos de cargar», o —salvo una orden abierta— no le queda ningún
+ * punto pendiente. Desde que la orden no se cierra sola (28/10) puede quedar
+ * días esperando a la Dirección, y eso no es una orden vencida.
+ */
+const sinNadaPendiente = (o: OrdenConVencimiento): boolean =>
+  o.cargaTerminada != null ||
+  (!o.abierta && o.enPlan != null && o.cerrados != null && o.enPlan > 0 && o.cerrados >= o.enPlan);
+
+export const estaVencida = (o: OrdenConVencimiento): boolean =>
+  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn < hoyISO() && !sinNadaPendiente(o);
 
 /** Vence hoy: último día, todavía no es deuda. Va en las DOS pantallas que
  *  muestran la fecha o en ninguna — si no, la lista dice "Vence el 11/09/26"
  *  en gris y el detalle "Vence HOY", que es el bug que se está arreglando. */
-export const venceHoy = (o: { venceEn: string | null; estado: string }): boolean =>
-  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn === hoyISO();
+export const venceHoy = (o: OrdenConVencimiento): boolean =>
+  o.venceEn != null && (o.estado === "emitida" || o.estado === "en_ejecucion") && o.venceEn === hoyISO() && !sinNadaPendiente(o);
 
 export function numero(n: number): string {
   return new Intl.NumberFormat("es-AR").format(n);

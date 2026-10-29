@@ -52,7 +52,10 @@ export async function obtenerKpis(sesion: Sesion): Promise<Kpis> {
         (select count(*) from incidentes where estado = 'en_ejecucion') as en_ejecucion,
         (select count(*) from incidentes where estado in ('reparado','verificado')
            and cerrado_en > now() - interval '30 days') as reparados_30d,
-        (select coalesce(sum(superficie_m2), 0) from intervenciones where estado = 'finalizada') as m2
+        -- Solo bacheo: las obras del SIGOV (150 m² o más cada una) inflaban la
+        -- cifra mezclando escalas que no se suman.
+        (select coalesce(sum(superficie_m2), 0) from intervenciones
+           where estado = 'finalizada' and coalesce(metadata->>'escala', '') <> 'obra') as m2
     `)) as unknown as Array<Record<string, string | number>>;
     const f = filas[0] ?? {};
     return {

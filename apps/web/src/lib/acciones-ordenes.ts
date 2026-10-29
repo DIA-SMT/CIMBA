@@ -633,6 +633,108 @@ export async function cerrarOrdenConSesion(
 }
 
 /**
+ * «TERMINAMOS DE CARGAR» (28/10). Desde que la orden ya no se cierra sola,
+ * la empresa avisa con esto que cargó todo —lo de la orden y lo que encontró
+ * en el lugar— y la Dirección revisa y cierra. Solo deja una marca en la
+ * orden (quién y cuándo); el cierre sigue siendo de la Dirección.
+ *
+ * Quién: la empresa o la cuadrilla, y solo sobre SUS órdenes
+ * (empresaDelEjecutor). No se acepta con puntos pendientes: hay que
+ * reportarlos o marcarlos como no encontrados antes.
+ */
+export async function marcarCargaTerminada(entrada: { ordenId: number }) {
+  const sesion = await requerirRol("empresa", "cuadrilla");
+  const datos = z.object({ ordenId: z.number().int().positive() }).parse(entrada);
+  const empresa = await empresaDelEjecutor(sesion);
+  if (empresa == null) throw new ErrorVisible("Tu usuario no está asociado a ninguna empresa");
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select estado::text as estado,
+             (select count(*) from orden_items oi where oi.orden_id = ot.id and oi.estado = 'pendiente')::int as pendientes
+      from ordenes_trabajo ot
+      where ot.id = ${datos.ordenId} and ot.empresa_id = ${empresa}
+      for update
+    `)) as unknown as Array<{ estado: string; pendientes: number }>;
+    const o = filas[0];
+    if (!o) throw new ErrorVisible("La orden no existe o no es de tu empresa");
+    if (!["emitida", "en_ejecucion"].includes(o.estado)) throw new ErrorVisible("La orden no está activa");
+    if (o.pendientes > 0) {
+      throw new ErrorVisible(
+        o.pendientes === 1
+          ? "Queda 1 bache sin reportar: cargalo o marcalo como no encontrado antes de terminar."
+          : `Quedan ${o.pendientes} baches sin reportar: cargalos o marcalos como no encontrados antes de terminar.`,
+      );
+    }
+    await tx.execute(sql`
+      update ordenes_trabajo set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+        'carga_terminada', jsonb_build_object('por', ${sesion.nombre}::text, 'en', now()::text)
+      )
+      where id = ${datos.ordenId}
+    `);
+  });
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  revalidatePath(`/empresa/orden/${datos.ordenId}`);
+  return { ok: true };
+}
+
+/**
+ * REABRIR UNA ORDEN CERRADA (28/10). Para la OT-2026-0049, que se cerró sola
+ * antes del cambio y quedaron tres baches del lugar sin poder cargarse, y
+ * para cualquier cierre que haya que corregir. Solo la Dirección, con motivo;
+ * queda escrito quién, cuándo y por qué. Lo que ya estaba en un acta sigue
+ * bloqueado como siempre: reabrir no toca los puntos.
+ */
+export async function reabrirOrden(entrada: { ordenId: number; motivo: string }) {
+  const sesion = await requerirRol("planificacion");
+  const datos = z
+    .object({ ordenId: z.number().int().positive(), motivo: z.string().trim().min(3).max(500) })
+    .parse(entrada);
+
+  await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select estado::text as estado from ordenes_trabajo where id = ${datos.ordenId} for update
+    `)) as unknown as Array<{ estado: string }>;
+    const o = filas[0];
+    if (!o) throw new ErrorVisible("La orden no existe");
+    if (o.estado !== "completada") throw new ErrorVisible("Solo se puede reabrir una orden cerrada");
+
+    await tx.execute(sql`
+      update ordenes_trabajo set
+        estado = 'en_ejecucion',
+        cerrada_en = null,
+        metadata = (coalesce(metadata, '{}'::jsonb) - 'carga_terminada') || jsonb_build_object(
+          'reaperturas', coalesce(metadata->'reaperturas', '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+            'por', ${sesion.nombre}::text, 'en', now()::text, 'motivo', ${datos.motivo}::text
+          ))
+        )
+      where id = ${datos.ordenId}
+    `);
+
+    // Lo que quedó pendiente volvió a la cola al cerrar; si nadie lo tomó en
+    // otra orden, vuelve a estar programado en esta.
+    await tx.execute(sql`
+      update incidentes set estado = 'programado'
+      from orden_items oi
+      where oi.orden_id = ${datos.ordenId} and oi.incidente_id = incidentes.id
+        and oi.estado = 'pendiente' and incidentes.estado = 'priorizado'
+        and not exists (
+          select 1 from orden_items o2 join ordenes_trabajo ot2 on ot2.id = o2.orden_id
+          where o2.incidente_id = incidentes.id and o2.orden_id <> ${datos.ordenId}
+            and ot2.estado in ('emitida','en_ejecucion')
+        )
+    `);
+  });
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${datos.ordenId}`);
+  revalidatePath("/empresa");
+  revalidatePath(`/empresa/orden/${datos.ordenId}`);
+  return { ok: true };
+}
+
+/**
  * CORREGIR LA FECHA DE FINALIZACIÓN.
  *
  * "Me faltaría poder editar la fecha de finalización" (Dirección de Bacheo,
@@ -1247,33 +1349,18 @@ export async function reportarItemHecho(formData: FormData) {
       where id = ${datos.itemId}
     `);
 
-    /**
-     * Lock de la orden antes de evaluar el cierre automático. Sin esto, dos
-     * reportes concurrentes de los dos últimos items ven cada uno el pendiente
-     * del otro (todavía sin commitear) y NINGUNO completa la orden. Con el
-     * lock, el segundo espera al primero y ya ve su item hecho.
-     */
     await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(item.orden_id)} for update`);
 
-    // La orden avanza sola: primera carga → en ejecución; sin pendientes → completada.
+    /**
+     * La orden avanza sola SOLO de emitida a en ejecución. YA NO SE CIERRA
+     * SOLA al reportar el último punto (28/10): la cuadrilla encuentra baches
+     * que no estaban en la orden y no podía proponerlos porque la orden se
+     * había cerrado (OT-2026-0049). Ahora la empresa marca «terminamos de
+     * cargar» y la cierra la Dirección, que es quien certifica.
+     */
     await tx.execute(sql`
       update ordenes_trabajo set estado = 'en_ejecucion'
       where id = ${Number(item.orden_id)} and estado = 'emitida'
-    `);
-    /**
-     * Una ORDEN ABIERTA no se cierra sola. El cierre automático dispara cuando
-     * no quedan items pendientes ni propuestos; en una orden abierta —sin
-     * lista de puntos, la empresa carga lo que encuentra— eso pasa apenas se
-     * reporta el PRIMER bache, y la cuadrilla se encontraría la orden cerrada
-     * a mitad de la cuadra. Esas las cierra una persona, con su fecha.
-     */
-    await tx.execute(sql`
-      update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(item.orden_id)} and estado = 'en_ejecucion'
-        and not exists (
-          select 1 from orden_items oi
-          where oi.orden_id = ${Number(item.orden_id)} and oi.estado in ('pendiente','propuesto')
-        )
     `);
 
     return { incidenteId };
@@ -1339,13 +1426,10 @@ export async function reportarItemNoEncontrado(entrada: { itemId: number; motivo
     `)) as unknown as Array<{ orden_id: number }>;
     const fila = r[0];
     if (!fila) throw new ErrorVisible("El item no está pendiente o la orden no está activa");
+    // Ya no se cierra sola (ver reportarItemHecho): solo pasa a en ejecución.
     await tx.execute(sql`
-      update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-      where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(fila.orden_id)} and estado in ('emitida','en_ejecucion')
-        and not exists (
-          select 1 from orden_items oi
-          where oi.orden_id = ${Number(fila.orden_id)} and oi.estado in ('pendiente','propuesto')
-        )
+      update ordenes_trabajo set estado = 'en_ejecucion'
+      where id = ${Number(fila.orden_id)} and estado = 'emitida'
     `);
   });
   revalidatePath("/empresa");
@@ -1745,6 +1829,12 @@ export async function proponerItem(formData: FormData) {
         )
         returning id
       `)) as unknown as Array<{ id: number }>;
+      // Si ya habían marcado «terminamos de cargar» y aparece un bache más,
+      // la carga no estaba terminada: se saca la marca.
+      await tx.execute(sql`
+        update ordenes_trabajo set metadata = metadata - 'carga_terminada'
+        where id = ${datos.ordenId} and metadata ? 'carga_terminada'
+      `);
       return filas[0] ? Number(filas[0].id) : null;
     });
   } catch (e) {
@@ -2358,19 +2448,11 @@ export async function marcarYaResuelto(formData: FormData) {
         `);
       }
 
-      // La orden avanza sola (mismo lock que el reporte normal).
+      // La orden avanza a en ejecución, pero no se cierra sola (ver reportarItemHecho).
       await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(previa.orden_id)} for update`);
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'en_ejecucion'
         where id = ${Number(previa.orden_id)} and estado = 'emitida'
-      `);
-      await tx.execute(sql`
-        update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
-          and not exists (
-            select 1 from orden_items oi
-            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
-          )
       `);
     });
   } catch (e) {
@@ -2527,19 +2609,11 @@ export async function reportarItemNoEjecutable(formData: FormData) {
          */
       }
 
-      // La orden avanza igual: este item ya no está pendiente.
+      // La orden avanza a en ejecución, pero no se cierra sola (ver reportarItemHecho).
       await tx.execute(sql`select 1 from ordenes_trabajo where id = ${Number(previa.orden_id)} for update`);
       await tx.execute(sql`
         update ordenes_trabajo set estado = 'en_ejecucion'
         where id = ${Number(previa.orden_id)} and estado = 'emitida'
-      `);
-      await tx.execute(sql`
-        update ordenes_trabajo set estado = 'completada', cerrada_en = now()
-        where coalesce(metadata->>'orden_abierta','') <> 'true' and id = ${Number(previa.orden_id)} and estado = 'en_ejecucion'
-          and not exists (
-            select 1 from orden_items oi
-            where oi.orden_id = ${Number(previa.orden_id)} and oi.estado in ('pendiente','propuesto')
-          )
       `);
     });
   } catch (e) {
@@ -2950,6 +3024,188 @@ export async function completarItemHecho(formData: FormData) {
   revalidatePath("/ordenes/control");
   revalidatePath("/mapa");
   revalidatePath("/brecha");
+  return { ok: true };
+}
+
+/**
+ * PASAR UN BACHE A OTRA ORDEN (28/10). «Muchos puntos de la zona sur se
+ * encuentran cargados en la orden de zona norte»: la empresa cargó en la
+ * orden equivocada y no había forma de moverlos sin borrar y volver a cargar.
+ *
+ * Solo Bacheo (decisión del 28/10): la empresa lo pide y lo hace la
+ * Dirección. Solo entre órdenes de la MISMA empresa, a una orden no anulada,
+ * y nunca un bache que ya está en un acta firmada. El bache se mueve con todo
+ * lo suyo (medidas, fotos, trabajo); en el item queda escrito de qué orden
+ * vino, quién lo movió, cuándo y por qué.
+ */
+export async function moverItemAOrden(entrada: { itemId: number; ordenDestinoId: number; motivo: string }) {
+  const sesion = await requerirRol("planificacion", "supervision");
+  const datos = z
+    .object({
+      itemId: z.number().int().positive(),
+      ordenDestinoId: z.number().int().positive(),
+      motivo: z.string().trim().min(3, "Contá por qué se mueve").max(300),
+    })
+    .parse(entrada);
+
+  const r = await conRls(claims(sesion), async (tx) => {
+    const filas = (await tx.execute(sql`
+      select oi.orden_id, oi.acta_id, oi.estado::text as estado,
+             o1.numero as numero_origen, o1.empresa_id as empresa_origen,
+             o2.numero as numero_destino, o2.empresa_id as empresa_destino, o2.estado::text as estado_destino
+      from orden_items oi
+      join ordenes_trabajo o1 on o1.id = oi.orden_id
+      join ordenes_trabajo o2 on o2.id = ${datos.ordenDestinoId}
+      where oi.id = ${datos.itemId}
+      for update of oi
+    `)) as unknown as Array<{
+      orden_id: number; acta_id: number | null; estado: string;
+      numero_origen: string; empresa_origen: number;
+      numero_destino: string; empresa_destino: number; estado_destino: string;
+    }>;
+    const f = filas[0];
+    if (!f) throw new ErrorVisible("El bache o la orden de destino no existen");
+    if (Number(f.orden_id) === datos.ordenDestinoId) throw new ErrorVisible("El bache ya está en esa orden");
+    if (f.acta_id != null) throw new ErrorVisible("Este bache ya está en un acta firmada: no se mueve.");
+    if (Number(f.empresa_origen) !== Number(f.empresa_destino)) {
+      throw new ErrorVisible("Solo se puede pasar a otra orden de la misma empresa");
+    }
+    if (f.estado_destino === "anulada" || f.estado_destino === "borrador") {
+      throw new ErrorVisible("La orden de destino está anulada o todavía no se emitió");
+    }
+    await tx.execute(sql`
+      update orden_items set orden_id = ${datos.ordenDestinoId},
+        metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'movimientos', coalesce(metadata->'movimientos', '[]'::jsonb) || ${JSON.stringify([
+            {
+              de: f.numero_origen,
+              a: f.numero_destino,
+              motivo: datos.motivo,
+              por: sesion.nombre,
+              en: new Date().toISOString(),
+            },
+          ])}::jsonb
+        )
+      where id = ${datos.itemId}
+    `);
+    return { origen: Number(f.orden_id), destino: f.numero_destino };
+  });
+
+  revalidatePath("/ordenes");
+  revalidatePath(`/ordenes/${r.origen}`);
+  revalidatePath(`/ordenes/${datos.ordenDestinoId}`);
+  revalidatePath("/empresa");
+  return { ok: true, destino: r.destino };
+}
+
+/**
+ * CAMBIAR UNA FOTO YA CARGADA (28/10, propuesta 03). «El inspector me
+ * notificó que tengo fotos repetidas y seguramente me confundí en la carga»:
+ * hasta acá la empresa podía agregar fotos a un bache hecho, pero no cambiar
+ * una equivocada.
+ *
+ * La foto anterior NO se borra: el archivo queda en el disco y el item guarda
+ * en `metadata.fotos_reemplazadas` cuál era, quién la cambió, cuándo y por
+ * qué (orden_items está en la auditoría). La foto del antes no se puede volver
+ * a sacar —el bache ya está tapado—, así que perderla sería irreparable, y el
+ * inspector tiene que poder ver qué se cambió.
+ *
+ * Quién: la empresa o la cuadrilla sobre lo suyo (empresaDelEjecutor) y
+ * Bacheo. Mismo candado que las medidas: con el bache en un acta firmada, no.
+ */
+export async function reemplazarFotoTrabajo(formData: FormData) {
+  const sesion = await requerirRol("empresa", "cuadrilla", "planificacion", "supervision");
+  const datos = z
+    .object({
+      itemId: z.coerce.number().int().positive(),
+      fotoId: z.coerce.number().int().positive(),
+      motivo: z.string().trim().min(3, "Contá por qué se cambia la foto").max(300),
+    })
+    .parse({ itemId: formData.get("itemId"), fotoId: formData.get("fotoId"), motivo: formData.get("motivo") });
+
+  const TIPOS_FOTO: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const foto = formData.get("foto");
+  if (!(foto instanceof File) || foto.size === 0) throw new ErrorVisible("Elegí la foto nueva");
+  if (foto.size > 8 * 1024 * 1024) throw new ErrorVisible("La foto supera 8 MB");
+  if (!TIPOS_FOTO[foto.type]) throw new ErrorVisible("La foto tiene que ser una imagen (JPG, PNG o WEBP)");
+
+  const empresaEjecutora = await empresaDelEjecutor(sesion);
+  const revisar = (f: { estado: string; acta_id: number | null; orden_estado: string; empresa_id: number } | undefined) => {
+    if (!f) throw new ErrorVisible("El trabajo no existe");
+    if (empresaEjecutora != null && Number(f.empresa_id) !== empresaEjecutora) throw new ErrorVisible("Este trabajo no es de tu empresa");
+    if (f.estado !== "hecho") throw new ErrorVisible("Este bache no tiene un trabajo hecho");
+    if (f.acta_id != null) throw new ErrorVisible("Este trabajo ya está en un acta firmada: no se modifica.");
+    if (f.orden_estado === "anulada") throw new ErrorVisible("La orden está anulada");
+  };
+  type Previa = { estado: string; acta_id: number | null; orden_estado: string; empresa_id: number; momento: string | null };
+  const consultaPrevia = sql`
+    select oi.estado, oi.acta_id, ot.estado as orden_estado, ot.empresa_id, fo.momento::text as momento
+    from orden_items oi
+    join ordenes_trabajo ot on ot.id = oi.orden_id
+    left join fotografias fo on fo.id = ${datos.fotoId} and fo.intervencion_id = oi.intervencion_id
+    where oi.id = ${datos.itemId}
+  `;
+
+  // Todo lo que se pueda rechazar, ANTES de subir el archivo.
+  const previa = (await conRls(claims(sesion), async (tx) => (await tx.execute(consultaPrevia)) as unknown as Previa[]))[0];
+  revisar(previa);
+  if (!previa!.momento) throw new ErrorVisible("Esa foto no es de este bache");
+
+  const { clienteFotos } = await import("./almacen-fotos");
+  const supabase = clienteFotos();
+  const ruta = `ordenes/${datos.itemId}/${previa!.momento}-${Date.now()}.${TIPOS_FOTO[foto.type]}`;
+  const bytes = Buffer.from(await foto.arrayBuffer());
+  const subida = await supabase.storage.from("fotografias").upload(ruta, bytes, { contentType: foto.type, upsert: false });
+  if (subida.error) throw new ErrorVisible(`No se pudo subir la foto: ${subida.error.message}`);
+  const { huellaDeImagen } = await import("./huella-foto");
+  const huella = await huellaDeImagen(bytes);
+
+  try {
+    await conRls(claims(sesion), async (tx) => {
+      await tx.execute(sql`select 1 from orden_items where id = ${datos.itemId} for update`);
+      revisar(((await tx.execute(consultaPrevia)) as unknown as Previa[])[0]);
+      const anterior = (await tx.execute(sql`
+        select fo.momento::text as momento, fo.storage_path, fo.url_externa
+        from fotografias fo join orden_items oi on oi.intervencion_id = fo.intervencion_id
+        where fo.id = ${datos.fotoId} and oi.id = ${datos.itemId}
+        for update of fo
+      `)) as unknown as Array<{ momento: string; storage_path: string | null; url_externa: string | null }>;
+      const a = anterior[0];
+      if (!a) throw new ErrorVisible("Esa foto no es de este bache");
+
+      await tx.execute(sql`
+        update fotografias set storage_path = ${ruta}, url_externa = null, huella = ${huella}::bit(64),
+          tomada_en = now(), subida_en = now()
+        where id = ${datos.fotoId}
+      `);
+      await tx.execute(sql`
+        update orden_items set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+          'fotos_reemplazadas',
+          coalesce(metadata->'fotos_reemplazadas', '[]'::jsonb) || ${JSON.stringify([
+            {
+              foto_id: datos.fotoId,
+              momento: a.momento,
+              anterior: { storage_path: a.storage_path, url_externa: a.url_externa },
+              nueva: ruta,
+              motivo: datos.motivo,
+              por: sesion.nombre,
+              en: new Date().toISOString(),
+            },
+          ])}::jsonb
+        )
+        where id = ${datos.itemId}
+      `);
+    });
+  } catch (e) {
+    // La transacción no quedó: lo único huérfano es el archivo NUEVO. El
+    // anterior no se tocó nunca.
+    await supabase.storage.from("fotografias").remove([ruta]).catch(() => undefined);
+    throw e;
+  }
+
+  revalidatePath("/empresa");
+  revalidatePath("/ordenes");
+  revalidatePath("/ordenes/control");
   return { ok: true };
 }
 

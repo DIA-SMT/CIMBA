@@ -1,5 +1,6 @@
 import type { EstadoIncidente } from "@cimba/domain";
 import { ETIQUETA_FUENTE, ETIQUETA_TIPO, SEMAFORO_HEX, type PasoSemaforo, fechaCorta, pasoDeEstado } from "@/lib/formato";
+import { nombreArchivo } from "@/lib/nombre-archivo";
 
 /** El reporte se imprime sobre BLANCO, así que el semáforo va siempre en su
  *  juego CLARO — el mismo que valida contra positron. Los tokens var() no
@@ -120,7 +121,7 @@ export function construirReporteHtml(d: DatosReporte): string {
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<title>CIMBA · Reporte del mapa · ${fecha}</title>
+<title>${nombreArchivo("REPORTE-MAPA")}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>

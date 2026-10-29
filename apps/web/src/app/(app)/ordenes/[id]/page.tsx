@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { leerSesion } from "@/lib/auth";
-import { listarEmpresas, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
+import { listarEmpresas, listarOrdenes, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { TicketBache } from "@/components/ticket-bache";
 import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
@@ -15,6 +15,7 @@ import { AccionesOrden } from "./acciones-orden";
 import { HojaOrdenImprimible } from "./hoja-orden";
 import { CorregirFecha } from "./corregir-fecha";
 import { CorregirUbicacionItem } from "@/components/corregir-ubicacion-item";
+import { MoverItem } from "./mover-item";
 import { MapaOrden } from "@/app/empresa/orden/[id]/mapa-orden";
 import { ResolverPropuesto } from "./resolver-propuesto";
 import { BorrarItem } from "./borrar-item";
@@ -106,6 +107,13 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
   // Supervisión también valida propuestos (resolverPropuesto lo permite); la
   // corrección del tipo de intervención queda para admin/planificación.
   const puedeSupervisar = puedePlanificar || sesion.rol_cimba === "supervision";
+  /* A dónde se puede pasar un bache cargado en la orden equivocada (28/10):
+     las otras órdenes de la MISMA empresa que no estén anuladas ni en borrador. */
+  const destinosMover = puedeSupervisar
+    ? (await listarOrdenes(sesion, { empresaId: o.empresaId }))
+        .filter((x) => x.id !== o.id && x.estado !== "anulada" && x.estado !== "borrador")
+        .map((x) => ({ id: x.id, numero: x.numero, detalle: x.ambitoNombre ?? x.titulo ?? "" }))
+    : [];
   const noEncontrados = o.itemsDetalle.filter((i) => i.estado === "no_encontrado").length;
   const propuestos = o.itemsDetalle.filter((i) => i.estado === "propuesto");
   /* Los puntos del mapa: lo que falta, lo hecho y lo que espera validación. */
@@ -227,9 +235,12 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
           </div>
           <AccionesOrden
             ordenId={o.id}
+            numero={o.numero}
             estado={o.estado}
             puedePlanificar={puedePlanificar}
-            itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente" || i.estado === "propuesto").length}
+            itemsPendientes={o.itemsDetalle.filter((i) => i.estado === "pendiente").length}
+            propuestosSinValidar={propuestos.length}
+            cargaTerminada={o.cargaTerminada}
             empresaId={o.empresaId}
             empresas={empresas}
           />
@@ -293,7 +304,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
         {/* Bandeja de validación: lo que la cuadrilla encontró en la calle */}
         {propuestos.length > 0 && (
           <>
-            <h2 className="mb-3 text-sm font-bold tracking-wide uppercase">
+            <h2 id="propuestos" className="mb-3 scroll-mt-20 text-sm font-bold tracking-wide uppercase">
               Propuestos por la empresa ({numero(propuestos.length)}){" "}
               <span className="font-normal text-texto-3 normal-case">
                 — baches que la cuadrilla encontró y no estaban en la orden; validado, pasa a pendiente
@@ -474,7 +485,7 @@ export default async function PaginaOrden({ params }: { params: Promise<{ id: st
               {o.itemsDetalle
                 .filter((it) => it.estado !== "propuesto")
                 .map((it) => (
-                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} puedePlanificar={puedePlanificar} />
+                  <FilaItem key={it.id} item={it} puedeCorregirTipo={puedePlanificar} puedePlanificar={puedePlanificar} destinosMover={destinosMover} />
                 ))}
               {/**
                 * LA SUMA, AL PIE DE LA COLUMNA QUE SUMA.
@@ -517,10 +528,13 @@ function FilaItem({
   item,
   puedeCorregirTipo,
   puedePlanificar,
+  destinosMover,
 }: {
   item: ItemOrden;
   puedeCorregirTipo: boolean;
   puedePlanificar: boolean;
+  /** Vacío para quien no es de Bacheo: ahí no aparece «Pasar a otra orden». */
+  destinosMover: Array<{ id: number; numero: string; detalle: string }>;
 }) {
   const medidas =
     item.anchoM != null && item.largoM != null && item.espesorCm != null
@@ -646,6 +660,13 @@ function FilaItem({
         {puedePlanificar && item.estado !== "hecho" && item.intervencionId == null && (
           <span className="mt-1 flex justify-end">
             <BorrarItem itemId={item.id} direccion={item.direccion} />
+          </span>
+        )}
+        {/* Cargado en la orden equivocada: se pasa a otra de la misma empresa
+            (solo Bacheo, nunca con el bache en un acta). */}
+        {item.actaId == null && destinosMover.length > 0 && (
+          <span className="mt-1 flex justify-end">
+            <MoverItem itemId={item.id} destinos={destinosMover} />
           </span>
         )}
       </td>

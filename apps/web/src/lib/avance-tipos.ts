@@ -275,6 +275,8 @@ export interface DatosAvance {
       sinMedida: number;
       /** Pedidos de vecinos cerrados en la ventana. */
       vecinos: number;
+      /** Obras (carpetas, paños) de la ventana: van aparte, sus m² no se suman a los del bacheo. */
+      obras: { n: number; m2: number };
     };
     hoy: Cifra;
     ayer: Cifra;

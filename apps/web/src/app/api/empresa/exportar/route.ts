@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
       (o) => o.estado !== "borrador",
     );
     return respuestaCsv(
-      "cimba-mis-ordenes",
+      "MIS-ORDENES",
       csv(
         [
           "Orden",
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
 
   const trabajos = await trabajosDeEmpresa(sesion, empresaId, { ordenId });
   return respuestaCsv(
-    ordenId ? "cimba-trabajos-de-la-orden" : "cimba-mis-trabajos",
+    ordenId ? "TRABAJOS-DE-LA-ORDEN" : "MIS-TRABAJOS",
     csv(
       [
         "Ticket",

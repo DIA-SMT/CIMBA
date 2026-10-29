@@ -5,6 +5,7 @@ import { csv, respuestaCsv } from "@/lib/csv";
 import { fechaCorta } from "@/lib/formato";
 import { urlFoto } from "@/lib/fotos";
 import { toneladasDe, volumenDe } from "@/lib/medicion";
+import { documentoOrden } from "@/lib/nombre-archivo";
 import { obtenerOrden } from "@/lib/ordenes";
 import { ETIQUETA_ESTADO_ITEM, ETIQUETA_TIPO_TRABAJO } from "@/app/(app)/ordenes/etiquetas";
 import { ETIQUETA_TIPO_INTERVENCION } from "@/app/(app)/ordenes/[id]/tipos-intervencion";
@@ -36,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!orden) return NextResponse.json({ error: "no existe" }, { status: 404 });
 
   return respuestaCsv(
-    `cimba-${orden.numero}`,
+    documentoOrden(orden.numero),
     csv(
       [
         "Ticket",

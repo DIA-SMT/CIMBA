@@ -4,9 +4,10 @@ import { ArrowLeftRight, CheckCircle2, Download, Printer, Send } from "lucide-re
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { EstadoOrden } from "@cimba/domain";
-import { anularOrden, cerrarOrden, emitirOrden, reasignarOrden } from "@/lib/acciones-ordenes";
+import { anularOrden, cerrarOrden, emitirOrden, reabrirOrden, reasignarOrden } from "@/lib/acciones-ordenes";
 import { mensajeDeError } from "@/lib/errores";
 import { hoyISO } from "@/lib/formato";
+import { documentoOrden, imprimirComo, nombreArchivo } from "@/lib/nombre-archivo";
 
 /**
  * Los botones del ciclo de vida: emitir (borrador → empresa), anular con
@@ -15,17 +16,31 @@ import { hoyISO } from "@/lib/formato";
  */
 export function AccionesOrden({
   ordenId,
+  numero,
   estado,
   puedePlanificar,
   itemsPendientes = 0,
+  propuestosSinValidar = 0,
+  cargaTerminada = null,
   empresaId,
   empresas = [],
 }: {
   ordenId: number;
+  /** OT-2026-0027: da el nombre del PDF al imprimir. */
+  numero: string;
   estado: EstadoOrden;
   puedePlanificar: boolean;
   /** Lo que quedaría sin hacer si se cierra ahora: se dice antes de cerrar. */
   itemsPendientes?: number;
+  /**
+   * Lo que la empresa propuso y nadie validó. Iba sumado a los pendientes y
+   * el cierre decía que "vuelve a la cola", pero no: queda propuesto en la
+   * bandeja de la orden. Se avisa aparte y no se bloquea el cierre — decisión
+   * de la Dirección (26/10): mostrar cuántos son y dejar cerrar igual.
+   */
+  propuestosSinValidar?: number;
+  /** La empresa marcó «terminamos de cargar» (quién y cuándo): se dice al cerrar. */
+  cargaTerminada?: { por: string | null; en: string } | null;
   /** Para reasignar: quién la tiene hoy y a quién se le puede pasar. */
   empresaId?: number;
   empresas?: Array<{ id: number; nombre: string }>;
@@ -41,6 +56,8 @@ export function AccionesOrden({
   const [reasignando, setReasignando] = useState(false);
   const [nuevaEmpresa, setNuevaEmpresa] = useState("");
   const [motivoReasignacion, setMotivoReasignacion] = useState("");
+  const [reabriendo, setReabriendo] = useState(false);
+  const [motivoReapertura, setMotivoReapertura] = useState("");
 
   const ejecutar = (fn: () => Promise<unknown>) => {
     setError(null);
@@ -50,6 +67,8 @@ export function AccionesOrden({
         setAnulando(false);
         setCerrando(false);
         setReasignando(false);
+        setReabriendo(false);
+        setMotivoReapertura("");
         setMotivo("");
         setObservacion("");
         setMotivoReasignacion("");
@@ -85,7 +104,7 @@ export function AccionesOrden({
           </button>
         )}
         <button
-          onClick={() => window.print()}
+          onClick={() => imprimirComo(nombreArchivo(documentoOrden(numero)))}
           className="flex items-center gap-2 rounded-lg border border-borde-2 px-4 py-2.5 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste"
           title="Imprimir la orden en papel (o guardarla como PDF)"
         >
@@ -123,6 +142,18 @@ export function AccionesOrden({
             title="Pasarle esta orden a otra empresa"
           >
             <ArrowLeftRight size={15} /> Cambiar de empresa
+          </button>
+        )}
+        {/* Reabrir (28/10): para la orden que se cerró antes de tiempo —la
+            OT-2026-0049 se cerró sola con tres baches del lugar sin cargar—. */}
+        {puedePlanificar && estado === "completada" && !reabriendo && (
+          <button
+            disabled={pendiente}
+            onClick={() => setReabriendo(true)}
+            className="rounded-lg border border-borde-2 px-4 py-2.5 text-sm font-semibold text-texto-2 transition hover:border-celeste/50 hover:text-celeste disabled:opacity-50"
+            title="Volver a abrir la orden para que la empresa pueda seguir cargando"
+          >
+            Reabrir orden
           </button>
         )}
         {puedePlanificar && anulable && !anulando && (
@@ -189,9 +220,45 @@ export function AccionesOrden({
         </div>
       )}
 
+      {reabriendo && (
+        <div className="w-full max-w-md rounded-xl border border-borde-2 bg-panel p-3 text-left">
+          <p className="text-sm font-bold">Reabrir la orden</p>
+          <p className="mt-0.5 text-[12px] leading-snug text-texto-2">
+            Vuelve a estar en ejecución y la empresa puede seguir cargando. Lo que ya está en un acta no se
+            toca. Queda escrito quién la reabrió, cuándo y por qué.
+          </p>
+          <input
+            autoFocus
+            value={motivoReapertura}
+            onChange={(e) => setMotivoReapertura(e.target.value)}
+            placeholder="Motivo (obligatorio): por ejemplo, faltan cargar baches encontrados en el lugar"
+            className="mt-2 w-full rounded-lg border border-borde-2 bg-panel-2 px-3 py-2 text-sm placeholder:text-texto-3"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              disabled={pendiente || motivoReapertura.trim().length < 3}
+              onClick={() => ejecutar(() => reabrirOrden({ ordenId, motivo: motivoReapertura.trim() }))}
+              className="rounded-lg bg-azul px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-40"
+            >
+              {pendiente ? "Reabriendo…" : "Confirmar"}
+            </button>
+            <button onClick={() => setReabriendo(false)} className="text-sm text-texto-2 hover:text-texto">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       {cerrando && (
         <div className="w-full max-w-md rounded-xl border border-resuelto/40 bg-resuelto/5 p-3 text-left">
           <p className="text-sm font-bold text-resuelto">Cerrar la orden</p>
+          {cargaTerminada && (
+            <p className="mt-0.5 text-[12px] leading-snug text-texto-2">
+              La empresa marcó <b className="text-texto">«terminamos de cargar»</b> el{" "}
+              {new Date(cargaTerminada.en).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Tucuman" })}
+              {cargaTerminada.por ? ` (${cargaTerminada.por})` : ""}.
+            </p>
+          )}
           <p className="mt-0.5 text-[12px] leading-snug text-texto-2">
             Lo cargado queda firme y se certifica igual.{" "}
             {itemsPendientes > 0 ? (
@@ -203,6 +270,21 @@ export function AccionesOrden({
               <>No queda nada pendiente.</>
             )}
           </p>
+          {propuestosSinValidar > 0 && (
+            <p className="mt-2 rounded-lg border border-amarillo/50 bg-amarillo/10 px-2.5 py-2 text-[12px] leading-snug text-texto">
+              <b className="num text-amarillo">
+                {propuestosSinValidar === 1
+                  ? "1 bache propuesto por la empresa"
+                  : `${propuestosSinValidar} baches propuestos por la empresa`}
+              </b>{" "}
+              {propuestosSinValidar === 1 ? "todavía no se validó" : "todavía no se validaron"}. Se
+              puede cerrar igual: {propuestosSinValidar === 1 ? "queda" : "quedan"} en la bandeja de la
+              orden para validar o rechazar después.{" "}
+              <a href="#propuestos" className="font-semibold text-celeste hover:underline">
+                Revisarlos antes
+              </a>
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold text-texto-2">

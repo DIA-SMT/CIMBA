@@ -205,7 +205,7 @@ const AYUDA_KPI = {
   abiertos: "Incidentes (problemas físicos confirmados) detectados o priorizados, sin cuadrilla asignada aún.",
   enCurso: "Incidentes con trabajo programado o en ejecución (cuadrilla u obra SIGOV).",
   resueltos: "Incidentes reparados o verificados.",
-  m2: "Metros cuadrados de pavimento intervenidos según SIGOV y planillas (intervenciones finalizadas).",
+  m2: "Metros cuadrados de bacheo terminado en toda la ciudad, de órdenes, planillas y carga de las empresas. No incluye las obras del SIGOV (carpetas y paños), que son de otra escala y no se suman.",
 } as const;
 
 // ── Tipos del contrato /api/geodata ─────────────────────────────────────────
@@ -5185,7 +5185,7 @@ function MapaInterno({
             <Kpi etiqueta="Resueltos" valor={kpis.resueltos} color={SEMAFORO.resuelto} ayuda={AYUDA_KPI.resueltos} cargando={sinDatos} />
           )}
           {verKpi("m2") && (
-            <Kpi etiqueta="m² intervenidos" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
+            <Kpi etiqueta="m² de bacheo" valor={kpis.m2} color="var(--color-celeste)" ayuda={AYUDA_KPI.m2} />
           )}
         </div>
       )}

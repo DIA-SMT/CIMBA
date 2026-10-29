@@ -19,6 +19,8 @@ import { fotoPropuestaAntes, fotoPropuestaDespues } from "@/lib/propuesto";
 import { CorregirMedidas } from "@/app/(app)/ordenes/[id]/corregir-medidas";
 import { MapaOrden } from "./mapa-orden";
 import { ProponerItem } from "./proponer-item";
+import { TerminarCarga } from "./terminar-carga";
+import { CambiarFoto } from "./cambiar-foto";
 import { ListaPendientes } from "./lista-pendientes";
 import { ListaPorTandas } from "./lista-por-tandas";
 import { CompletarHecho } from "./completar-hecho";
@@ -253,7 +255,7 @@ export default async function PaginaOrdenEmpresa({
 
       {/* La orden en PDF: la MISMA hoja que imprime la Dirección, con la
           tabla y las fotos (14/10). Solo existe al imprimir; acá va el botón. */}
-      <BotonPdfOrden cerrados={orden.cerrados} />
+      <BotonPdfOrden cerrados={orden.cerrados} numero={orden.numero} />
       <HojaOrdenImprimible o={orden} />
 
       {/* Lo cargado en ESTA orden: el papel que la empresa lleva a la
@@ -283,6 +285,15 @@ export default async function PaginaOrdenEmpresa({
        * estaba debajo de la lista entera — en una orden de treinta items, a
        * treinta scrolls de distancia. Pedido de la Dirección de Bacheo (12/09).
        */}
+      {activa && (
+        <TerminarCarga
+          ordenId={orden.id}
+          pendientes={Math.max(0, enPlan - orden.cerrados)}
+          terminada={orden.cargaTerminada}
+          soloLectura={vista.esVistaEspejo}
+        />
+      )}
+
       {activa && (
         <div className="mb-4">
           <ProponerItem ordenId={orden.id} abrirAlEntrar={abrirProponer} />
@@ -606,6 +617,17 @@ function ItemHecho({ item }: { item: ItemOrden }) {
           /* El visor a pantalla completa: targets grandes para el capataz en
              el celular, sin abrir pestañas. */
           <GaleriaFotos fotos={fotos} miniAlto={96} miniAncho={128} className="mt-2 flex gap-2 overflow-x-auto pb-1" />
+        )}
+        {/* La foto equivocada o repetida se cambia acá, mientras no esté en
+            un acta; la anterior queda guardada (28/10). */}
+        {item.actaId == null && (
+          <CambiarFoto
+            itemId={item.id}
+            fotos={item.fotos.flatMap((f) => {
+              const url = urlFoto(f);
+              return url ? [{ id: f.id, etiqueta: ETIQUETA_MOMENTO[f.momento] ?? f.momento, url }] : [];
+            })}
+          />
         )}
       </div>
     </details>

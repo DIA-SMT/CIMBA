@@ -130,7 +130,8 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null, conS
          it.orden_id, it.numero,
          coalesce(e_ot.nombre, e_md.nombre) as empresa_nombre,
          coalesce(e_ot.slug, e_md.slug, 'otros') as slug,
-         false as sin_validar
+         false as sin_validar,
+         case when iv.metadata->>'escala' = 'obra' then 'obra' else 'bacheo' end as escala
   from intervenciones iv
   left join lateral (
     select oi.orden_id, ot.numero, ot.empresa_id
@@ -173,7 +174,8 @@ const baseDe = (estado: "finalizada" | "en_curso", t: TerritorioRef | null, conS
          st_centroid(oi.geom), null::bigint,
          oi.orden_id, ot.numero,
          e.nombre, e.slug,
-         true
+         true,
+         'bacheo'
   from orden_items oi
   join ordenes_trabajo ot on ot.id = oi.orden_id
   join empresas e on e.id = ot.empresa_id
@@ -960,37 +962,45 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
      * Las cifras de lo hecho, todas en una pasada sobre la misma base. `ref`
      * va a la izquierda del join para que, aun con la base vacía, salga una
      * fila con ceros y no ninguna. "Otros" no cuenta como empresa.
+     *
+     * SOLO BACHEO (28/10): sumaba también las obras del SIGOV —carpetas y
+     * paños de 150 m² o más— bajo el rótulo "baches", y los m² de la ciudad
+     * salían inflados en lo que se informa. Las obras van aparte (o_n, o_m2).
      */
+    const BACHEO = sql`b.escala = 'bacheo'`;
     const qCifras = tx.execute(sql`
       with b as (${BASE}),
            ref as (select (now() at time zone ${TZ})::date as hoy)
       select
-        count(b.id) filter (where ${enVentana})::int as v_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${enVentana}), 0))::int as v_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${enVentana}), 0) * 2.4)::int as v_t,
-        count(distinct b.slug) filter (where ${enVentana} and b.slug <> 'otros')::int as v_empresas,
-        count(b.id) filter (where ${enVentana} and coalesce(b.superficie_m2, 0) = 0)::int as v_sin_medida,
+        count(b.id) filter (where ${BACHEO} and ${enVentana})::int as v_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO} and ${enVentana}), 0))::int as v_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO} and ${enVentana}), 0) * 2.4)::int as v_t,
+        count(distinct b.slug) filter (where ${BACHEO} and ${enVentana} and b.slug <> 'otros')::int as v_empresas,
+        count(b.id) filter (where ${BACHEO} and ${enVentana} and coalesce(b.superficie_m2, 0) = 0)::int as v_sin_medida,
 
-        count(b.id) filter (where ${diaLocal} = ref.hoy)::int as h_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy), 0))::int as h_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy), 0) * 2.4)::int as h_t,
+        count(b.id) filter (where b.escala = 'obra' and ${enVentana})::int as o_n,
+        round(coalesce(sum(b.superficie_m2) filter (where b.escala = 'obra' and ${enVentana}), 0))::int as o_m2,
 
-        count(b.id) filter (where ${diaLocal} = ref.hoy - 1)::int as a_n,
-        round(coalesce(sum(b.superficie_m2) filter (where ${diaLocal} = ref.hoy - 1), 0))::int as a_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where ${diaLocal} = ref.hoy - 1), 0) * 2.4)::int as a_t,
+        count(b.id) filter (where ${BACHEO} and ${diaLocal} = ref.hoy)::int as h_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO} and ${diaLocal} = ref.hoy), 0))::int as h_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO} and ${diaLocal} = ref.hoy), 0) * 2.4)::int as h_t,
 
-        count(b.id) filter (where b.fecha >= now() - interval '7 days')::int as s_n,
-        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '7 days'), 0))::int as s_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '7 days'), 0) * 2.4)::int as s_t,
+        count(b.id) filter (where ${BACHEO} and ${diaLocal} = ref.hoy - 1)::int as a_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO} and ${diaLocal} = ref.hoy - 1), 0))::int as a_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO} and ${diaLocal} = ref.hoy - 1), 0) * 2.4)::int as a_t,
 
-        count(b.id) filter (where b.fecha >= now() - interval '30 days')::int as m_n,
-        round(coalesce(sum(b.superficie_m2) filter (where b.fecha >= now() - interval '30 days'), 0))::int as m_m2,
-        round(coalesce(sum(b.volumen_m3) filter (where b.fecha >= now() - interval '30 days'), 0) * 2.4)::int as m_t,
+        count(b.id) filter (where ${BACHEO} and b.fecha >= now() - interval '7 days')::int as s_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO} and b.fecha >= now() - interval '7 days'), 0))::int as s_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO} and b.fecha >= now() - interval '7 days'), 0) * 2.4)::int as s_t,
 
-        count(b.id)::int as t_n,
-        round(coalesce(sum(b.superficie_m2), 0))::int as t_m2,
-        round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as t_t,
-        to_char(min(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as t_desde,
+        count(b.id) filter (where ${BACHEO} and b.fecha >= now() - interval '30 days')::int as m_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO} and b.fecha >= now() - interval '30 days'), 0))::int as m_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO} and b.fecha >= now() - interval '30 days'), 0) * 2.4)::int as m_t,
+
+        count(b.id) filter (where ${BACHEO})::int as t_n,
+        round(coalesce(sum(b.superficie_m2) filter (where ${BACHEO}), 0))::int as t_m2,
+        round(coalesce(sum(b.volumen_m3) filter (where ${BACHEO}), 0) * 2.4)::int as t_t,
+        to_char(min(b.fecha) filter (where ${BACHEO}) at time zone ${TZ}, 'YYYY-MM-DD') as t_desde,
 
         to_char(ref.hoy, 'YYYY-MM-DD') as hoy,
         (ref.hoy - date '2026-01-01')::int as hoy_dia,
@@ -1016,7 +1026,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
              round(coalesce(sum(b.volumen_m3), 0) * 2.4)::int as toneladas,
              to_char(max(b.fecha) at time zone ${TZ}, 'YYYY-MM-DD') as ultimo
       from (${BASE}) b
-      where ${enVentana}
+      where ${BACHEO} and ${enVentana}
       group by 1
       order by 3 desc, 2 desc
     `);
@@ -1028,7 +1038,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
              count(*)::int as n,
              round(coalesce(sum(b.superficie_m2), 0))::int as m2
       from (${BASE}) b
-      where b.fecha >= (date_trunc('week', now() at time zone ${TZ}) - interval '25 weeks') at time zone ${TZ}
+      where ${BACHEO} and b.fecha >= (date_trunc('week', now() at time zone ${TZ}) - interval '25 weeks') at time zone ${TZ}
       group by 1
       order by 1
     `);
@@ -1042,7 +1052,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
       select ba.id, ba.nombre, count(*)::int as n, round(coalesce(sum(b.superficie_m2), 0))::int as m2
       from (${BASE}) b
       join barrios ba on st_intersects(ba.geom, st_centroid(b.geom_ejecucion))
-      where ${enVentana}
+      where ${BACHEO} and ${enVentana}
       group by ba.id, ba.nombre
       order by 3 desc, 4 desc
       limit 6
@@ -1208,6 +1218,7 @@ export async function datosAvance(sesion: Sesion | null, opciones: OpcionesAvanc
         empresas: Number(cifras.v_empresas ?? 0),
         sinMedida: Number(cifras.v_sin_medida ?? 0),
         vecinos: rapido.vecinos,
+        obras: { n: Number(cifras.o_n ?? 0), m2: Number(cifras.o_m2 ?? 0) },
       },
       hoy: cifraDe(cifras, "h"),
       ayer: cifraDe(cifras, "a"),

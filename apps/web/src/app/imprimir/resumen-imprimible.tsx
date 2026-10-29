@@ -8,6 +8,8 @@ import { Layer, Map as MapaGL, Source } from "react-map-gl/maplibre";
 import { etiquetaVentana, fechaLarga, nombreRecorte, type DatosAvance, type DiasVentana } from "@/lib/avance-tipos";
 import { colorDeEmpresaEn } from "@/lib/color-empresa";
 import { fechaCorta, numero } from "@/lib/formato";
+import { bachesTipoDe } from "@/lib/medicion";
+import { imprimirComo, nombreArchivo } from "@/lib/nombre-archivo";
 import { ESTILO_MAPA_CLARO } from "@/components/mapa/tema-mapa";
 
 /**
@@ -81,7 +83,7 @@ export function ResumenImprimible({ datos, dias }: { datos: DatosAvance; dias: D
         </Link>
         <button
           type="button"
-          onClick={() => window.print()}
+          onClick={() => imprimirComo(nombreArchivo("AVANCE"))}
           className="flex items-center gap-2 rounded-lg bg-[#0066ff] px-4 py-2 font-bold text-white shadow"
         >
           <Printer size={15} />
@@ -143,9 +145,19 @@ export function ResumenImprimible({ datos, dias }: { datos: DatosAvance; dias: D
         <section className="mt-4 grid grid-cols-4 gap-3">
           <Cifra etiqueta="Baches reparados" valor={numero(c.ventana.n)} />
           <Cifra etiqueta="Metros cuadrados" valor={`${numero(c.ventana.m2)} m²`} nota={c.ventana.sinMedida > 0 ? `${numero(c.ventana.sinMedida)} sin medida cargada` : undefined} />
-          <Cifra etiqueta="Mezcla asfáltica" valor={`${numero(c.ventana.toneladas)} t`} />
+          <Cifra
+            etiqueta="Mezcla asfáltica"
+            valor={`${numero(c.ventana.toneladas)} t`}
+            nota={c.ventana.toneladas > 0 ? `equivale a ${numero(bachesTipoDe(c.ventana.toneladas))} baches tipo (1 m² × 5 cm)` : undefined}
+          />
           <Cifra etiqueta="Empresas" valor={numero(c.ventana.empresas)} nota={c.ventana.vecinos > 0 ? `${numero(c.ventana.vecinos)} vecinos con su pedido cerrado` : undefined} />
         </section>
+        {c.ventana.obras.n > 0 && (
+          <p className="mt-2 text-[10px] text-[#66758d]">
+            Además, {numero(c.ventana.obras.n)} {c.ventana.obras.n === 1 ? "obra" : "obras"} (carpetas y paños) con{" "}
+            {numero(c.ventana.obras.m2)} m², que no se suman al bacheo.
+          </p>
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-5 text-[11px]">
           <div>

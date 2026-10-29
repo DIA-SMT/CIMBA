@@ -255,11 +255,34 @@ export default async function PaginaOrdenes({
                   className="border-b border-borde/60 transition hover:bg-panel-2 max-md:grid max-md:grid-cols-2 max-md:gap-x-4 max-md:gap-y-2.5 max-md:px-3 max-md:py-3.5"
                 >
                   <td className="px-4 py-2.5 max-md:p-0">
-                    <Link href={`/ordenes/${o.id}`} className="num font-bold text-celeste hover:underline">
+                    <Link href={`/ordenes/${o.id}`} className="num font-bold whitespace-nowrap text-celeste hover:underline">
                       {o.numero}
                     </Link>
                     {vencida && (
                       <span className="ml-1.5 text-[10px] font-bold text-peligro">VENCIDA</span>
+                    )}
+                    {/* Lo que la empresa propuso y nadie validó todavía: sin
+                        esto había que entrar orden por orden para enterarse,
+                        y un propuesto olvidado queda afuera del avance y de
+                        la certificación. Lleva directo a la bandeja. */}
+                    {/* La empresa avisó que cargó todo: le toca a la Dirección
+                        revisar y cerrar (desde el 28/10 la orden no se cierra sola). */}
+                    {o.cargaTerminada && (o.estado === "emitida" || o.estado === "en_ejecucion") && (
+                      <span
+                        className="ml-1.5 text-[10px] font-bold whitespace-nowrap text-resuelto"
+                        title="La empresa marcó «terminamos de cargar»: falta que la Dirección la revise y la cierre"
+                      >
+                        CARGA TERMINADA
+                      </span>
+                    )}
+                    {o.propuestos > 0 && (
+                      <Link
+                        href={`/ordenes/${o.id}#propuestos`}
+                        className="ml-1.5 text-[10px] font-bold whitespace-nowrap text-amarillo hover:underline"
+                        title="Baches que propuso la empresa y esperan la validación de Bacheo"
+                      >
+                        {numero(o.propuestos)} SIN VALIDAR
+                      </Link>
                     )}
                   </td>
                   <td className="px-4 py-2.5 max-md:p-0 max-md:text-right">

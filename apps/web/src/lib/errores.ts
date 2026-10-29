@@ -56,6 +56,7 @@ export function mensajeDeError(e: unknown, porDefecto: string): string {
     return digest.slice(MARCA.length);
   }
   if (esFalloDeRed(e)) return MENSAJE_RED;
+  if (esVersionVieja(e)) return MENSAJE_VERSION_VIEJA;
   if (e instanceof Error && e.message) {
     // En producción esto es el párrafo de React, que no sirve para nadie.
     if (e.message.startsWith("An error occurred in the Server Components render")) {
@@ -68,6 +69,24 @@ export function mensajeDeError(e: unknown, porDefecto: string): string {
 
 export const MENSAJE_RED =
   "Se cortó la conexión antes de que llegara la respuesta. No se hizo nada: probá de nuevo.";
+
+export const MENSAJE_VERSION_VIEJA =
+  "CIMBA se actualizó mientras tenías esta pantalla abierta. No se guardó nada: recargá la página y volvé a intentar.";
+
+/**
+ * LA PANTALLA ES DE ANTES DE LA ÚLTIMA SUBIDA.
+ *
+ * Cada versión nueva cambia el código con el que la pantalla le pide al
+ * servidor que guarde. Una pantalla abierta desde antes pide con el código
+ * viejo y el servidor contesta, en inglés, que no lo encuentra. Pasó el 28/10:
+ * una cuadrilla de INGECO lo vio seis veces seguidas en la OT-2026-0032 y no
+ * había forma de entender que bastaba con recargar.
+ */
+export function esVersionVieja(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message.toLowerCase();
+  return m.includes("server action") && (m.includes("was not found on the server") || m.includes("failed to find"));
+}
 
 /**
  * SE CORTÓ LA RED, NO SE ROMPIÓ EL SISTEMA.

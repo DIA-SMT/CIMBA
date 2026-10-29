@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     });
     void total;
     return respuesta(
-      "cimba-demandas",
+      "PEDIDOS",
       csv(
         ["id", "fuente", "estado", "tipo", "direccion", "lat", "lon", "confianza_geocod", "creado_en", "vinculos"],
         filas.map((d) => [d.id, d.fuente, d.estado, d.tipo, d.direccion, d.lat, d.lon, d.geocodConfianza, d.creadoEn, d.vinculos]),
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       limite: LIMITE,
     });
     return respuesta(
-      "cimba-incidentes",
+      "PROBLEMAS",
       csv(
         ["id", "tipo", "estado", "direccion", "lat", "lon", "score_prioridad", "superficie_m2", "pedidos", "trabajos", "detectado_en", "cerrado_en"],
         filas.map((i) => [i.id, i.tipo, i.estado, i.direccion, i.lat, i.lon, i.scorePrioridad, i.superficieM2, i.demandas, i.intervenciones, i.detectadoEn, i.cerradoEn]),
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       limite: LIMITE,
     });
     return respuesta(
-      "cimba-intervenciones",
+      "TRABAJOS",
       csv(
         ["id", "incidente_id", "estado", "ejecutor", "tipo", "direccion", "lat", "lon", "superficie_m2", "iniciada_en", "finalizada_en", "fotos"],
         filas.map((iv) => [
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
       puesto.set(c.id, n);
     }
     return respuesta(
-      "cimba-ipi",
+      "IPI",
       csv(
         [
           "sector",
