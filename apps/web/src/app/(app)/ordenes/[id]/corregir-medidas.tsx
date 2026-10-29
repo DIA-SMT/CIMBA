@@ -77,6 +77,11 @@ export function CorregirMedidas({
    * tipear el ancho y el largo, dos números que el sistema ya tenía guardados.
    * Ahora arranca en el modo real del item y con los cuatro valores puestos:
    * se cambia el que está mal y listo.
+   *
+   * Y la MEZCLA también: lo cargado por volumen abría con el campo de m³ vacío,
+   * y corregir solo el espesor —el error de Ingeco del 28/10, que puso 1—
+   * obligaba a recordar cuántos m³ se habían escrito. Sale de la superficie y
+   * el espesor guardados, que es exactamente de donde la saca la base.
    */
   const [medida, setMedida] = useState<ValorMedida>(() => ({
     ...medidaVacia(
@@ -89,6 +94,10 @@ export function CorregirMedidas({
     ancho: anchoM != null ? String(anchoM) : "",
     largo: largoM != null ? String(largoM) : "",
     superficie: superficieM2 != null ? String(superficieM2) : "",
+    volumen:
+      superficieM2 != null && espesorCm != null
+        ? String(Number(((superficieM2 * espesorCm) / 100).toFixed(4)))
+        : "",
     espesor: espesorCm != null ? String(espesorCm) : "",
   }));
   /** "extendido" no se elige: lo deriva el servidor de la superficie. */

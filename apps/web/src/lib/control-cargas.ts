@@ -1,6 +1,7 @@
 import { conRls, sql } from "@cimba/db";
 import type { Sesion } from "./auth";
 import { BITS_FOTO_REPETIDA } from "@cimba/domain";
+import { medicionDelItem } from "./medicion";
 
 /**
  * EL CONTROL DE LO CARGADO.
@@ -264,7 +265,7 @@ export async function cargasParaControlar(
         ...((f.cercanas as CargaControl["cercanas"]) ?? []).map((c) => ({ ...c, mismaFoto: false })),
       ].filter((c, i, todas) => todas.findIndex((x) => x.itemId === c.itemId) === i);
       const superficie = f.superficie_m2 != null ? Number(f.superficie_m2) : null;
-      const medicion = typeof m.medicion === "string" ? m.medicion : null;
+      const medicion = medicionDelItem(m);
 
       /* Lo que hace sospechar, dicho en palabras y no como un número. */
       const alarmas: string[] = [];

@@ -5,7 +5,7 @@ import { leerSesion } from "@/lib/auth";
 import { listarEmpresas, listarOrdenes, obtenerOrden, type ItemOrden } from "@/lib/ordenes";
 import { fechaCorta, numero } from "@/lib/formato";
 import { TicketBache } from "@/components/ticket-bache";
-import { formatoToneladas, toneladasDe, volumenDe } from "@/lib/medicion";
+import { formatoToneladas, medicionDelItem, toneladasDe, volumenDe } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -619,7 +619,7 @@ function FilaItem({
               espesorCm={item.espesorCm}
               anchoM={item.anchoM}
               largoM={item.largoM}
-              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
+              medicion={medicionDelItem(item.metadata)}
               tipoObra={item.tipoObra ?? null}
               enActa={item.actaId != null}
             />

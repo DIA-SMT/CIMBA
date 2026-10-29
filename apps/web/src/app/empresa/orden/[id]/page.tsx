@@ -7,7 +7,7 @@ import { TicketBache } from "@/components/ticket-bache";
 import { HojaOrdenImprimible } from "@/app/(app)/ordenes/[id]/hoja-orden";
 import { BotonPdfOrden } from "./boton-pdf";
 import { estaVencida, fechaCorta, numero, venceHoy } from "@/lib/formato";
-import { formatoToneladas } from "@/lib/medicion";
+import { formatoToneladas, medicionDelItem } from "@/lib/medicion";
 import { urlFoto } from "@/lib/fotos";
 import { Panel } from "@/components/ui";
 import { GaleriaFotos, type FotoVisor } from "@/components/visor-fotos";
@@ -597,7 +597,7 @@ function ItemHecho({ item }: { item: ItemOrden }) {
               espesorCm={item.espesorCm}
               anchoM={item.anchoM}
               largoM={item.largoM}
-              medicion={typeof item.metadata.medicion === "string" ? item.metadata.medicion : null}
+              medicion={medicionDelItem(item.metadata)}
               tipoObra={item.tipoObra ?? null}
               enActa={false}
               etiqueta="Corregir medidas"

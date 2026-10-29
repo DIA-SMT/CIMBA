@@ -66,6 +66,20 @@ export const camposMedicion = {
   espesorCm: z.coerce.number().min(1, "El espesor no puede ser menor a 1 cm").max(60),
 };
 
+/**
+ * Cómo se midió un item ya cargado. La carga sobre un item lo deja en
+ * `metadata.medicion`; un propuesto "ya lo tapamos" lo deja en
+ * `metadata.ya_ejecutado.medicion`, y validarlo no lo copia. Mirando solo el
+ * primero, los 26 baches de Ingeco cargados por volumen (28/10) se abrían a
+ * corregir como "superficie": cambiar ahí el espesor de 1 a 5 dejaba los m²
+ * inflados y multiplicaba la mezcla por cinco.
+ */
+export function medicionDelItem(metadata: Record<string, unknown> | null | undefined): Medicion | null {
+  const ya = metadata?.ya_ejecutado as { medicion?: unknown } | undefined;
+  const m = metadata?.medicion ?? ya?.medicion;
+  return typeof m === "string" && (MEDICIONES as readonly string[]).includes(m) ? (m as Medicion) : null;
+}
+
 export interface MedidaResuelta {
   superficieM2: number;
   espesorCm: number;

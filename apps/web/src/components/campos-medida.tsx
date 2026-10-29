@@ -7,6 +7,7 @@ import {
   type Medicion,
   formatoToneladas,
   toneladasDe,
+  toneladasDeSuperficie,
   volumenDe,
 } from "@/lib/medicion";
 
@@ -275,17 +276,55 @@ export function CamposMedida({
         * No se bloquea —el criterio del que está parado sobre el pozo manda—
         * pero se avisa fuerte y se dice cuál es la conversión, porque el error
         * es silencioso: nada en la pantalla se veía mal.
+        *
+        * Y CADA MODO SE EQUIVOCA DISTINTO. Por volumen de mezcla, el espesor
+        * no toca los m³ ni las toneladas: solo divide para dar los m². El
+        * 28-29/10 Ingeco cargó 62 baches por volumen con espesor 1 "pensando
+        * que lo iba a alterar al volumen": las toneladas quedaron bien y los
+        * m² salieron cinco veces más grandes. Este cartel les decía que
+        * certificaban "casi cero toneladas", que en ese modo es falso, y les
+        * sugería 100 cm. Ahora dice lo que pasa en cada modo, con sus números.
         */}
       {(() => {
         const e = aNumero(valor.espesor);
         if (!(e > 0) || e >= 2.5) return null;
+        const n = (x: number) => x.toLocaleString("es-AR", { maximumFractionDigits: 2 });
+        const m3 = aNumero(valor.volumen);
         return (
           <p className="mt-2 rounded-lg border border-peligro/50 bg-peligro/10 px-3 py-2 text-[12px] leading-snug">
             <b className="text-peligro">¿{valor.espesor} cm?</b>{" "}
             <span className="text-texto-2">
-              Un bacheo va de 4 a 8 cm. Si lo estás midiendo en metros, el espesor en centímetros es{" "}
-              <b className="num text-texto">{Math.round(e * 100)}</b>. Con {valor.espesor} cm el trabajo
-              certifica casi cero toneladas.
+              Un bacheo va de 4 a 8 cm.{" "}
+              {e < 1 && (
+                <>
+                  Si lo estás midiendo en metros, el espesor en centímetros es{" "}
+                  <b className="num text-texto">{Math.round(e * 100)}</b>.{" "}
+                </>
+              )}
+              {derivada ? (
+                <>
+                  El espesor no cambia la mezcla ni las toneladas: solo sirve para calcular los m².{" "}
+                  {m3 > 0 ? (
+                    <>
+                      Con {valor.espesor} cm, {n(m3)} m³ dan <b className="num text-texto">{n(m3 / (e / 100))} m²</b>;
+                      con 5 cm serían <b className="num text-texto">{n(m3 / 0.05)} m²</b>.
+                    </>
+                  ) : (
+                    <>
+                      Con {valor.espesor} cm la superficie sale {n(5 / e)} veces más grande que con 5 cm.
+                    </>
+                  )}
+                </>
+              ) : superficie != null ? (
+                <>
+                  Con {valor.espesor} cm, {n(superficie)} m² son{" "}
+                  <b className="num text-texto">{formatoToneladas(toneladasDeSuperficie(superficie, e))}</b>; con 5 cm
+                  serían <b className="num text-texto">{formatoToneladas(toneladasDeSuperficie(superficie, 5))}</b>, y
+                  la tonelada es lo que se certifica.
+                </>
+              ) : (
+                <>Con {valor.espesor} cm el trabajo certifica casi cero toneladas.</>
+              )}
             </span>
           </p>
         );
@@ -311,7 +350,7 @@ export function CamposMedida({
 
       <p className="mt-1 text-xs leading-relaxed text-texto-3">
         {derivada
-          ? "La superficie se calcula con la mezcla y el espesor: es una estimación, y así queda anotada."
+          ? "La superficie se calcula con la mezcla y el espesor (m³ ÷ espesor): el espesor no cambia la mezcla ni las toneladas. Es una estimación, y así queda anotada."
           : "Medí lo que realmente pavimentaste: a veces es un bache pero se hace el paño entero."}{" "}
         Las toneladas salen del volumen a 2,4 t/m³: es lo que se certifica.
       </p>
