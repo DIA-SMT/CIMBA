@@ -9,6 +9,7 @@ import { TIPOS_PROBLEMA } from "@cimba/domain";
 import { crearDemandaCiudadano } from "@/lib/acciones";
 import { leerArchivoComoCapa, type CapaPuntos } from "@/lib/capa-archivo";
 import { comprimirFoto } from "@/lib/comprimir-foto";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { useDictadoVoz } from "@/lib/dictado";
 import { ETIQUETA_TIPO, numero } from "@/lib/formato";
 import { MapaSelector } from "@/components/mapa/mapa-selector";
@@ -62,6 +63,7 @@ export function FormularioCiudadano() {
   const [previews, setPreviews] = useState<string[]>([]);
   const inputFoto = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  usarSinSoltarAfuera();
   const [creado, setCreado] = useState<number | null>(null);
   const [capa, setCapa] = useState<CapaPuntos | null>(null);
   const [nombreCapa, setNombreCapa] = useState<string | null>(null);
@@ -143,7 +145,7 @@ export function FormularioCiudadano() {
   };
 
   /** Se achican en el navegador antes de subir, igual que en el portal de empresas. */
-  const agregarFotos = async (lista: FileList | null) => {
+  const agregarFotos = async (lista: FileList | File[] | null) => {
     if (!lista || lista.length === 0) return;
     const libres = 2 - fotos.length;
     if (libres <= 0) return;
@@ -470,6 +472,7 @@ export function FormularioCiudadano() {
           {fotos.length < 2 && (
             <button
               onClick={() => inputFoto.current?.click()}
+              {...soltarFoto((f) => void agregarFotos([f]), setError)}
               className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-borde-2 text-[11px] font-semibold text-texto-3 transition hover:border-celeste/60 hover:text-celeste"
             >
               <Camera size={20} />
@@ -479,7 +482,7 @@ export function FormularioCiudadano() {
         </div>
         <p className="mt-1 text-[11px] text-texto-3">
           Si el vecino trae la foto en el teléfono, sacale una captura o pedísela: sirve para validar el
-          pedido sin ir hasta el lugar.
+          pedido sin ir hasta el lugar. Si te la mandó por WhatsApp, arrastrala desde ahí al cuadro.
         </p>
       </div>
 

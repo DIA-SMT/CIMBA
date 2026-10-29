@@ -10,28 +10,10 @@ import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { MiniMapa } from "@/components/mapa/mini-mapa";
 import { mensajeDeError } from "@/lib/errores";
 import { describirPrecision, mejorPosicion } from "@/lib/gps";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { Achicando } from "./tarjeta-item";
 
 type Momento = "antes" | "despues";
-
-/**
- * El archivo de imagen de un arrastre, mirando los dos lados del dataTransfer.
- *
- * Arrastrada desde una carpeta —o desde WhatsApp de escritorio— la imagen llega
- * en `files`. Pero arrastrada DESDE una web (WhatsApp Web) el navegador no la
- * pone en `files` sino en `items`: la misma lectura que hace el pegar con
- * Ctrl+V. Mirando solo `files`, ese arrastre no agarraba nada —y WhatsApp Web
- * cambió a ese camino—. getAsFile() va acá, sincrónico: el dataTransfer no
- * sobrevive al handler.
- */
-function archivoImagen(dt: DataTransfer): File | null {
-  const directo = dt.files?.[0];
-  if (directo && directo.type.startsWith("image/")) return directo;
-  const item = Array.from(dt.items ?? []).find(
-    (i) => i.kind === "file" && i.type.startsWith("image/"),
-  );
-  return item?.getAsFile() ?? null;
-}
 
 /**
  * COMPLETAR UN BACHE YA HECHO: la foto que faltó y, si no tenía, el lugar.
@@ -83,6 +65,7 @@ export function CompletarHecho({
   const [ahorro, setAhorro] = useState<string | null>(null);
   const [destino, setDestino] = useState<Momento>(tieneDespues ? "antes" : "despues");
   const { revisiones, revisar } = useFotosUsadas();
+  usarSinSoltarAfuera();
   const refAntes = useRef<HTMLInputElement>(null);
   const refDespues = useRef<HTMLInputElement>(null);
 
@@ -293,12 +276,10 @@ export function CompletarHecho({
                       ref.current?.click();
                     }}
                     onFocus={() => setDestino(m)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
+                    {...soltarFoto((f) => {
                       setDestino(m);
-                      void ponerFoto(m, archivoImagen(e.dataTransfer));
-                    }}
+                      void ponerFoto(m, f);
+                    }, setError)}
                     className={`relative flex h-32 w-full flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border-2 text-center transition ${
                       elegida
                         ? "border-resuelto/60"

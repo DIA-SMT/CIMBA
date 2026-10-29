@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { dentroDeSMT } from "@cimba/domain";
 import { proponerItem, reportarProblemaCalle } from "@/lib/acciones-ordenes";
 import { comprimirFoto } from "@/lib/comprimir-foto";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { useDictadoVoz } from "@/lib/dictado";
 import { BarraConfianza } from "@/components/ui";
@@ -240,6 +241,7 @@ export function ProponerItem({
   const [preparandoFoto, setPreparandoFoto] = useState(false);
   /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
   const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
+  usarSinSoltarAfuera();
   const elegirFotoEn = async (
     archivo: File | undefined,
     previoUrl: string | null,
@@ -619,6 +621,7 @@ export function ProponerItem({
       />
       <button
         onClick={() => refFoto.current?.click()}
+        {...soltarFoto((f) => void elegirFoto(f), setError)}
         disabled={preparandoFoto}
         className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
           foto ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
@@ -680,6 +683,10 @@ export function ProponerItem({
               />
               <button
                 onClick={() => refFotoDespues.current?.click()}
+                {...soltarFoto(
+                  (f) => void elegirFotoEn(f, previewDespues, setFotoDespues, setPreviewDespues, "despues"),
+                  setError,
+                )}
                 disabled={preparandoFoto}
                 className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
                   fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
@@ -706,6 +713,9 @@ export function ProponerItem({
                   </span>
                 )}
               </button>
+              <p className="hidden text-[11px] text-texto-3 pointer-fine:block">
+                En la computadora podés arrastrar las fotos desde WhatsApp o desde una carpeta.
+              </p>
               <AvisosFotoUsada revisiones={fotosUsadas} nombres={{ antes: "del bache", despues: "del trabajo terminado" }} />
 
               <div className="grid gap-3 sm:grid-cols-2">

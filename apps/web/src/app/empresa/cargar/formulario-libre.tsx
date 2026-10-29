@@ -8,6 +8,7 @@ import type { TipoIntervencion } from "@cimba/domain";
 import { reportarTrabajoLibre } from "@/lib/acciones-carga-libre";
 import { enviarOEncolar } from "@/lib/cola-envios";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { Panel } from "@/components/ui";
 import {
@@ -125,6 +126,7 @@ export function FormularioLibre({
 
   /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
   const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
+  usarSinSoltarAfuera();
   const elegirFoto = async (
     clave: string,
     archivo: File | undefined,
@@ -368,6 +370,7 @@ export function FormularioLibre({
             <button
               type="button"
               onClick={() => refAntes.current?.click()}
+              {...soltarFoto((f) => void elegirFoto("antes", f, setFotoAntes, setPreviewAntes, previewAntes), setError)}
               disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoAntes ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
@@ -397,6 +400,10 @@ export function FormularioLibre({
             <button
               type="button"
               onClick={() => refDespues.current?.click()}
+              {...soltarFoto(
+                (f) => void elegirFoto("despues", f, setFotoDespues, setPreviewDespues, previewDespues),
+                setError,
+              )}
               disabled={cuadroOcupado.despues}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-celeste/60"
@@ -424,6 +431,9 @@ export function FormularioLibre({
               )}
             </button>
           </div>
+          <p className="mt-1.5 hidden text-[11px] text-texto-3 pointer-fine:block">
+            En la computadora podés arrastrar las fotos desde WhatsApp o desde una carpeta.
+          </p>
           <div className="mt-2">
             <AvisosFotoUsada revisiones={fotosUsadas} nombres={{ antes: "del antes", despues: "de cómo quedó" }} />
           </div>

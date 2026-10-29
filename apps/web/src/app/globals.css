@@ -211,3 +211,11 @@ body {
 .maplibregl-ctrl-attrib a {
   color: var(--color-texto-3) !important;
 }
+
+/* Un cuadro de foto con una foto arrastrada encima (lib/soltar-foto.ts): que
+ * se vea que soltarla ahí sirve. Un solo lugar para todos los cuadros. */
+[data-soltando] {
+  outline: 3px dashed var(--color-celeste);
+  outline-offset: -3px;
+  background-color: color-mix(in srgb, var(--color-celeste) 14%, transparent) !important;
+}

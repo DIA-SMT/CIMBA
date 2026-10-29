@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { reemplazarFotoTrabajo } from "@/lib/acciones-ordenes";
 import { comprimirFoto } from "@/lib/comprimir-foto";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { mensajeDeError } from "@/lib/errores";
 
 /**
@@ -24,6 +25,7 @@ export function CambiarFoto({
   const [archivo, setArchivo] = useState<File | null>(null);
   const [motivo, setMotivo] = useState("");
   const [error, setError] = useState<string | null>(null);
+  usarSinSoltarAfuera();
   const [enviando, iniciar] = useTransition();
   const refArchivo = useRef<HTMLInputElement>(null);
 
@@ -70,9 +72,10 @@ export function CambiarFoto({
         <button
           type="button"
           onClick={() => refArchivo.current?.click()}
+          {...soltarFoto(setArchivo, setError)}
           className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-borde-2 px-3 text-sm font-semibold text-texto-2 hover:border-celeste/60 hover:text-celeste"
         >
-          <ImageUp size={15} /> {archivo ? archivo.name : "Elegir la foto correcta"}
+          <ImageUp size={15} /> {archivo ? archivo.name : "Elegir o arrastrar la foto correcta"}
         </button>
         <input
           ref={refArchivo}

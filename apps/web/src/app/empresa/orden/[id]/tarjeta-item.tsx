@@ -12,6 +12,7 @@ import {
 } from "@/lib/acciones-ordenes";
 import { ETIQUETA_FAMILIA, MOTIVOS_CALLE, MOTIVO_POR_VALOR } from "@/lib/problemas-calle";
 import { comprimirFoto, pesoCorto } from "@/lib/comprimir-foto";
+import { soltarFoto, usarSinSoltarAfuera } from "@/lib/soltar-foto";
 import { AvisosFotoUsada, useFotosUsadas } from "@/components/aviso-foto-usada";
 import { useDictadoVoz } from "@/lib/dictado";
 import type { ItemOrden } from "@/lib/ordenes";
@@ -415,6 +416,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
   const [ahorroFoto, setAhorroFoto] = useState<string | null>(null);
   /** ¿La foto elegida ya se usó en otro bache? Avisa; no frena. */
   const { revisiones: fotosUsadas, revisar: revisarFotoUsada } = useFotosUsadas();
+  usarSinSoltarAfuera();
   const elegirFoto = async (
     clave: string,
     archivo: File | undefined,
@@ -797,6 +799,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               />
               <button
                 onClick={() => refFotoNoEjec.current?.click()}
+                {...soltarFoto(
+                  (f) => void elegirFoto("noejec", f, setFotoNoEjec, setPreviewNoEjec, previewNoEjec),
+                  setError,
+                )}
                 disabled={cuadroOcupado.noejec}
                 className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
                   fotoNoEjec ? "border-amarillo/60" : "border-dashed border-borde-2 hover:border-amarillo/60"
@@ -882,6 +888,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               />
               <button
                 onClick={() => refFotoHoy.current?.click()}
+                {...soltarFoto((f) => void elegirFoto("hoy", f, setFotoHoy, setPreviewHoy, previewHoy), setError)}
                 disabled={cuadroOcupado.hoy}
                 className={`relative h-28 w-full overflow-hidden rounded-xl border-2 transition ${
                   fotoHoy ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
@@ -1033,6 +1040,7 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             />
             <button
               onClick={() => refAntes.current?.click()}
+              {...soltarFoto((f) => void elegirFoto("antes", f, setFotoAntes, setPreviewAntes, previewAntes), setError)}
               disabled={cuadroOcupado.antes}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoAntes ? "border-celeste/60" : "border-dashed border-borde-2 hover:border-celeste/60"
@@ -1056,6 +1064,10 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
             </button>
             <button
               onClick={() => refDespues.current?.click()}
+              {...soltarFoto(
+                (f) => void elegirFoto("despues", f, setFotoDespues, setPreviewDespues, previewDespues),
+                setError,
+              )}
               disabled={cuadroOcupado.despues}
               className={`relative h-28 overflow-hidden rounded-xl border-2 transition ${
                 fotoDespues ? "border-resuelto/60" : "border-dashed border-borde-2 hover:border-resuelto/60"
@@ -1078,6 +1090,9 @@ export function TarjetaItem({ item, ordenId }: { item: ItemOrden; ordenId: numbe
               )}
             </button>
           </div>
+          <p className="hidden text-[11px] text-texto-3 pointer-fine:block">
+            En la computadora podés arrastrar las fotos desde WhatsApp o desde una carpeta.
+          </p>
           <AvisosFotoUsada
             revisiones={{
               ...(fotosUsadas.antes ? { antes: fotosUsadas.antes } : {}),
