@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Layer, Map as MapaGL, Marker, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
 import { bboxDeCapa, type CapaPuntos } from "@/lib/capa-archivo";
 import { CapaRedVial, ReferenciaTerreno } from "./mini-mapa";
-import { ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarTemaMapa } from "./tema-mapa";
+import { ANCLA_NOMBRES, ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarRealceCalles, usarTemaMapa } from "./tema-mapa";
 
 /** Mini-mapa para elegir una ubicación con un clic. Realza nombres y trazas de
  *  calles (como el mapa principal), permite vista satelital para ubicar con
@@ -37,77 +37,10 @@ export function MapaSelector({
   const mapRef = useRef<MapRef>(null);
   const tema = usarTemaMapa();
   const [satelite, setSatelite] = useState(arrancaEnSatelite);
-  // Si el estilo no tiene la capa de nombres, el raster va arriba de todo
-  // (sin beforeId) en vez de fallar silenciosamente.
-  const [hayAncla, setHayAncla] = useState(true);
-
-  // Mismo realce de calles que el mapa principal: nombres antes y trazas más
-  // visibles. Los colores aclarados son para dark-matter; sobre positron el
-  // texto se oscurece y las trazas se dejan como vienen del estilo claro.
-  useEffect(() => {
-    const oscuro = tema === "oscuro";
-    const NOMBRES = oscuro
-      ? [
-          { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#b9c6d8" },
-          { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#c8d4e4" },
-          { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#d6e0ee" },
-          { id: "roadname_major", minzoom: 11.5, size: 12, color: "#e2eaf5" },
-        ]
-      : [
-          { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#5b6b7d" },
-          { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#4d5c6e" },
-          { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#41505f" },
-          { id: "roadname_major", minzoom: 11.5, size: 12, color: "#36434f" },
-        ];
-    const TRAZAS = [
-      { id: "road_minor_fill", minzoom: 13.5, color: "rgba(88, 97, 118, 1)" },
-      { id: "road_minor_case", minzoom: 12.5, color: "rgba(72, 79, 98, 1)" },
-      { id: "road_service_fill", minzoom: 14.5, color: "rgba(70, 76, 94, 1)" },
-      { id: "road_sec_fill_noramp", minzoom: 12, color: "rgba(96, 105, 126, 1)" },
-    ];
-    let cancelado = false;
-    const aplicar = () => {
-      const mapa = mapRef.current?.getMap();
-      if (!mapa) return false;
-      // isStyleLoaded() da false mientras quede una tesela pendiente (el
-      // satelital tarda): alcanza con que el estilo esté parseado.
-      let capas = 0;
-      try {
-        capas = mapa.getStyle()?.layers?.length ?? 0;
-      } catch {
-        capas = 0;
-      }
-      if (capas === 0) return false;
-      if (!mapa.getLayer("roadname_minor")) setHayAncla(false);
-      for (const c of NOMBRES) {
-        if (!mapa.getLayer(c.id)) continue;
-        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
-        mapa.setLayoutProperty(c.id, "text-size", c.size);
-        mapa.setPaintProperty(c.id, "text-color", c.color);
-        mapa.setPaintProperty(c.id, "text-halo-color", oscuro ? "#070a10" : "#ffffff");
-        mapa.setPaintProperty(c.id, "text-halo-width", 1.7);
-      }
-      for (const c of TRAZAS) {
-        if (!mapa.getLayer(c.id)) continue;
-        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
-        if (oscuro) mapa.setPaintProperty(c.id, "line-color", c.color);
-      }
-      return true;
-    };
-    // SIEMPRE engancharse a styledata: el toggle de tema dispara un setStyle
-    // que borra estos ajustes; aplicar() es idempotente, no hay bucle.
-    aplicar();
-    const id = setInterval(() => {
-      if (cancelado || aplicar()) clearInterval(id);
-    }, 300);
-    const mapa = mapRef.current?.getMap();
-    mapa?.on("styledata", aplicar);
-    return () => {
-      cancelado = true;
-      clearInterval(id);
-      mapa?.off("styledata", aplicar);
-    };
-  }, [tema]);
+  // Nombres de calle legibles y trazas marcadas: el mismo realce que el
+  // mini-mapa (tema-mapa.ts). Si el estilo no tiene la capa de nombres, el
+  // satélite y la red vial van arriba de todo en vez de fallar en silencio.
+  const hayAncla = usarRealceCalles(mapRef, tema);
 
   // Al cargar una capa, encuadrar el mapa a su extensión (cualquier geometría).
   useEffect(() => {
@@ -146,12 +79,20 @@ export function MapaSelector({
               attribution={ATRIBUCION_SATELITE}
             >
               {/* Debajo de los nombres de calles: la imagen no tapa las etiquetas */}
-              <Layer id="selector-satelite-capa" type="raster" beforeId={hayAncla ? "roadname_minor" : undefined} />
+              <Layer id="selector-satelite-capa" type="raster" beforeId={hayAncla ? ANCLA_NOMBRES : undefined} />
             </Source>
           )}
 
-          {/* Encima de todo, también del satélite: la red vial es lo que se mira. */}
-          {conRedVial && <CapaRedVial prefijo="selector" />}
+          {/* Encima del satélite —la red vial es lo que se mira— pero debajo de
+              los nombres de calle, que no tiene que tapar (29/10). La key la
+              vuelve a montar al prender el satélite, para que quede arriba. */}
+          {conRedVial && (
+            <CapaRedVial
+              key={`${satelite}-${hayAncla}`}
+              prefijo="selector"
+              antesDe={hayAncla ? ANCLA_NOMBRES : undefined}
+            />
+          )}
 
           {capa && capa.features.length > 0 && (
             <Source id="capa-archivo" type="geojson" data={capa}>

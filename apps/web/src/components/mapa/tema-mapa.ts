@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
+import type { MapRef } from "react-map-gl/maplibre";
 
 /**
  * Tema visual de los mapas. El canvas de MapLibre no ve los tokens CSS del
@@ -55,6 +56,100 @@ export const ATRIBUCION_SATELITE = "Esri, Maxar, Earthstar Geographics";
 
 export function estiloMapa(tema: TemaMapa): string {
   return tema === "oscuro" ? ESTILO_MAPA_OSCURO : ESTILO_MAPA_CLARO;
+}
+
+/** Los realces de calle, por tema (ver usarRealceCalles). */
+const NOMBRES_OSCURO = [
+  { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#b9c6d8" },
+  { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#c8d4e4" },
+  { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#d6e0ee" },
+  { id: "roadname_major", minzoom: 11.5, size: 12, color: "#e2eaf5" },
+];
+const NOMBRES_CLARO = [
+  { id: "roadname_minor", minzoom: 14.5, size: 10.5, color: "#5b6b7d" },
+  { id: "roadname_sec", minzoom: 13.5, size: 11, color: "#4d5c6e" },
+  { id: "roadname_pri", minzoom: 12.5, size: 11.5, color: "#41505f" },
+  { id: "roadname_major", minzoom: 11.5, size: 12, color: "#36434f" },
+];
+const TRAZAS = [
+  { id: "road_minor_fill", minzoom: 13.5, color: "rgba(88, 97, 118, 1)" },
+  { id: "road_minor_case", minzoom: 12.5, color: "rgba(72, 79, 98, 1)" },
+  { id: "road_service_fill", minzoom: 14.5, color: "rgba(70, 76, 94, 1)" },
+  { id: "road_sec_fill_noramp", minzoom: 12, color: "rgba(96, 105, 126, 1)" },
+];
+export const ANCLA_NOMBRES = "roadname_minor";
+
+/**
+ * NOMBRES DE CALLE QUE SE LEAN, en todo mapa donde se ubica un punto.
+ *
+ * El estilo base pone los nombres de las calles chicas recién desde zoom 16 y
+ * en letra de 9 px: el corrector de ubicación del bache abría justo en 16, así
+ * que salían pocos, chicos y grises — "cuando quiero modificar la
+ * geolocalización no aparecen los nombres de las calles; cuando agrando la
+ * imagen aparecen" (el usuario, 29/10). Esto los adelanta y los agranda, y
+ * marca más las trazas. Antes vivía solo en MapaSelector; el mini-mapa, que es
+ * el que se usa en la orden y en el portal, nunca lo tuvo.
+ *
+ * Devuelve si el estilo tiene la capa de nombres: es el ancla para colgar
+ * debajo de ella el satélite y la red vial, así ninguno tapa los nombres.
+ */
+export function usarRealceCalles(mapRef: RefObject<MapRef | null>, tema: TemaMapa): boolean {
+  const [hayNombres, setHayNombres] = useState(false);
+  useEffect(() => {
+    const oscuro = tema === "oscuro";
+    const nombres = oscuro ? NOMBRES_OSCURO : NOMBRES_CLARO;
+    const aplicar = () => {
+      const mapa = mapRef.current?.getMap();
+      if (!mapa) return false;
+      // isStyleLoaded() da false mientras quede una tesela pendiente (el
+      // satelital tarda): alcanza con que el estilo esté parseado.
+      let capas = 0;
+      try {
+        capas = mapa.getStyle()?.layers?.length ?? 0;
+      } catch {
+        capas = 0;
+      }
+      if (capas === 0) return false;
+      setHayNombres(Boolean(mapa.getLayer(ANCLA_NOMBRES)));
+      for (const c of nombres) {
+        if (!mapa.getLayer(c.id)) continue;
+        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
+        mapa.setLayoutProperty(c.id, "text-size", c.size);
+        mapa.setPaintProperty(c.id, "text-color", c.color);
+        mapa.setPaintProperty(c.id, "text-halo-color", oscuro ? "#070a10" : "#ffffff");
+        mapa.setPaintProperty(c.id, "text-halo-width", 1.7);
+      }
+      for (const c of TRAZAS) {
+        if (!mapa.getLayer(c.id)) continue;
+        mapa.setLayerZoomRange(c.id, c.minzoom, 24);
+        if (oscuro) mapa.setPaintProperty(c.id, "line-color", c.color);
+      }
+      return true;
+    };
+    // SIEMPRE engancharse a styledata —apenas el mapa exista, aunque no esté
+    // montado en el primer intento—: el toggle de tema dispara un setStyle que
+    // borra estos ajustes. aplicar() es idempotente, no hay bucle.
+    let escuchado: ReturnType<MapRef["getMap"]> | null = null;
+    const intentar = () => {
+      const mapa = mapRef.current?.getMap();
+      if (mapa && !escuchado) {
+        escuchado = mapa;
+        mapa.on("styledata", aplicar);
+      }
+      return aplicar();
+    };
+    let cancelado = false;
+    intentar();
+    const id = setInterval(() => {
+      if (cancelado || intentar()) clearInterval(id);
+    }, 300);
+    return () => {
+      cancelado = true;
+      clearInterval(id);
+      escuchado?.off("styledata", aplicar);
+    };
+  }, [mapRef, tema]);
+  return hayNombres;
 }
 
 export function usarTemaMapa(): TemaMapa {

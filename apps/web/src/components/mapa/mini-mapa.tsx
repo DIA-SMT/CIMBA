@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Layer, Map as MapaGL, Marker, NavigationControl, Source, type MapRef } from "react-map-gl/maplibre";
-import { ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarTemaMapa } from "./tema-mapa";
+import { ANCLA_NOMBRES, ATRIBUCION_SATELITE, TILES_SATELITE, estiloMapa, usarRealceCalles, usarTemaMapa } from "./tema-mapa";
 
 /**
  * Mini-mapa universal — el pedido literal del Director: "en todo lugar donde
@@ -234,9 +234,10 @@ export function MiniMapa({
   const tema = usarTemaMapa();
   const mapRef = useRef<MapRef>(null);
   const [satelite, setSatelite] = useState(false);
-  // Un estilo base sin la capa de nombres (se puede cambiar por variable de
-  // entorno) haría fallar en silencio el satélite colgado debajo de ella.
-  const [hayNombres, setHayNombres] = useState(false);
+  // Nombres de calle legibles (los mismos que en MapaSelector). Si el estilo
+  // base no tiene la capa de nombres —se puede cambiar por variable de
+  // entorno—, el satélite y la red vial no se cuelgan de ella.
+  const hayNombres = usarRealceCalles(mapRef, tema);
   // El pin vive en estado local para seguir el arrastre sin depender de que
   // el padre devuelva las coordenadas; el ref espeja ese estado para que el
   // efecto distinga un punto NUEVO de afuera (re-geocodificación) del eco de
@@ -307,7 +308,6 @@ export function MiniMapa({
       <div className="relative overflow-hidden rounded-xl border border-borde" style={{ height: alto }}>
         <MapaGL
           ref={mapRef}
-          onLoad={(e) => setHayNombres(Boolean(e.target.getLayer("roadname_minor")))}
           initialViewState={
             hayTramo && latHasta != null && lonHasta != null
               ? {
@@ -334,10 +334,18 @@ export function MiniMapa({
               maxzoom={18}
               attribution={ATRIBUCION_SATELITE}
             >
-              <Layer id="mini-satelite-raster" type="raster" beforeId={hayNombres ? "roadname_minor" : undefined} />
+              <Layer id="mini-satelite-raster" type="raster" beforeId={hayNombres ? ANCLA_NOMBRES : undefined} />
             </Source>
           )}
-          {conRedVial && <CapaRedVial prefijo="mini" />}
+          {/* Debajo de los nombres (que no los tape) y encima del satélite: la
+              key la vuelve a montar al prender el satélite, para que quede arriba. */}
+          {conRedVial && (
+            <CapaRedVial
+              key={`${satelite}-${hayNombres}`}
+              prefijo="mini"
+              antesDe={hayNombres ? ANCLA_NOMBRES : undefined}
+            />
+          )}
           {/* La línea del tramo, debajo de los dos pines. */}
           {hayTramo && (
             <Source
